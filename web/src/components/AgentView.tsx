@@ -11,6 +11,7 @@ import { back, go, type AgentTab } from '@/route';
 import type { PrStatus } from '@/types';
 import { CommitsPane } from './CommitsPane';
 // xterm.js and the Markdown renderer are large: load them when first used.
+import type { Sent } from './ChatPane';
 const ChatPane = lazy(() => import('./ChatPane').then((m) => ({ default: m.ChatPane })));
 const LiveTerminal = lazy(() => import('./LiveTerminal').then((m) => ({ default: m.LiveTerminal })));
 import { StatusPane } from './StatusPane';
@@ -24,6 +25,12 @@ const PILL: Record<string, string> = {
 export function AgentView({ live, addr, tab }: { live: Live; addr: string; tab: AgentTab }) {
   const t = live.terminals.get(addr);
   const [pr, setPr] = useState<PrStatus | null>(null);
+  // Replies sent from this page: the Chat view shows them at once, then
+  // drops each one when it appears in the transcript.
+  const [outbox, setOutbox] = useState<Sent[]>([]);
+  useEffect(() => setOutbox([]), [addr]);
+  const onSent = (text: string) => setOutbox((o) => [...o, { id: Date.now() + Math.random(), text, at: Date.now() }]);
+  const delivered = (ids: number[]) => setOutbox((o) => o.filter((x) => !ids.includes(x.id)));
 
   // Opening an agent marks its "done" as seen, like Herdr. Again when it changes.
   useEffect(() => { if (t) markSeen(addr); }, [addr, t?.changed_ms]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -76,11 +83,11 @@ export function AgentView({ live, addr, tab }: { live: Live; addr: string; tab: 
       {t.status?.progress != null && <div className="h-0.5 bg-border"><div className="h-full bg-working" style={{ width: `${Math.min(100, t.status.progress)}%` }} /></div>}
 
       <div className="min-h-0 flex-1">
-        {tab === 'output' && <Output addr={addr} live={t.state === 'live'} claude={isClaude(t)} cols={t.cols || 80} rows={t.rows || 24} working={st === 'working'} stateKey={st} />}
+        {tab === 'output' && <Output addr={addr} live={t.state === 'live'} claude={isClaude(t)} outbox={outbox} delivered={delivered} cols={t.cols || 80} rows={t.rows || 24} working={st === 'working'} stateKey={st} />}
         {tab === 'commits' && <CommitsPane addr={addr} />}
         {tab === 'status' && <StatusPane addr={addr} data={pr} onData={setPr} />}
       </div>
-      <Composer addr={addr} blocked={st === 'blocked'} finished={t.state === 'finished'} kind={t.status?.kind} exitCode={t.exit_code} />
+      <Composer addr={addr} blocked={st === 'blocked'} finished={t.state === 'finished'} kind={t.status?.kind} exitCode={t.exit_code} onSent={onSent} />
     </div>
   );
 }
@@ -102,7 +109,7 @@ const MODE_KEY = 'herdr-monitor.output';
 type Mode = 'chat' | 'live' | 'text';
 const isClaude = (t: { agent: string; status: { app?: string } | null }) => t.status?.app === 'claude-code' || /^claude/.test(t.agent);
 
-function Output({ addr, live, claude, cols, rows, working, stateKey }: { addr: string; live: boolean; claude: boolean; cols: number; rows: number; working: boolean; stateKey: string }) {
+function Output({ addr, live, claude, outbox, delivered, cols, rows, working, stateKey }: { addr: string; live: boolean; claude: boolean; outbox: Sent[]; delivered: (ids: number[]) => void; cols: number; rows: number; working: boolean; stateKey: string }) {
   const [stored, setStored] = useState<Mode>(() => (localStorage.getItem(MODE_KEY) as Mode) || 'chat');
   const pick = (m: Mode) => { setStored(m); try { localStorage.setItem(MODE_KEY, m); } catch { /* private mode */ } };
   const modes: Mode[] = [...(claude ? ['chat' as const] : []), ...(live ? ['live' as const] : []), 'text'];
@@ -111,7 +118,7 @@ function Output({ addr, live, claude, cols, rows, working, stateKey }: { addr: s
   return (
     <div className="relative h-full">
       <Suspense fallback={<div className="h-full bg-code" />}>
-        {mode === 'chat' && <ChatPane addr={addr} working={working} />}
+        {mode === 'chat' && <ChatPane addr={addr} working={working} outbox={outbox} delivered={delivered} />}
         {mode === 'live' && <LiveTerminal addr={addr} cols={cols} rows={rows} />}
       </Suspense>
       {mode === 'text' && <OutputPane addr={addr} working={working} stateKey={stateKey} />}
@@ -178,7 +185,7 @@ function OutputPane({ addr, working, stateKey }: { addr: string; working: boolea
 // - Send keeps the keyboard open (the button does not take focus);
 // - on a touch screen Enter adds a new line, and the button sends;
 // - Stop (interrupt) sits apart, on the left, so a thumb does not hit it by mistake.
-function Composer({ addr, blocked, finished, kind, exitCode }: { addr: string; blocked: boolean; finished: boolean; kind?: string; exitCode: number | null }) {
+function Composer({ addr, blocked, finished, kind, exitCode, onSent }: { addr: string; blocked: boolean; finished: boolean; kind?: string; exitCode: number | null; onSent?: (text: string) => void }) {
   const [value, setValue] = useState('');
   const [note, setNote] = useState<{ text: string; tone?: 'err' } | null>(null);
   const [sending, setSending] = useState(false);
@@ -206,7 +213,7 @@ function Composer({ addr, blocked, finished, kind, exitCode }: { addr: string; b
     setSending(true);
     const r = await post(`/api/terminals/${addr}/send`, { text: value });
     setSending(false);
-    if (r.ok) { setValue(''); setNote({ text: 'Sent.' }); } else setNote({ text: `Not sent: ${r.body.error}`, tone: 'err' });
+    if (r.ok) { onSent?.(value); setValue(''); setNote({ text: 'Sent.' }); } else setNote({ text: `Not sent: ${r.body.error}`, tone: 'err' });
   };
   const interrupt = async () => {
     const r = await post(`/api/terminals/${addr}/interrupt`);
