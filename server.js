@@ -1,20 +1,25 @@
 // herdr-monitor: watch and answer Herdr (hc) agents from a browser.
 import http from 'node:http';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { HcConnection, defaultSocket, summarize } from './lib/hc.js';
 import { repoCommits, commitDetail } from './lib/git.js';
+import { buildLayout, repoInfo, terminalsIn } from './lib/sidebar.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOST = process.env.HOST || '127.0.0.1';
 const PORT = Number(process.env.PORT || 7400);
 const SOCKET = process.env.HC_SOCKET || defaultSocket();
+const HERDR_DIR = process.env.HERDR_APP_DIR || path.join(os.homedir(), '.config/herdr-app');
 
 const terminals = new Map(); // address -> summary
 const clients = new Set();   // SSE responses
 let rpc = null;
 let connected = false;
+let layout = [];             // sidebar spaces, see lib/sidebar.js
+const seedChanged = new Map(); // address -> ms, from Herdr's agent store
 
 function broadcast(event, data) {
   const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -22,15 +27,64 @@ function broadcast(event, data) {
 }
 
 function snapshot() {
-  return { connected, terminals: [...terminals.values()] };
+  return { connected, terminals: [...terminals.values()], spaces: layout };
+}
+
+async function readJsonFile(file) {
+  try { return JSON.parse(await fs.readFile(file, 'utf8')); } catch { return null; }
+}
+
+// Herdr's own record of when each agent last changed state: a seed for row
+// ages when hc has no status_ms. `changed` may be a JSON string.
+async function loadSeed() {
+  const store = await readJsonFile(path.join(HERDR_DIR, 'data/agents/store.json'));
+  let changed = store?.changed;
+  if (typeof changed === 'string') { try { changed = JSON.parse(changed); } catch { changed = null; } }
+  for (const [addr, v] of Object.entries(changed || {})) if (Number.isFinite(v?.at)) seedChanged.set(addr, v.at);
+}
+
+function remember(s) {
+  if (s.changed_ms == null) s.changed_ms = seedChanged.get(s.address) ?? null;
+  return s;
+}
+
+let layoutTimer = null;
+function scheduleLayout(delay = 300) {
+  clearTimeout(layoutTimer);
+  layoutTimer = setTimeout(refreshLayout, delay);
+}
+
+async function refreshLayout() {
+  if (!rpc) return;
+  try {
+    const [{ value }, shared] = await Promise.all([
+      rpc.call('doc.get', { name: 'herdr-app' }),
+      readJsonFile(path.join(HERDR_DIR, 'shared.json')),
+    ]);
+    // Resolve git facts for each space's first terminal (or folder) first,
+    // so buildLayout stays pure.
+    const cwds = new Set();
+    for (const sp of value?.spaces || []) {
+      const first = terminalsIn(sp.tabs?.[0]?.root)[0];
+      cwds.add(terminals.get(first)?.cwd || sp.folder);
+    }
+    const infos = new Map(await Promise.all([...cwds].map(async (c) => [c, await repoInfo(c)])));
+    const next = buildLayout({ doc: value, terminals, colors: shared?.['space.colors'] || {}, repoOf: (c) => infos.get(c) });
+    if (JSON.stringify(next) === JSON.stringify(layout)) return;
+    layout = next;
+    broadcast('layout', { spaces: layout });
+  } catch (err) {
+    console.error(`layout refresh failed: ${err.message}`);
+  }
 }
 
 async function refreshOne(address) {
   try {
     const t = await rpc.call('terminal.get', { terminal: address });
-    const s = summarize(t.terminal || t);
+    const s = remember(summarize(t.terminal || t));
     const prev = terminals.get(address);
     if (prev?.title && !s.title) s.title = prev.title;
+    if (prev?.changed_ms && !s.changed_ms) s.changed_ms = prev.changed_ms;
     terminals.set(address, s);
     broadcast('terminal', s);
   } catch (err) {
@@ -51,12 +105,25 @@ function onEvent(ev) {
     t.title = ev.data?.title ?? null;
     broadcast('terminal', t);
   } else if (ev.type === 'status' && t) {
+    const before = t.status?.state ?? null;
     Object.assign(t, { status: ev.data?.status ?? null, reported: ev.data?.reported ?? t.reported });
+    const after = t.status?.state ?? null;
+    if (after !== before) {
+      t.changed_ms = ev.data?.status_ms ?? Date.now();
+      onStateChange(t, before, after);
+    }
     broadcast('terminal', t);
   } else if (ev.terminal) {
     scheduleRefresh(ev.terminal); // created, exited, labels... re-read the record
   }
+  if (LAYOUT_EVENTS.has(ev.type)) scheduleLayout();
 }
+
+// Events that can move a terminal between spaces and tabs, or rename a space.
+const LAYOUT_EVENTS = new Set(['doc', 'created', 'removed', 'finished', 'labels']);
+
+// A live state change (not a snapshot or resync). Push notifications hook in here.
+function onStateChange(t, before, after) {}
 
 let events = null;
 async function resync() {
@@ -69,7 +136,8 @@ async function resync() {
   events.on('error', () => {});
   const sub = await events.call('events.subscribe', {});
   terminals.clear();
-  for (const t of sub.terminals) terminals.set(t.address, summarize(t));
+  for (const t of sub.terminals) terminals.set(t.address, remember(summarize(t)));
+  await refreshLayout();
   broadcast('snapshot', { ...snapshot(), connected: true });
 }
 
@@ -84,6 +152,7 @@ async function start() {
   try {
     rpc = new HcConnection(SOCKET);
     await rpc.connect();
+    await loadSeed();
     rpc.on('error', () => {});
     rpc.on('close', () => setConnected(false));
     await resync();
@@ -123,8 +192,38 @@ function terminalOr404(res, address) {
   return t;
 }
 
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.webmanifest': 'application/manifest+json',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+};
+const PUBLIC = path.join(HERE, 'public');
+
+// Resolve a URL path to a file in public/, or null. No traversal, fixed types.
+export function publicFile(urlPath, root = PUBLIC) {
+  let rel;
+  try { rel = decodeURIComponent(urlPath); } catch { return null; }
+  if (rel === '/') rel = '/index.html';
+  if (rel.includes('\0') || !MIME[path.extname(rel)]) return null;
+  const file = path.resolve(root, '.' + rel);
+  return file.startsWith(root + path.sep) ? file : null;
+}
+
+async function serveStatic(req, res, url) {
+  const file = publicFile(url.pathname);
+  if (!file) return false;
+  let body;
+  try { body = await fs.readFile(file); } catch { return false; }
+  res.writeHead(200, { 'content-type': MIME[path.extname(file)], 'cache-control': 'no-cache' });
+  res.end(body);
+  return true;
+}
+
 const routes = [
-  ['GET', /^\/$/, async (req, res) => send(res, 200, await fs.readFile(path.join(HERE, 'public/index.html')), 'text/html; charset=utf-8')],
+  ['GET', /^\/api\/sidebar$/, (req, res) => send(res, 200, { spaces: layout })],
   ['GET', /^\/api\/health$/, (req, res) => send(res, 200, { ok: true, connected, socket: SOCKET, terminals: terminals.size })],
   ['GET', /^\/api\/terminals$/, (req, res) => send(res, 200, snapshot())],
   ['GET', /^\/api\/events$/, (req, res) => {
@@ -169,10 +268,12 @@ const server = http.createServer(async (req, res) => {
     try { return await handler(req, res, m.slice(1).map(decodeURIComponent), url); }
     catch (err) { return send(res, 502, { error: err.message, rpc: err.rpc ?? null }); }
   }
+  if (req.method === 'GET' && !url.pathname.startsWith('/api/') && await serveStatic(req, res, url)) return;
   send(res, 404, { error: 'not found' });
 });
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   server.listen(PORT, HOST, () => console.log(`herdr-monitor on http://${HOST}:${PORT}`));
   start();
+  setInterval(() => { if (connected) refreshLayout(); }, 60000); // cwd and branch drift
 }
