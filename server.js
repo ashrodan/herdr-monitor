@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { HcConnection, defaultSocket, summarize } from './lib/hc.js';
 import { repoCommits, commitDetail } from './lib/git.js';
 import { buildLayout, repoInfo, terminalsIn } from './lib/sidebar.js';
+import { prStatus } from './lib/pr.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOST = process.env.HOST || '127.0.0.1';
@@ -245,6 +246,10 @@ const routes = [
   ['GET', /^\/api\/terminals\/([^/]+)\/commits\/([0-9a-fA-F]{7,40})$/, async (req, res, [addr, sha]) => {
     const t = terminalOr404(res, addr); if (!t) return;
     send(res, 200, await commitDetail(t.cwd, sha));
+  }],
+  ['GET', /^\/api\/terminals\/([^/]+)\/status$/, async (req, res, [addr], url) => {
+    const t = terminalOr404(res, addr); if (!t) return;
+    send(res, 200, await prStatus(t.cwd, { fresh: url.searchParams.has('fresh') }));
   }],
   ['POST', /^\/api\/terminals\/([^/]+)\/send$/, async (req, res, [addr]) => {
     if (!terminalOr404(res, addr)) return;
