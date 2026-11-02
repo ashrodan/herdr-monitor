@@ -33,3 +33,11 @@ test('parseStore reads Herdr agent store, as an object or a JSON string', async 
   assert.equal(parseStore(null).at.size, 0);
   assert.equal(parseStore({ changed: '{bad' }).at.size, 0);
 });
+
+test('pushPayload names the agent and links to it', async () => {
+  const { pushPayload } = await import('../server.js');
+  const t = { address: 't7', title: 'Fix the build', status: { state: 'blocked', kind: 'permission' } };
+  assert.deepEqual(pushPayload(t, 'blocked', 'app · tests'), { title: 'app · tests · needs you', body: 'Fix the build', tag: 't7', url: '/#t7' });
+  assert.equal(pushPayload({ address: 't8', status: { kind: 'permission' } }, 'blocked', 'x').body, 'Waiting at a permission');
+  assert.equal(pushPayload({ address: 't9', status: { msg: 'All tests pass' } }, 'done', 'x').title, 'x · done');
+});

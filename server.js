@@ -8,6 +8,7 @@ import { HcConnection, defaultSocket, summarize } from './lib/hc.js';
 import { repoCommits, commitDetail } from './lib/git.js';
 import { buildLayout, repoInfo, terminalsIn } from './lib/sidebar.js';
 import { prStatus } from './lib/pr.js';
+import { loadVapid, Subscriptions, sendPush } from './lib/push.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOST = process.env.HOST || '127.0.0.1';
@@ -144,8 +145,58 @@ function onEvent(ev) {
 // Events that can move a terminal between spaces and tabs, or rename a space.
 const LAYOUT_EVENTS = new Set(['doc', 'created', 'removed', 'finished', 'labels']);
 
-// A live state change (not a snapshot or resync). Push notifications hook in here.
-function onStateChange(t, before, after) {}
+// ---- Web Push ----
+// Created on first use: the key pair and the subscriptions live in
+// ~/.config/herdr-monitor (HERDR_MONITOR_DIR overrides), mode 600.
+let push = null;
+function pushState() {
+  if (!push) push = { vapid: loadVapid(), subs: new Subscriptions() };
+  return push;
+}
+
+// The name the UI shows: its own name, else its space (+ a named tab).
+function nameOf(t) {
+  if (t.name) return t.name;
+  const sp = layout.find((s) => s.id === t.space);
+  if (sp) {
+    const tab = sp.tabs.find((tb) => tb.id === t.tab);
+    return sp.name + (tab?.named ? ` · ${tab.name}` : '');
+  }
+  return t.where?.split(' / ')[0] || t.agent;
+}
+
+const PUSH_STATES = new Set(['blocked', 'done', 'error']);
+const PUSH_GAP_MS = 30000;
+const lastPush = new Map(); // `${addr}:${state}` -> ms
+
+export function pushPayload(t, state, name) {
+  const word = { blocked: 'needs you', done: 'done', error: 'error' }[state] || state;
+  return {
+    title: `${name} · ${word}`,
+    body: t.status?.msg || t.title || (state === 'blocked' ? `Waiting at a ${t.status?.kind || 'dialog'}` : ''),
+    tag: t.address,
+    url: `/#${t.address}`,
+  };
+}
+
+async function notifyAll(payload) {
+  const { vapid, subs } = pushState();
+  return Promise.all(subs.list().map((sub) => sendPush(sub, payload, { vapid, subscriptions: subs })));
+}
+
+// A live state change (not a snapshot or resync).
+function onStateChange(t, before, after) {
+  if (!PUSH_STATES.has(after)) return;
+  const key = `${t.address}:${after}`;
+  const now = Date.now();
+  if (now - (lastPush.get(key) || 0) < PUSH_GAP_MS) return;
+  lastPush.set(key, now);
+  if (!pushState().subs.list().length) return;
+  notifyAll(pushPayload(t, after, nameOf(t))).then((results) => {
+    const failed = results.filter((r) => !r.ok);
+    if (failed.length) console.error(`push: ${failed.length} of ${results.length} failed (${failed.map((r) => r.status || r.error?.message).join(', ')})`);
+  });
+}
 
 let events = null;
 async function resync() {
@@ -306,6 +357,20 @@ const routes = [
   ['GET', /^\/api\/terminals\/([^/]+)\/status$/, async (req, res, [addr], url) => {
     const t = terminalOr404(res, addr); if (!t) return;
     send(res, 200, await prStatus(t.cwd, { fresh: url.searchParams.has('fresh') }));
+  }],
+  ['GET', /^\/api\/push\/key$/, (req, res) => send(res, 200, { publicKey: pushState().vapid.publicKey })],
+  ['POST', /^\/api\/push\/subscribe$/, async (req, res) => {
+    const { subscription } = await readJson(req);
+    try { pushState().subs.add(subscription); } catch (err) { return send(res, 400, { error: err.message }); }
+    send(res, 200, { ok: true, count: pushState().subs.list().length });
+  }],
+  ['POST', /^\/api\/push\/unsubscribe$/, async (req, res) => {
+    const { endpoint } = await readJson(req);
+    send(res, 200, { ok: true, removed: typeof endpoint === 'string' && pushState().subs.remove(endpoint) });
+  }],
+  ['POST', /^\/api\/push\/test$/, async (req, res) => {
+    const results = await notifyAll({ title: 'Herdr Monitor', body: 'Notifications work.', tag: 'test', url: '/' });
+    send(res, 200, { sent: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).map((r) => r.status || r.error?.message) });
   }],
   ['POST', /^\/api\/terminals\/([^/]+)\/send$/, async (req, res, [addr]) => {
     if (!terminalOr404(res, addr)) return;
