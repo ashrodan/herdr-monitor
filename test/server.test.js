@@ -41,3 +41,18 @@ test('pushPayload names the agent and links to it', async () => {
   assert.equal(pushPayload({ address: 't8', status: { kind: 'permission' } }, 'blocked', 'x').body, 'Waiting at a permission');
   assert.equal(pushPayload({ address: 't9', status: { msg: 'All tests pass' } }, 'done', 'x').title, 'x · done');
 });
+
+test('stripScriptNoise drops the ^D echo of script only at the start', async () => {
+  const { stripScriptNoise } = await import('../server.js');
+  assert.equal(stripScriptNoise(Buffer.from('^D\b\b\x1b[Hhi')).toString(), '\x1b[Hhi');
+  assert.equal(stripScriptNoise(Buffer.from('\x1b[Hhi')).toString(), '\x1b[Hhi');
+});
+
+test('attachEnv drops HC_TERMINAL_ID and sets the socket and TERM', async () => {
+  const { attachEnv } = await import('../server.js');
+  const env = attachEnv({ HC_TERMINAL_ID: 't4y', PATH: '/bin' });
+  assert.equal(env.HC_TERMINAL_ID, undefined);
+  assert.equal(env.PATH, '/bin');
+  assert.equal(env.TERM, 'xterm-256color');
+  assert.ok(env.HC_TERMINAL_SOCKET);
+});

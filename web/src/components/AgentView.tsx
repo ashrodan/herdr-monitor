@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { ArrowUp, ChevronLeft, GitCommitHorizontal, GitPullRequest, Square, Terminal as TerminalIcon } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -10,6 +10,8 @@ import { displayName, markSeen, rawStateOf, shortPath } from '@/model';
 import { back, go, type AgentTab } from '@/route';
 import type { PrStatus } from '@/types';
 import { CommitsPane } from './CommitsPane';
+// xterm.js is large: load it only when a live terminal opens.
+const LiveTerminal = lazy(() => import('./LiveTerminal').then((m) => ({ default: m.LiveTerminal })));
 import { StatusPane } from './StatusPane';
 import { Glyph } from './marks';
 
@@ -73,7 +75,7 @@ export function AgentView({ live, addr, tab }: { live: Live; addr: string; tab: 
       {t.status?.progress != null && <div className="h-0.5 bg-border"><div className="h-full bg-working" style={{ width: `${Math.min(100, t.status.progress)}%` }} /></div>}
 
       <div className="min-h-0 flex-1">
-        {tab === 'output' && <OutputPane addr={addr} working={st === 'working'} stateKey={st} />}
+        {tab === 'output' && <Output addr={addr} live={t.state === 'live'} cols={t.cols || 80} rows={t.rows || 24} working={st === 'working'} stateKey={st} />}
         {tab === 'commits' && <CommitsPane addr={addr} />}
         {tab === 'status' && <StatusPane addr={addr} data={pr} onData={setPr} />}
       </div>
@@ -91,7 +93,32 @@ function Header({ onBack, children }: { onBack: () => void; children: React.Reac
   );
 }
 
-// The agent's screen. It refreshes while the agent works. History on request:
+// Output: the live terminal (default), or the screen as plain text, which
+// wraps on a narrow phone and can load the scrollback.
+const MODE_KEY = 'herdr-monitor.output';
+function Output({ addr, live, cols, rows, working, stateKey }: { addr: string; live: boolean; cols: number; rows: number; working: boolean; stateKey: string }) {
+  const [mode, setMode] = useState(() => localStorage.getItem(MODE_KEY) || 'live');
+  const pick = (m: string) => { setMode(m); try { localStorage.setItem(MODE_KEY, m); } catch { /* private mode */ } };
+  const showLive = mode === 'live' && live;
+  return (
+    <div className="relative h-full">
+      {showLive
+        ? <Suspense fallback={<div className="h-full bg-code" />}><LiveTerminal addr={addr} cols={cols} rows={rows} /></Suspense>
+        : <OutputPane addr={addr} working={working} stateKey={stateKey} />}
+      {live && (
+        <div className="absolute top-2 right-3 z-10 flex overflow-hidden rounded-md border border-white/10 bg-black/70 text-[11px] text-code-foreground backdrop-blur">
+          {(['live', 'text'] as const).map((m) => (
+            <button key={m} onClick={() => pick(m)} className={cn('px-2.5 py-1', mode === m ? 'bg-white/15 font-medium' : 'opacity-70')}>
+              {m === 'live' ? 'Live' : 'Text'}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The agent's screen as text. It refreshes while the agent works. History on request:
 // it makes hc scroll a full-screen agent, which takes seconds.
 function OutputPane({ addr, working, stateKey }: { addr: string; working: boolean; stateKey: string }) {
   const [text, setText] = useState<string | null>(null);

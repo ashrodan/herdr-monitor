@@ -17,7 +17,9 @@ export interface Terminal {
   space: string | null;
   tab: string | null;
   changed_ms: number | null;
-  seen_ms?: number | null; // when Herdr itself showed this finished agent
+  seen_ms?: number | null;
+  cols?: number | null;
+  rows?: number | null; // when Herdr itself showed this finished agent
 }
 
 export interface SpaceTab { id: string; name: string; named: boolean; terminals: string[] }

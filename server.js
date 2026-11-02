@@ -1,5 +1,7 @@
 // herdr-monitor: watch and answer Herdr (hc) agents from a browser.
 import http from 'node:http';
+import { spawn } from 'node:child_process';
+import { openSync, closeSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -259,6 +261,53 @@ export function sameOrigin(req) {
   try { return new URL(origin).host === req.headers.host; } catch { return false; }
 }
 
+// ---- Live terminal view ----
+// `hc attach --observe` streams a terminal's real bytes (colours, status
+// bar) and never types or resizes. It wants a tty, so macOS `script` gives it
+// one. Each viewer gets its own process; it ends when the page goes away.
+const HC_BIN = process.env.HC_BIN || 'hc';
+const MAX_ATTACH = 8;
+const attached = new Set();
+
+// `script` echoes ^D and two backspaces when its input is not a tty: drop them.
+export function stripScriptNoise(buf) {
+  const noise = Buffer.from('^D\b\b');
+  return buf.subarray(0, noise.length).equals(noise) ? buf.subarray(noise.length) : buf;
+}
+
+// Without HC_TERMINAL_ID: when the server itself runs in a Herdr terminal,
+// hc would refuse to watch that terminal ("attached to itself"). The bytes go
+// to script's pty, never back into the server's terminal, so there is no loop.
+export function attachEnv(env) {
+  const { HC_TERMINAL_ID, ...rest } = env;
+  return { ...rest, HC_TERMINAL_SOCKET: SOCKET, TERM: 'xterm-256color' };
+}
+
+function attachStream(req, res, t) {
+  if (attached.size >= MAX_ATTACH) return send(res, 429, { error: 'too many live views open' });
+  res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
+  res.write(`event: size\ndata: ${JSON.stringify({ cols: t.cols, rows: t.rows })}\n\n`);
+  // stdin must be a file, not a pipe: script calls tcgetattr on it.
+  const devnull = openSync('/dev/null', 'r');
+  const child = spawn('script', ['-q', '/dev/null', HC_BIN, 'attach', '--observe', t.address], {
+    stdio: [devnull, 'pipe', 'ignore'],
+    env: attachEnv(process.env),
+  });
+  closeSync(devnull);
+  attached.add(child);
+  let first = true;
+  child.stdout.on('data', (chunk) => {
+    const data = first ? stripScriptNoise(chunk) : chunk;
+    first = false;
+    if (data.length) res.write(`data: ${data.toString('base64')}\n\n`);
+  });
+  const ping = setInterval(() => res.write(': ping\n\n'), 25000);
+  const stop = () => { clearInterval(ping); attached.delete(child); child.kill('SIGTERM'); };
+  child.on('exit', () => { res.write('event: end\ndata: {}\n\n'); res.end(); stop(); });
+  child.on('error', (err) => { res.write(`event: end\ndata: ${JSON.stringify({ error: err.message })}\n\n`); res.end(); stop(); });
+  req.on('close', stop);
+}
+
 function terminalOr404(res, address) {
   const t = terminals.get(address);
   if (!t) send(res, 404, { error: 'unknown terminal' });
@@ -369,6 +418,11 @@ const routes = [
     clients.add(res);
     const ping = setInterval(() => res.write(': ping\n\n'), 25000);
     req.on('close', () => { clearInterval(ping); clients.delete(res); });
+  }],
+  ['GET', /^\/api\/terminals\/([^/]+)\/attach$/, (req, res, [addr]) => {
+    const t = terminalOr404(res, addr); if (!t) return;
+    if (t.state !== 'live') return send(res, 409, { error: 'terminal is not live' });
+    attachStream(req, res, t);
   }],
   ['GET', /^\/api\/terminals\/([^/]+)\/read$/, async (req, res, [addr], url) => {
     if (!terminalOr404(res, addr)) return;

@@ -58,7 +58,7 @@ export default function App() {
 }
 
 function Home({ live, now, selAgent, selSpace }: { live: Live; now: number; selAgent?: string; selSpace?: string }) {
-  const [section, setSection] = useState(() => localStorage.getItem('herdr-monitor.section') || 'agents');
+  const [section, setSection] = useState(() => localStorage.getItem('herdr-monitor.section') || 'spaces');
   const pick = (v: string) => { setSection(v); try { localStorage.setItem('herdr-monitor.section', v); } catch { /* private mode */ } };
   return (
     <>
@@ -69,23 +69,23 @@ function Home({ live, now, selAgent, selSpace }: { live: Live; now: number; selA
         </span>
         <span className="ml-auto"><PushBell /></span>
       </header>
-      {/* Phone: a segmented control. Desktop: both sections, stacked. */}
+      {/* Phone: a segmented control. Desktop: Spaces, then Agents, stacked. */}
       <div className="px-3 pb-2 lg:hidden">
         <Tabs value={section} onValueChange={pick}>
-          <TabsList className="w-full"><TabsTrigger value="agents">Agents</TabsTrigger><TabsTrigger value="spaces">Spaces</TabsTrigger><TabsTrigger value="overview">Overview</TabsTrigger></TabsList>
+          <TabsList className="w-full"><TabsTrigger value="spaces">Spaces</TabsTrigger><TabsTrigger value="agents">Agents</TabsTrigger><TabsTrigger value="overview">Overview</TabsTrigger></TabsList>
         </Tabs>
       </div>
       <div className="safe-bottom min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        <div className={cn(section === 'spaces' ? 'block' : 'hidden', 'lg:block')}>
+          <h2 className="hidden px-4 pt-2 pb-1 text-xs font-semibold text-muted-foreground lg:block">Spaces</h2>
+          <SpacesList live={live} selected={selSpace} />
+        </div>
         <div className={cn(section === 'agents' ? 'block' : 'hidden', 'lg:block')}>
-          <h2 className="hidden px-4 pt-2 text-xs font-semibold text-muted-foreground lg:block">Agents</h2>
+          <h2 className="hidden border-t px-4 pt-3 text-xs font-semibold text-muted-foreground lg:block">Agents</h2>
           <AgentsList live={live} selected={selAgent} now={now} />
         </div>
         {/* Overview: a phone segment; on a desktop it fills the main area. */}
         {section === 'overview' && <div className="lg:hidden"><Overview live={live} now={now} /></div>}
-        <div className={cn(section === 'spaces' ? 'block' : 'hidden', 'lg:block')}>
-          <h2 className="hidden border-t px-4 pt-3 pb-1 text-xs font-semibold text-muted-foreground lg:block">Spaces</h2>
-          <SpacesList live={live} selected={selSpace} />
-        </div>
       </div>
     </>
   );
