@@ -21,6 +21,7 @@ let rpc = null;
 let connected = false;
 let layout = [];             // sidebar spaces, see lib/sidebar.js
 const seedChanged = new Map(); // address -> ms, from Herdr's agent store
+const herdrSeen = new Map();   // address -> ms when Herdr turned its "done" into idle
 
 function broadcast(event, data) {
   const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -37,15 +38,31 @@ async function readJsonFile(file) {
 
 // Herdr's own record of when each agent last changed state: a seed for row
 // ages when hc has no status_ms. `changed` may be a JSON string.
-async function loadSeed() {
-  const store = await readJsonFile(path.join(HERDR_DIR, 'data/agents/store.json'));
+// Herdr also records when you looked at a finished agent (s: "idle"):
+// sent as seen_ms, so "Done" here matches Herdr's sidebar.
+export function parseStore(store) {
   let changed = store?.changed;
   if (typeof changed === 'string') { try { changed = JSON.parse(changed); } catch { changed = null; } }
-  for (const [addr, v] of Object.entries(changed || {})) if (Number.isFinite(v?.at)) seedChanged.set(addr, v.at);
+  const at = new Map(), seen = new Map();
+  for (const [addr, v] of Object.entries(changed || {})) {
+    if (!Number.isFinite(v?.at)) continue;
+    at.set(addr, v.at);
+    if (v.s === 'idle') seen.set(addr, v.at);
+  }
+  return { at, seen };
+}
+
+async function loadSeed() {
+  const { at, seen } = parseStore(await readJsonFile(path.join(HERDR_DIR, 'data/agents/store.json')));
+  for (const [k, v] of at) seedChanged.set(k, v);
+  const changedSeen = [];
+  for (const [k, v] of seen) if (herdrSeen.get(k) !== v) { herdrSeen.set(k, v); changedSeen.push(k); }
+  return changedSeen;
 }
 
 function remember(s) {
   if (s.changed_ms == null) s.changed_ms = seedChanged.get(s.address) ?? null;
+  s.seen_ms = herdrSeen.get(s.address) ?? null;
   return s;
 }
 
@@ -57,6 +74,10 @@ function scheduleLayout(delay = 300) {
 
 async function refreshLayout() {
   if (!rpc) return;
+  for (const addr of await loadSeed()) {
+    const t = terminals.get(addr);
+    if (t) { remember(t); broadcast('terminal', t); }
+  }
   try {
     const [{ value }, shared] = await Promise.all([
       rpc.call('doc.get', { name: 'herdr-app' }),
@@ -232,8 +253,34 @@ async function serveStatic(req, res, url) {
   return true;
 }
 
+// Open PRs across the spaces' repos, for the Overview. One gh call per repo,
+// at most 4 at a time; cached 60 s (prStatus also caches 20 s per repo).
+let overviewCache = null;
+async function overview({ fresh = false } = {}) {
+  if (!fresh && overviewCache && Date.now() - overviewCache.at < 60000) return overviewCache.value;
+  const repos = new Map(); // repo -> first space that shows it
+  for (const sp of layout) if (sp.repo && !sp.virtual && !repos.has(sp.repo)) repos.set(sp.repo, sp);
+  const jobs = [...repos.entries()];
+  const prs = [];
+  const worker = async () => {
+    for (let job; (job = jobs.shift());) {
+      const [repo, sp] = job;
+      const st = await prStatus(repo, { fresh }).catch(() => null);
+      if (st?.pr && st.pr.state === 'OPEN') {
+        prs.push({ space: sp.id, spaceName: sp.name, color: sp.color, branch: st.branch, pr: st.pr, readiness: st.readiness, counts: st.counts });
+      }
+    }
+  };
+  await Promise.all([1, 2, 3, 4].map(worker));
+  prs.sort((a, b) => String(b.pr.updatedAt).localeCompare(String(a.pr.updatedAt)));
+  const value = { prs, at: Date.now() };
+  overviewCache = { at: Date.now(), value };
+  return value;
+}
+
 const routes = [
   ['GET', /^\/api\/sidebar$/, (req, res) => send(res, 200, { spaces: layout })],
+  ['GET', /^\/api\/overview$/, async (req, res, m, url) => send(res, 200, await overview({ fresh: url.searchParams.has('fresh') }))],
   ['GET', /^\/api\/health$/, (req, res) => send(res, 200, { ok: true, connected, socket: SOCKET, terminals: terminals.size })],
   ['GET', /^\/api\/terminals$/, (req, res) => send(res, 200, snapshot())],
   ['GET', /^\/api\/events$/, (req, res) => {

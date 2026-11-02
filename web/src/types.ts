@@ -17,6 +17,7 @@ export interface Terminal {
   space: string | null;
   tab: string | null;
   changed_ms: number | null;
+  seen_ms?: number | null; // when Herdr itself showed this finished agent
 }
 
 export interface SpaceTab { id: string; name: string; named: boolean; terminals: string[] }
@@ -54,3 +55,9 @@ export interface PrStatus {
   checks?: Check[];
   counts?: Record<Bucket, number>;
 }
+
+export interface OverviewPr {
+  space: string; spaceName: string; color: string; branch: string;
+  pr: NonNullable<PrStatus['pr']>; readiness: NonNullable<PrStatus['readiness']>; counts: Record<Bucket, number>;
+}
+export interface Overview { prs: OverviewPr[]; at: number }

@@ -5,6 +5,7 @@ import { AgentView } from '@/components/AgentView';
 import { AgentsList, SpacesList } from '@/components/Sidebar';
 import { SpaceView } from '@/components/SpaceView';
 import { PushBell } from '@/components/PushBell';
+import { Overview } from '@/components/Overview';
 import { useLive, type Live } from '@/live';
 import { useRoute } from '@/route';
 
@@ -49,7 +50,7 @@ export default function App() {
         <Home live={live} now={now} selAgent={selAgent} selSpace={selSpace} />
       </aside>
       <main className={cn('min-w-0 flex-1 flex-col', main ? 'flex' : 'hidden lg:flex')}>
-        {main ?? <p className="m-auto text-sm text-muted-foreground">Select an agent or a space.</p>}
+        {main ?? <div className="min-h-0 flex-1 overflow-y-auto"><Overview live={live} now={now} /></div>}
       </main>
     </div>
   );
@@ -70,7 +71,7 @@ function Home({ live, now, selAgent, selSpace }: { live: Live; now: number; selA
       {/* Phone: a segmented control. Desktop: both sections, stacked. */}
       <div className="px-3 pb-2 lg:hidden">
         <Tabs value={section} onValueChange={pick}>
-          <TabsList className="w-full"><TabsTrigger value="agents">Agents</TabsTrigger><TabsTrigger value="spaces">Spaces</TabsTrigger></TabsList>
+          <TabsList className="w-full"><TabsTrigger value="agents">Agents</TabsTrigger><TabsTrigger value="spaces">Spaces</TabsTrigger><TabsTrigger value="overview">Overview</TabsTrigger></TabsList>
         </Tabs>
       </div>
       <div className="safe-bottom min-h-0 flex-1 overflow-y-auto overscroll-contain">
@@ -78,6 +79,8 @@ function Home({ live, now, selAgent, selSpace }: { live: Live; now: number; selA
           <h2 className="hidden px-4 pt-2 text-xs font-semibold text-muted-foreground lg:block">Agents</h2>
           <AgentsList live={live} selected={selAgent} now={now} />
         </div>
+        {/* Overview: a phone segment; on a desktop it fills the main area. */}
+        {section === 'overview' && <div className="lg:hidden"><Overview live={live} now={now} onShowAgents={() => pick('agents')} /></div>}
         <div className={cn(section === 'spaces' ? 'block' : 'hidden', 'lg:block')}>
           <h2 className="hidden border-t px-4 pt-3 pb-1 text-xs font-semibold text-muted-foreground lg:block">Spaces</h2>
           <SpacesList live={live} selected={selSpace} />

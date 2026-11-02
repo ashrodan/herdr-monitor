@@ -21,3 +21,15 @@ test('publicFile serves known types inside dist/ only', async () => {
   assert.equal(publicFile('/notes.txt', root), null);
   assert.equal(publicFile('/%E0%A4%A', root), null);
 });
+
+test('parseStore reads Herdr agent store, as an object or a JSON string', async () => {
+  const { parseStore } = await import('../server.js');
+  const changed = { t1: { s: 'idle', at: 10 }, t2: { s: 'done', at: 20 }, t3: { s: 'idle' } };
+  for (const store of [{ changed }, { changed: JSON.stringify(changed) }]) {
+    const { at, seen } = parseStore(store);
+    assert.deepEqual([...at], [['t1', 10], ['t2', 20]]);
+    assert.deepEqual([...seen], [['t1', 10]]);
+  }
+  assert.equal(parseStore(null).at.size, 0);
+  assert.equal(parseStore({ changed: '{bad' }).at.size, 0);
+});

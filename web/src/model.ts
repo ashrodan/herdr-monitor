@@ -25,7 +25,7 @@ export function markSeen(addr: string) {
 
 export function stateOf(t: Terminal): AgentState {
   const s = (t.status?.state || 'idle') as AgentState;
-  if (s === 'done' && t.changed_ms && (seen[t.address] || 0) >= t.changed_ms) return 'idle';
+  if (s === 'done' && t.changed_ms && Math.max(seen[t.address] || 0, t.seen_ms || 0) >= t.changed_ms) return 'idle';
   return s;
 }
 // The raw state for the detail view (not lowered by "seen").
