@@ -31,7 +31,7 @@ export function SpaceView({ live, id, now }: { live: Live; id: string; now: numb
                   <li key={a} className="border-b last:border-b-0">
                     <button className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left hover:bg-accent/70 active:bg-accent"
                       onClick={() => go({ view: 'agent', addr: a, tab: 'output' })}>
-                      <Glyph agent={t.agent} />
+                      <Glyph agent={t.agent} reported={t.reported} />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate font-medium">{t.name || t.agent}{isShell(t) && <span className="ml-1.5 text-xs font-normal text-muted-foreground">shell</span>}</span>
                         <span className="block truncate text-xs text-muted-foreground">{t.status?.msg || t.title || shortPath(t.cwd)}</span>

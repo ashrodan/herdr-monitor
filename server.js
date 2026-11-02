@@ -329,7 +329,36 @@ async function overview({ fresh = false } = {}) {
   return value;
 }
 
+// Herdr's program icons (~/.config/herdr-app/icons), read from the local
+// install, not copied into this repo. `mono` icons draw with currentColor.
+const ICONS_DIR = path.join(HERDR_DIR, 'icons');
+let iconIndex = null;
+async function icons() {
+  if (iconIndex) return iconIndex;
+  const names = [], mono = [];
+  for (const f of await fs.readdir(ICONS_DIR).catch(() => [])) {
+    if (!/^[a-z0-9-]+\.svg$/.test(f)) continue;
+    const name = f.slice(0, -4);
+    names.push(name);
+    if ((await fs.readFile(path.join(ICONS_DIR, f), 'utf8')).includes('currentColor')) mono.push(name);
+  }
+  iconIndex = { names, mono };
+  return iconIndex;
+}
+
 const routes = [
+  ['GET', /^\/api\/icons$/, async (req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'max-age=3600' });
+    res.end(JSON.stringify(await icons()));
+  }],
+  ['GET', /^\/api\/icons\/([a-z0-9-]+)\.svg$/, async (req, res, [name]) => {
+    let body;
+    try { body = await fs.readFile(path.join(ICONS_DIR, `${name}.svg`)); } catch { return send(res, 404, { error: 'no such icon' }); }
+    // An SVG opened on its own could run script: forbid everything but styles.
+    res.writeHead(200, { 'content-type': 'image/svg+xml', 'cache-control': 'max-age=86400',
+      'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'", 'x-content-type-options': 'nosniff' });
+    res.end(body);
+  }],
   ['GET', /^\/api\/sidebar$/, (req, res) => send(res, 200, { spaces: layout })],
   ['GET', /^\/api\/overview$/, async (req, res, m, url) => send(res, 200, await overview({ fresh: url.searchParams.has('fresh') }))],
   ['GET', /^\/api\/health$/, (req, res) => send(res, 200, { ok: true, connected, socket: SOCKET, terminals: terminals.size })],

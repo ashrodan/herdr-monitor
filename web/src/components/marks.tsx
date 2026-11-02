@@ -1,5 +1,6 @@
 import { cn } from '@/lib/utils';
 import type { AgentState, Space } from '@/types';
+import { iconFor, useIcons } from '@/icons';
 
 // Pulse = working, filled = done (unseen), hollow = idle, amber = blocked, red = error.
 export function StatusMark({ state, className }: { state: AgentState | 'finished' | null; className?: string }) {
@@ -12,10 +13,20 @@ export function StatusMark({ state, className }: { state: AgentState | 'finished
   return <span className={cn(base, 'border-[1.5px] border-idle', className)} title="idle" />;
 }
 
-const GLYPHS: Record<string, string> = { 'claude-code': '✳', claude: '✳', codex: '◎', cursor: '▲', gemini: '✦', opencode: '◇', omp: '◆' };
-export function Glyph({ agent, className }: { agent: string; className?: string }) {
-  const g = GLYPHS[agent] || (/^(zsh|bash|fish|sh|nu|pwsh)$/.test(agent) ? '$' : agent.slice(0, 1).toUpperCase());
-  return <span className={cn('inline-flex size-5 shrink-0 items-center justify-center font-mono text-[13px] text-muted-foreground', className)} aria-hidden>{g}</span>;
+// The program's icon from Herdr (claude, codex, make, shell, …), else a letter.
+// Mono icons are drawn as a mask, so they take the text colour in both themes.
+export function Glyph({ agent, reported = false, className }: { agent: string; reported?: boolean; className?: string }) {
+  const idx = useIcons();
+  const name = idx && iconFor(agent, reported, idx);
+  const box = cn('inline-flex size-5 shrink-0 items-center justify-center', className);
+  if (!name) {
+    return <span className={cn(box, 'font-mono text-[12px] text-muted-foreground')} aria-hidden>{agent.slice(0, 1).toUpperCase()}</span>;
+  }
+  const url = `/api/icons/${name}.svg`;
+  if (idx!.mono.has(name)) {
+    return <span className={box} aria-hidden><span className="size-4 bg-muted-foreground" style={{ mask: `url(${url}) center / contain no-repeat`, WebkitMask: `url(${url}) center / contain no-repeat` }} /></span>;
+  }
+  return <span className={box} aria-hidden><img src={url} alt="" className="size-4" loading="lazy" /></span>;
 }
 
 export function SpaceAvatar({ space, className }: { space: Pick<Space, 'name' | 'color'>; className?: string }) {

@@ -51,7 +51,7 @@ export function AgentsList({ live, selected, now }: { live: Live; selected?: str
                 <button className={cn(row, selected === t.address && 'bg-accent')} style={{ paddingLeft: 12 + depth * 18 }}
                   onClick={() => go({ view: 'agent', addr: t.address, tab: 'output' })}>
                   {depth > 0 && <span className="-ml-3 text-muted-foreground/60" aria-hidden>└</span>}
-                  <Glyph agent={t.agent} />
+                  <Glyph agent={t.agent} reported={t.reported} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-medium">{displayName(t, live.spaces)}</span>
                     {(t.status?.msg || t.title) && <span className="block truncate text-xs text-muted-foreground">{t.status?.msg || t.title}</span>}

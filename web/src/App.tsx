@@ -5,7 +5,7 @@ import { AgentView } from '@/components/AgentView';
 import { AgentsList, SpacesList } from '@/components/Sidebar';
 import { SpaceView } from '@/components/SpaceView';
 import { PushBell } from '@/components/PushBell';
-import { Overview } from '@/components/Overview';
+import { ListView, Overview } from '@/components/Overview';
 import { useLive, type Live } from '@/live';
 import { useRoute } from '@/route';
 
@@ -41,6 +41,7 @@ export default function App() {
 
   const main = route.view === 'agent' ? <AgentView key={route.addr} live={live} addr={route.addr} tab={route.tab} />
     : route.view === 'space' ? <SpaceView live={live} id={route.id} now={now} />
+    : route.view === 'list' ? <ListView live={live} kind={route.kind} now={now} />
     : null;
 
   return (
@@ -80,7 +81,7 @@ function Home({ live, now, selAgent, selSpace }: { live: Live; now: number; selA
           <AgentsList live={live} selected={selAgent} now={now} />
         </div>
         {/* Overview: a phone segment; on a desktop it fills the main area. */}
-        {section === 'overview' && <div className="lg:hidden"><Overview live={live} now={now} onShowAgents={() => pick('agents')} /></div>}
+        {section === 'overview' && <div className="lg:hidden"><Overview live={live} now={now} /></div>}
         <div className={cn(section === 'spaces' ? 'block' : 'hidden', 'lg:block')}>
           <h2 className="hidden border-t px-4 pt-3 pb-1 text-xs font-semibold text-muted-foreground lg:block">Spaces</h2>
           <SpacesList live={live} selected={selSpace} />

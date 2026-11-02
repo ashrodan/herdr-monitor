@@ -1,18 +1,23 @@
 // Hash routes, so the phone's back gesture works:
 //   #                 home
 //   #space/<id>       a space
+//   #list/<kind>      the agents (or PRs) behind an Overview number
 //   #<addr>[/<tab>]   an agent (old deep links like #t2s/commits still work)
 import { useEffect, useState } from 'react';
 
 export type AgentTab = 'output' | 'commits' | 'status';
+export type ListKind = 'waiting' | 'working' | 'done' | 'prs';
 export type Route =
   | { view: 'home' }
   | { view: 'space'; id: string }
+  | { view: 'list'; kind: ListKind }
   | { view: 'agent'; addr: string; tab: AgentTab };
 
 export function parseHash(hash: string): Route {
   const h = decodeURIComponent(hash.replace(/^#\/?/, ''));
   if (!h) return { view: 'home' };
+  const ls = h.match(/^list\/(waiting|working|done|prs)$/);
+  if (ls) return { view: 'list', kind: ls[1] as ListKind };
   const sp = h.match(/^space\/(.+)$/);
   if (sp) return { view: 'space', id: sp[1] };
   const ag = h.match(/^([^/]+)(?:\/(output|commits|status))?$/);
@@ -23,6 +28,7 @@ export function parseHash(hash: string): Route {
 export function hrefOf(r: Route): string {
   if (r.view === 'home') return '#';
   if (r.view === 'space') return `#space/${encodeURIComponent(r.id)}`;
+  if (r.view === 'list') return `#list/${r.kind}`;
   return `#${r.addr}${r.tab === 'output' ? '' : '/' + r.tab}`;
 }
 

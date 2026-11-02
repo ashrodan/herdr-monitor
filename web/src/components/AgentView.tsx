@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowUp, ChevronLeft, Square } from 'lucide-react';
+import { ArrowUp, ChevronLeft, GitCommitHorizontal, GitPullRequest, Square, Terminal as TerminalIcon } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -47,33 +47,36 @@ export function AgentView({ live, addr, tab }: { live: Live; addr: string; tab: 
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {/* One header: who, what it does, and the view switch. */}
       <Header onBack={back}>
-        <Glyph agent={t.agent} />
-        <div className="min-w-0 flex-1">
+        <Glyph agent={t.agent} reported={t.reported} />
+        <div className="min-w-0 flex-1" title={`${t.address}${t.where ? ` · ${t.where}` : ''} · ${t.cwd}`}>
           <div className="flex items-center gap-2">
-            <h2 className="truncate text-base font-semibold">{displayName(t, live.spaces)}</h2>
-            <Badge variant="outline" className={cn('shrink-0 font-normal', PILL[st])}>{st}{t.status?.kind ? ` · ${t.status.kind}` : ''}</Badge>
+            <h2 className="truncate text-[15px] font-semibold leading-tight">{displayName(t, live.spaces)}</h2>
+            <Badge variant="outline" className={cn('shrink-0 px-1.5 py-0 text-[11px] font-normal', PILL[st])}>{st}{t.status?.kind ? ` · ${t.status.kind}` : ''}</Badge>
           </div>
-          <p className="truncate font-mono text-xs text-muted-foreground">{t.address}{t.where ? ` · ${t.where}` : ''} · {shortPath(t.cwd)}</p>
+          <p className="truncate text-xs text-muted-foreground">
+            {t.status?.msg || t.title || <span className="font-mono">{t.where || t.address} · {shortPath(t.cwd)}</span>}
+          </p>
         </div>
+        <Tabs value={tab} onValueChange={setTab} className="shrink-0">
+          <TabsList className="h-8">
+            <TabsTrigger value="output" className="px-2" aria-label="Output" title="Output"><TerminalIcon /><span className="hidden sm:inline">Output</span></TabsTrigger>
+            <TabsTrigger value="commits" className="px-2" aria-label="Commits" title="Commits"><GitCommitHorizontal /><span className="hidden sm:inline">Commits</span></TabsTrigger>
+            <TabsTrigger value="status" className="relative px-2" aria-label="PR status" title="PR status">
+              <GitPullRequest /><span className="hidden sm:inline">Status</span>
+              {dot && <span className={cn('absolute top-1 right-1 size-1.5 rounded-full sm:static sm:ml-0.5', dot)} />}
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
       </Header>
-      {(t.status?.msg || t.title) && <p className="truncate border-b px-4 py-1.5 text-sm text-muted-foreground">{t.status?.msg || t.title}</p>}
       {t.status?.progress != null && <div className="h-0.5 bg-border"><div className="h-full bg-working" style={{ width: `${Math.min(100, t.status.progress)}%` }} /></div>}
 
-      <Tabs value={tab} onValueChange={setTab} className="min-h-0 flex-1 gap-0">
-        <div className="border-b px-2 py-1.5 md:px-4">
-          <TabsList>
-            <TabsTrigger value="output">Output</TabsTrigger>
-            <TabsTrigger value="commits">Commits</TabsTrigger>
-            <TabsTrigger value="status">Status{dot && <span className={cn('ml-1 size-1.5 rounded-full', dot)} />}</TabsTrigger>
-          </TabsList>
-        </div>
-        <div className="min-h-0 flex-1">
-          {tab === 'output' && <OutputPane addr={addr} working={st === 'working'} stateKey={st} />}
-          {tab === 'commits' && <CommitsPane addr={addr} />}
-          {tab === 'status' && <StatusPane addr={addr} data={pr} onData={setPr} />}
-        </div>
-      </Tabs>
+      <div className="min-h-0 flex-1">
+        {tab === 'output' && <OutputPane addr={addr} working={st === 'working'} stateKey={st} />}
+        {tab === 'commits' && <CommitsPane addr={addr} />}
+        {tab === 'status' && <StatusPane addr={addr} data={pr} onData={setPr} />}
+      </div>
       <Composer addr={addr} blocked={st === 'blocked'} finished={t.state === 'finished'} kind={t.status?.kind} exitCode={t.exit_code} />
     </div>
   );
@@ -81,8 +84,8 @@ export function AgentView({ live, addr, tab }: { live: Live; addr: string; tab: 
 
 function Header({ onBack, children }: { onBack: () => void; children: React.ReactNode }) {
   return (
-    <header className="flex items-center gap-2 border-b px-2 py-2 md:px-4">
-      <Button variant="ghost" size="icon" className="lg:hidden" onClick={onBack} aria-label="Back"><ChevronLeft /></Button>
+    <header className="flex items-center gap-2 border-b py-1.5 pr-2 pl-1 md:px-4">
+      <Button variant="ghost" size="icon" className="-mr-1 lg:hidden" onClick={onBack} aria-label="Back"><ChevronLeft /></Button>
       {children}
     </header>
   );
@@ -192,7 +195,8 @@ function Composer({ addr, blocked, finished, kind, exitCode }: { addr: string; b
           <textarea ref={box} value={value} rows={1} disabled={finished}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => { if (!coarse && e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }}
-            placeholder={blocked ? 'Agent is waiting at a dialog' : coarse ? 'Reply to the agent' : 'Reply (Enter sends, Shift+Enter new line)'}
+            placeholder={blocked ? 'Agent is waiting at a dialog' : 'Reply to the agent'}
+            title={coarse ? undefined : 'Enter sends, Shift+Enter adds a new line'}
             aria-label="Reply to the agent"
             enterKeyHint={coarse ? 'enter' : 'send'} autoCapitalize="sentences" autoCorrect="on" spellCheck autoComplete="off"
             className="max-h-40 min-h-[40px] w-full resize-none bg-transparent py-[9px] text-[16px] leading-[22px] outline-none placeholder:text-muted-foreground md:text-[14px]" />
