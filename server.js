@@ -1,6 +1,6 @@
 // herdr-monitor: watch and answer Herdr (hc) agents from a browser.
 import http from 'node:http';
-import { spawn } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
 import { openSync, closeSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -15,6 +15,10 @@ import { loadVapid, Subscriptions, sendPush } from './lib/push.js';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOST = process.env.HOST || '127.0.0.1';
 const PORT = Number(process.env.PORT || 7400);
+// Plain-http helper for Tailscale Serve: `tailscale serve --http=80` points
+// here, and every request is sent on to the https address. 0 turns it off.
+const REDIRECT_PORT = Number(process.env.REDIRECT_PORT ?? 7480);
+const HTTPS_PORT = Number(process.env.HTTPS_PORT || PORT);
 const SOCKET = process.env.HC_SOCKET || defaultSocket();
 const HERDR_DIR = process.env.HERDR_APP_DIR || path.join(os.homedir(), '.config/herdr-app');
 
@@ -481,7 +485,32 @@ const server = http.createServer(async (req, res) => {
   send(res, 404, { error: 'not found' });
 });
 
+// This machine's full tailnet name (box.tailXXXX.ts.net), for the short
+// MagicDNS name: the https certificate is only valid for the full name.
+let tailnetName = null;
+execFile('tailscale', ['status', '--json'], { timeout: 5000, maxBuffer: 8 * 1024 * 1024 }, (err, out) => {
+  if (err) return;
+  try { tailnetName = JSON.parse(out).Self?.DNSName?.replace(/\.$/, '').toLowerCase() || null; } catch { /* no tailscale */ }
+});
+
+// Where an http request should go: same host name, https, the app's port.
+export function httpsLocation(hostHeader, url, httpsPort = HTTPS_PORT, fullName = tailnetName) {
+  let host = String(hostHeader || '').replace(/:\d+$/, '').toLowerCase();
+  if (!/^[a-z0-9.-]+$/.test(host)) return null; // only a plain host name
+  if (!host.includes('.') && fullName?.startsWith(host + '.')) host = fullName;
+  const path = String(url || '/').startsWith('/') ? url : '/';
+  return `https://${host}${httpsPort === 443 ? '' : `:${httpsPort}`}${path}`;
+}
+
+const redirector = http.createServer((req, res) => {
+  const to = httpsLocation(req.headers.host, req.url);
+  if (!to) { res.writeHead(400, { 'content-type': 'text/plain' }); return res.end('bad host'); }
+  res.writeHead(308, { location: to, 'cache-control': 'no-store' });
+  res.end();
+});
+
 if (import.meta.url === `file://${process.argv[1]}`) {
+  if (REDIRECT_PORT) redirector.listen(REDIRECT_PORT, HOST, () => console.log(`http → https redirect on http://${HOST}:${REDIRECT_PORT}`));
   server.listen(PORT, HOST, () => console.log(`herdr-monitor on http://${HOST}:${PORT}`));
   start();
   setInterval(() => { if (connected) refreshLayout(); }, 60000); // cwd and branch drift

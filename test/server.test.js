@@ -56,3 +56,19 @@ test('attachEnv drops HC_TERMINAL_ID and sets the socket and TERM', async () => 
   assert.equal(env.TERM, 'xterm-256color');
   assert.ok(env.HC_TERMINAL_SOCKET);
 });
+
+test('httpsLocation keeps the host and path, and refuses odd hosts', async () => {
+  const { httpsLocation } = await import('../server.js');
+  assert.equal(httpsLocation('box.tail1.ts.net', '/#x', 7400), 'https://box.tail1.ts.net:7400/#x');
+  assert.equal(httpsLocation('box.tail1.ts.net:80', '/api/health?a=1', 7400), 'https://box.tail1.ts.net:7400/api/health?a=1');
+  assert.equal(httpsLocation('box.ts.net', '/', 443), 'https://box.ts.net/');
+  assert.equal(httpsLocation('evil.com/@x', '/', 7400), null);
+  assert.equal(httpsLocation('', '/', 7400), null);
+  assert.equal(httpsLocation('box.ts.net', '//evil.com', 7400), 'https://box.ts.net:7400//evil.com');
+});
+
+test('httpsLocation expands the short MagicDNS name to the full one', async () => {
+  const { httpsLocation } = await import('../server.js');
+  assert.equal(httpsLocation('box', '/', 7400, 'box.tail1.ts.net'), 'https://box.tail1.ts.net:7400/');
+  assert.equal(httpsLocation('other', '/', 7400, 'box.tail1.ts.net'), 'https://other:7400/');
+});

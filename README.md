@@ -22,16 +22,25 @@ Open <http://127.0.0.1:7400>. Node 20 or later is necessary.
 | `HERDR_APP_DIR`     | `~/.config/herdr-app` (space colours, agent store, icons; read only) |
 | `HERDR_MONITOR_DIR` | `~/.config/herdr-monitor` (push keys and subscriptions, mode 600)  |
 | `VAPID_SUBJECT`     | `mailto:herdr-monitor@localhost`                                   |
+| `REDIRECT_PORT`     | `7480` (http → https helper for Tailscale Serve; `0` turns it off) |
+| `HTTPS_PORT`        | `$PORT` (the https port the redirect points to)                    |
 
 ### On a phone
 
 Use Tailscale Serve for https (Web Push and the service worker need it):
 
     tailscale serve --bg --https=7400 http://127.0.0.1:7400
+    tailscale serve --bg --http=80 http://127.0.0.1:7480   # optional: http → https
 
-Open `https://<machine>.<tailnet>.ts.net:7400`. On iPhone, tap Share → Add
-to Home Screen, then open the app from the Home Screen. iOS sends Web Push
-only to a home-screen app.
+Open `https://<machine>.<tailnet>.ts.net:7400`. With the second line,
+`http://<machine>` and `http://<machine>.<tailnet>.ts.net` redirect there
+(the server answers on 127.0.0.1:7480; `REDIRECT_PORT=0` turns it off).
+`http://…:7400` cannot redirect: that port speaks only https.
+
+To install: tap the bell. Chrome on Android and desktop gets an Install
+button. On iPhone, follow the steps in the menu (Share → Add to Home Screen),
+then open the app from the Home Screen. iOS sends Web Push only to a
+home-screen app.
 
 ## What it shows
 
