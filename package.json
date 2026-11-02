@@ -1,0 +1,13 @@
+{
+  "name": "herdr-monitor",
+  "version": "0.1.0",
+  "description": "Watch and answer coding agents running in Herdr (hc) from a browser.",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test test/*.test.js"
+  }
+}

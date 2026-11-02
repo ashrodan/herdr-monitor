@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Herdr Monitor</title>
+<style>
+:root {
+  --bg: #f6f5f2; --panel: #ffffff; --ink: #1d1c1a; --muted: #6b6862; --line: #e3e0da;
+  --accent: #2f5bd3; --working: #2f5bd3; --idle: #8a877f; --done: #23854f; --blocked: #c27a00; --error: #c4372c;
+  --code-bg: #14171c; --code-ink: #d8dee9;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #111214; --panel: #191b1f; --ink: #e8e6e1; --muted: #9a978f; --line: #2a2d33;
+    --accent: #7d9cff; --working: #7d9cff; --idle: #7f7c75; --done: #4cc38a; --blocked: #f0a83a; --error: #f06a5f;
+    --code-bg: #0c0d10; }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--ink); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+.app { display: grid; grid-template-columns: 320px 1fr; height: 100vh; }
+aside { border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+.brand { padding: 14px 16px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 8px; }
+.brand h1 { font-size: 15px; margin: 0; font-weight: 650; }
+.conn { margin-left: auto; font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.filters { padding: 8px 16px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); display: flex; gap: 12px; }
+.list { overflow: auto; flex: 1; }
+.item { padding: 10px 16px; border-bottom: 1px solid var(--line); cursor: pointer; display: grid; grid-template-columns: 12px 1fr auto; gap: 4px 10px; align-items: baseline; }
+.item:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.item.sel { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.item .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item .addr { font: 12px var(--mono); color: var(--muted); }
+.item .sub { grid-column: 2 / 4; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--idle); display: inline-block; }
+.dot.working { background: var(--working); animation: pulse 1.4s ease-in-out infinite; }
+.dot.done { background: var(--done); } .dot.blocked { background: var(--blocked); } .dot.error { background: var(--error); }
+.dot.off { background: var(--error); } .dot.on { background: var(--done); }
+@keyframes pulse { 50% { opacity: .35; } }
+main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.empty { margin: auto; color: var(--muted); }
+header.detail { padding: 14px 20px 0; background: var(--panel); border-bottom: 1px solid var(--line); }
+.title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.title-row h2 { margin: 0; font-size: 17px; }
+.pill { font-size: 12px; padding: 1px 8px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); }
+.pill.working { color: var(--working); border-color: currentColor; } .pill.blocked { color: var(--blocked); border-color: currentColor; }
+.pill.error { color: var(--error); border-color: currentColor; } .pill.done { color: var(--done); border-color: currentColor; }
+.meta { color: var(--muted); font-size: 12px; margin-top: 4px; font-family: var(--mono); overflow-wrap: anywhere; }
+.msg { margin-top: 6px; }
+.progress { height: 3px; background: var(--line); border-radius: 2px; margin-top: 8px; overflow: hidden; }
+.progress > i { display: block; height: 100%; background: var(--accent); }
+.tabs { display: flex; gap: 4px; margin-top: 12px; }
+.tabs button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 12px; font: inherit; color: var(--muted); cursor: pointer; }
+.tabs button.on { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+.pane { flex: 1; min-height: 0; overflow: auto; }
+pre.out { margin: 0; padding: 14px 20px; background: var(--code-bg); color: var(--code-ink); font: 12.5px/1.4 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; min-height: 100%; }
+.reply { border-top: 1px solid var(--line); background: var(--panel); padding: 10px 20px; display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: end; }
+.reply textarea { font: 13px var(--mono); padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); resize: vertical; min-height: 38px; max-height: 200px; }
+.reply .note { grid-column: 1 / -1; font-size: 12px; color: var(--muted); min-height: 16px; }
+.reply .note.warn { color: var(--blocked); } .reply .note.err { color: var(--error); }
+button.btn { font: inherit; padding: 8px 14px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; }
+button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.btn:disabled { opacity: .45; cursor: default; }
+.commits { padding: 16px 20px; }
+.pr { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; background: var(--panel); margin-bottom: 14px; }
+.pr a { color: var(--accent); text-decoration: none; font-weight: 600; }
+.pr .facts { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 6px; }
+.add { color: var(--done); } .del { color: var(--error); }
+.commit { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); margin-bottom: 6px; }
+.commit > .row { display: grid; grid-template-columns: 76px 1fr auto; gap: 10px; padding: 8px 12px; cursor: pointer; align-items: baseline; }
+.commit .sha { font: 12px var(--mono); color: var(--accent); }
+.commit .who { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.commit .tag { font-size: 11px; color: var(--blocked); border: 1px solid currentColor; border-radius: 99px; padding: 0 6px; margin-left: 6px; }
+.commit .body { border-top: 1px solid var(--line); padding: 10px 12px; font-size: 13px; }
+.commit .body pre { margin: 0 0 10px; white-space: pre-wrap; font: 12.5px/1.45 var(--mono); }
+.files { width: 100%; border-collapse: collapse; font: 12px var(--mono); }
+.files td { padding: 2px 6px; border-top: 1px solid var(--line); }
+.files td.n { text-align: right; width: 60px; }
+.muted { color: var(--muted); }
+@media (max-width: 760px) {
+  .app { grid-template-columns: 1fr; grid-template-rows: 40vh 1fr; }
+  aside { border-right: 0; border-bottom: 1px solid var(--line); }
+  .reply { grid-template-columns: 1fr auto; } .reply .btn:last-of-type { grid-column: 2; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <div class="brand"><h1>Herdr Monitor</h1><span class="conn"><span id="connDot" class="dot off"></span><span id="connText">connecting</span></span></div>
+    <div class="filters"><label><input type="checkbox" id="showShells"> show shells</label><label><input type="checkbox" id="showFinished"> show finished</label></div>
+    <div class="list" id="list"></div>
+  </aside>
+  <main id="main"><div class="empty">Select an agent.</div></main>
+</div>
+<script>
+const state = { terminals: new Map(), selected: null, tab: 'output', commits: null, openCommit: null };
+const $ = (s, el = document) => el.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const SHELLS = new Set(['zsh', 'bash', 'fish', 'sh', 'nu', 'pwsh']);
+const RANK = { blocked: 0, error: 1, working: 2, done: 3, idle: 4 };
+const stateOf = (t) => t.state === 'finished' ? 'finished' : (t.status?.state || 'idle');
+const isAgent = (t) => t.reported || !SHELLS.has(t.agent);
+const ago = (iso) => { const s = (Date.now() - new Date(iso)) / 1000; return s < 90 ? 'just now' : s < 5400 ? `${Math.round(s / 60)}m ago` : s < 129600 ? `${Math.round(s / 3600)}h ago` : `${Math.round(s / 86400)}d ago`; };
+try { $('#showShells').checked = localStorage.getItem('shells') === '1'; $('#showFinished').checked = localStorage.getItem('finished') === '1'; } catch {}
+
+function renderList() {
+  const showShells = $('#showShells').checked, showFinished = $('#showFinished').checked;
+  const rows = [...state.terminals.values()]
+    .filter((t) => (showShells || isAgent(t)) && (showFinished || t.state !== 'finished'))
+    .sort((a, b) => (RANK[stateOf(a)] ?? 9) - (RANK[stateOf(b)] ?? 9) || a.address.localeCompare(b.address, undefined, { numeric: true }));
+  $('#list').innerHTML = rows.map((t) => {
+    const st = stateOf(t);
+    const sub = t.status?.msg || t.title || t.where || t.cwd;
+    return `<div class="item ${t.address === state.selected ? 'sel' : ''}" data-a="${esc(t.address)}">
+      <span class="dot ${st}"></span><span class="name">${esc(t.name || t.agent)}</span><span class="addr">${esc(t.address)}</span>
+      <span class="sub" title="${esc(sub)}">${esc(sub)}</span></div>`;
+  }).join('') || '<div class="empty" style="padding:20px">No agents running.</div>';
+}
+
+function renderDetail() {
+  const t = state.terminals.get(state.selected);
+  if (!t) { $('#main').innerHTML = '<div class="empty">Select an agent.</div>'; return; }
+  const st = stateOf(t);
+  const prog = t.status?.progress;
+  const header = `
+    <div class="title-row"><h2>${esc(t.name || t.agent)}</h2><span class="pill ${st}">${esc(st)}${t.status?.kind ? ' · ' + esc(t.status.kind) : ''}</span><span class="meta">${esc(t.address)}${t.where ? ' · ' + esc(t.where) : ''}</span></div>
+    <div class="meta">${esc(t.cwd)}</div>
+    ${t.status?.msg || t.title ? `<div class="msg">${esc(t.status?.msg || t.title)}</div>` : ''}
+    ${prog != null ? `<div class="progress"><i style="width:${Math.min(100, prog)}%"></i></div>` : ''}`;
+  if (!$('#detailHeader')) {
+    $('#main').innerHTML = `
+      <header class="detail"><div id="detailHeader"></div>
+        <div class="tabs"><button data-tab="output">Output</button><button data-tab="commits">Commits</button></div></header>
+      <div class="pane" id="pane"></div>
+      <form class="reply" id="reply">
+        <textarea id="text" rows="1" placeholder="Reply to the agent (Enter sends, Shift+Enter new line)"></textarea>
+        <button class="btn primary" type="submit" id="sendBtn">Send</button>
+        <button class="btn" type="button" id="intBtn">Interrupt</button>
+        <div class="note" id="note"></div>
+      </form>`;
+    bindDetail();
+  }
+  $('#detailHeader').innerHTML = header;
+  document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === state.tab));
+  const blocked = st === 'blocked', finished = t.state === 'finished';
+  $('#sendBtn').disabled = blocked || finished;
+  $('#intBtn').disabled = finished;
+  const note = $('#note');
+  if (blocked) { note.className = 'note warn'; note.textContent = `Waiting at a ${t.status?.kind || 'dialog'}. Answer it in Herdr; this page does not answer approvals.`; }
+  else if (finished) { note.className = 'note'; note.textContent = `Finished${t.exit_code != null ? ' with exit code ' + t.exit_code : ''}.`; }
+  else if (note.classList.contains('warn')) { note.className = 'note'; note.textContent = ''; }
+}
+
+function bindDetail() {
+  document.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => { state.tab = b.dataset.tab; history.replaceState(null, '', `#${state.selected}/${state.tab}`); renderDetail(); loadPane(true); });
+  const text = $('#text');
+  text.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#reply').requestSubmit(); } };
+  $('#reply').onsubmit = async (e) => {
+    e.preventDefault();
+    const value = text.value; if (!value.trim()) return;
+    const note = $('#note');
+    note.className = 'note'; note.textContent = 'Sending...';
+    const r = await post(`/api/terminals/${state.selected}/send`, { text: value });
+    if (r.ok) { text.value = ''; note.textContent = 'Sent.'; setTimeout(() => loadPane(), 600); }
+    else { note.className = 'note err'; note.textContent = `Not sent: ${r.body.error}`; }
+  };
+  $('#intBtn').onclick = async () => {
+    const r = await post(`/api/terminals/${state.selected}/interrupt`, {});
+    const note = $('#note'); note.className = r.ok ? 'note' : 'note err';
+    note.textContent = r.ok ? `Interrupt: ${JSON.stringify(r.body).slice(0, 120)}` : `Interrupt failed: ${r.body.error}`;
+  };
+}
+
+async function post(url, body) {
+  const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  return { ok: res.ok, body: await res.json().catch(() => ({})) };
+}
+
+let loadSeq = 0;
+async function loadPane(reset = false) {
+  const addr = state.selected; if (!addr || !$('#pane')) return;
+  const seq = ++loadSeq;
+  const pane = $('#pane');
+  if (state.tab === 'output') {
+    // Screen only by default: reading history makes hc scroll a full-screen
+    // agent, which takes seconds. History is loaded on request.
+    if (reset) { state.history = false; pane.innerHTML = '<pre class="out">Loading...</pre>'; }
+    if (state.reading && !reset) return;
+    state.reading = true;
+    const atBottom = reset || pane.scrollHeight - pane.scrollTop - pane.clientHeight < 40;
+    const lines = state.history ? 300 : 0;
+    let r;
+    try { r = await fetch(`/api/terminals/${addr}/read?lines=${lines}`).then((r) => r.json()); }
+    finally { state.reading = false; }
+    if (seq !== loadSeq || state.tab !== 'output' || addr !== state.selected) return;
+    const more = state.history ? '' : '<button class="btn" id="historyBtn" style="margin:10px 20px">Load history</button>';
+    pane.innerHTML = `${more}<pre class="out">${esc(r.text ?? r.error ?? '')}</pre>`;
+    $('#historyBtn')?.addEventListener('click', (e) => { state.history = true; e.target.textContent = 'Loading history...'; e.target.disabled = true; loadPane(); });
+    if (atBottom && !state.history) pane.scrollTop = pane.scrollHeight;
+  } else {
+    if (reset) pane.innerHTML = '<div class="commits muted">Loading commits...</div>';
+    const data = await fetch(`/api/terminals/${addr}/commits${reset ? '' : '?fresh'}`).then((r) => r.json());
+    if (seq !== loadSeq || state.tab !== 'commits') return;
+    state.commits = data;
+    renderCommits();
+  }
+}
+
+function renderCommits() {
+  const d = state.commits, pane = $('#pane');
+  if (!d || d.error) { pane.innerHTML = `<div class="commits muted">${esc(d?.error || 'No data')}</div>`; return; }
+  if (!d.repo) { pane.innerHTML = `<div class="commits muted">${esc(d.reason)}</div>`; return; }
+  const facts = [
+    `branch <b>${esc(d.branch)}</b>`, d.base && `base ${esc(d.base)}`,
+    d.unpushed != null ? `${d.unpushed} unpushed` : 'no upstream',
+    d.dirty ? `${d.dirty} uncommitted file${d.dirty > 1 ? 's' : ''}` : 'clean tree',
+  ].filter(Boolean);
+  const pr = d.pr ? `
+    <div class="pr"><a href="${esc(d.pr.url)}" target="_blank" rel="noopener">#${d.pr.number} ${esc(d.pr.title)}</a>
+      <div class="facts"><span>${esc(d.pr.isDraft ? 'draft' : d.pr.state.toLowerCase())}</span><span>${esc(d.pr.baseRefName)} ← ${esc(d.pr.headRefName)}</span>
+      <span><span class="add">+${d.pr.additions}</span> <span class="del">−${d.pr.deletions}</span> in ${d.pr.changedFiles} files</span>
+      <span>${d.commits.filter((c) => !c.local).length} commits</span>${facts.map((f) => `<span>${f}</span>`).join('')}</div></div>`
+    : `<div class="pr"><span class="muted">No PR for this branch. Commits since ${esc(d.base)}:</span><div class="facts">${facts.map((f) => `<span>${f}</span>`).join('')}</div></div>`;
+  const list = d.commits.map((c) => `
+    <div class="commit" data-sha="${esc(c.sha)}"><div class="row"><span class="sha">${esc(c.sha.slice(0, 8))}</span>
+      <span>${esc(c.subject)}${c.local ? '<span class="tag">not pushed</span>' : ''}</span><span class="who">${esc(c.author)} · ${esc(ago(c.date))}</span></div>
+      ${state.openCommit?.sha === c.sha ? commitBody(state.openCommit) : ''}</div>`).join('') || '<div class="muted">No commits on this branch yet.</div>';
+  pane.innerHTML = `<div class="commits">${pr}${list}</div>`;
+  pane.querySelectorAll('.commit .row').forEach((row) => row.onclick = () => toggleCommit(row.parentElement.dataset.sha));
+}
+
+function commitBody(c) {
+  if (c.loading) return '<div class="body muted">Loading...</div>';
+  if (c.error) return `<div class="body muted">${esc(c.error)}</div>`;
+  const files = c.files.map((f) => `<tr><td>${esc(f.file)}</td><td class="n add">${f.additions ?? 'bin'}</td><td class="n del">${f.deletions ?? ''}</td></tr>`).join('');
+  return `<div class="body"><pre>${esc(c.message)}</pre><div class="muted" style="font-size:12px;margin-bottom:6px">${esc(c.author)} · ${esc(new Date(c.date).toLocaleString())}</div>
+    <table class="files">${files}</table></div>`;
+}
+
+async function toggleCommit(sha) {
+  if (state.openCommit?.sha === sha) { state.openCommit = null; renderCommits(); return; }
+  state.openCommit = { sha, loading: true }; renderCommits();
+  const res = await fetch(`/api/terminals/${state.selected}/commits/${sha}`);
+  const body = await res.json();
+  if (state.openCommit?.sha !== sha) return;
+  state.openCommit = res.ok ? { ...body, sha } : { sha, error: body.error === 'bad sha' ? body.error : 'Commit is not in the local clone yet (git fetch to see it).' };
+  renderCommits();
+}
+
+function select(addr, tab) {
+  if (tab) state.tab = tab;
+  if (state.selected !== addr) { state.selected = addr; state.commits = null; state.openCommit = null; $('#main').innerHTML = ''; }
+  history.replaceState(null, '', `#${addr}/${state.tab}`);
+  renderList(); renderDetail(); loadPane(true);
+}
+$('#list').onclick = (e) => { const item = e.target.closest('.item'); if (item) select(item.dataset.a); };
+// Deep link: #t2s/commits selects an agent and a tab.
+let pendingHash = (location.hash.slice(1).match(/^([^/]+)(?:\/(output|commits))?$/) || []).slice(1);
+['showShells', 'showFinished'].forEach((id) => $('#' + id).onchange = (e) => { try { localStorage.setItem(id === 'showShells' ? 'shells' : 'finished', e.target.checked ? '1' : '0'); } catch {} renderList(); });
+
+function setConn(on) { $('#connDot').className = 'dot ' + (on ? 'on' : 'off'); $('#connText').textContent = on ? 'live' : 'hc offline'; }
+const es = new EventSource('/api/events');
+es.addEventListener('snapshot', (e) => { const d = JSON.parse(e.data); state.terminals = new Map(d.terminals.map((t) => [t.address, t])); setConn(d.connected); renderList(); renderDetail();
+  if (pendingHash[0] && state.terminals.has(pendingHash[0])) { const [a, t] = pendingHash; pendingHash = []; select(a, t); } });
+es.addEventListener('terminal', (e) => {
+  const t = JSON.parse(e.data); const prev = state.terminals.get(t.address);
+  state.terminals.set(t.address, t); renderList();
+  if (t.address === state.selected) { renderDetail(); if (stateOf(prev || {}) !== stateOf(t)) loadPane(); }
+});
+es.addEventListener('removed', (e) => { state.terminals.delete(JSON.parse(e.data).address); renderList(); renderDetail(); });
+es.addEventListener('connection', (e) => setConn(JSON.parse(e.data).connected));
+es.onerror = () => setConn(false);
+
+// While the selected agent works, keep its output fresh.
+setInterval(() => { const t = state.terminals.get(state.selected); if (t && state.tab === 'output' && !state.history && stateOf(t) === 'working') loadPane(); }, 2500);
+</script>
+</body>
+</html>
