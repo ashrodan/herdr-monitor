@@ -10,6 +10,7 @@ import { HcConnection, defaultSocket, summarize } from './lib/hc.js';
 import { repoCommits, commitDetail } from './lib/git.js';
 import { buildLayout, repoInfo, terminalsIn } from './lib/sidebar.js';
 import { prStatus } from './lib/pr.js';
+import { chatFor } from './lib/transcript.js';
 import { loadVapid, Subscriptions, sendPush } from './lib/push.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -427,6 +428,13 @@ const routes = [
     const t = terminalOr404(res, addr); if (!t) return;
     if (t.state !== 'live') return send(res, 409, { error: 'terminal is not live' });
     attachStream(req, res, t);
+  }],
+  ['GET', /^\/api\/terminals\/([^/]+)\/chat$/, async (req, res, [addr], url) => {
+    const t = terminalOr404(res, addr); if (!t) return;
+    const chat = await chatFor(t.pid);
+    // The page polls: answer "no change" without the body when it has this version.
+    if (chat.available && url.searchParams.get('v') === chat.version) return send(res, 200, { unchanged: true, version: chat.version });
+    send(res, 200, chat);
   }],
   ['GET', /^\/api\/terminals\/([^/]+)\/read$/, async (req, res, [addr], url) => {
     if (!terminalOr404(res, addr)) return;

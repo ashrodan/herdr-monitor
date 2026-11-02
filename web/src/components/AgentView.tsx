@@ -10,7 +10,8 @@ import { displayName, markSeen, rawStateOf, shortPath } from '@/model';
 import { back, go, type AgentTab } from '@/route';
 import type { PrStatus } from '@/types';
 import { CommitsPane } from './CommitsPane';
-// xterm.js is large: load it only when a live terminal opens.
+// xterm.js and the Markdown renderer are large: load them when first used.
+const ChatPane = lazy(() => import('./ChatPane').then((m) => ({ default: m.ChatPane })));
 const LiveTerminal = lazy(() => import('./LiveTerminal').then((m) => ({ default: m.LiveTerminal })));
 import { StatusPane } from './StatusPane';
 import { Glyph } from './marks';
@@ -75,7 +76,7 @@ export function AgentView({ live, addr, tab }: { live: Live; addr: string; tab: 
       {t.status?.progress != null && <div className="h-0.5 bg-border"><div className="h-full bg-working" style={{ width: `${Math.min(100, t.status.progress)}%` }} /></div>}
 
       <div className="min-h-0 flex-1">
-        {tab === 'output' && <Output addr={addr} live={t.state === 'live'} cols={t.cols || 80} rows={t.rows || 24} working={st === 'working'} stateKey={st} />}
+        {tab === 'output' && <Output addr={addr} live={t.state === 'live'} claude={isClaude(t)} cols={t.cols || 80} rows={t.rows || 24} working={st === 'working'} stateKey={st} />}
         {tab === 'commits' && <CommitsPane addr={addr} />}
         {tab === 'status' && <StatusPane addr={addr} data={pr} onData={setPr} />}
       </div>
@@ -93,23 +94,33 @@ function Header({ onBack, children }: { onBack: () => void; children: React.Reac
   );
 }
 
-// Output: the live terminal (default), or the screen as plain text, which
-// wraps on a narrow phone and can load the scrollback.
+// Output, three ways:
+// - Chat: Claude Code's own conversation (Claude agents only; their default);
+// - Live: the real terminal, read only;
+// - Text: the screen as text that wraps, with Load history.
 const MODE_KEY = 'herdr-monitor.output';
-function Output({ addr, live, cols, rows, working, stateKey }: { addr: string; live: boolean; cols: number; rows: number; working: boolean; stateKey: string }) {
-  const [mode, setMode] = useState(() => localStorage.getItem(MODE_KEY) || 'live');
-  const pick = (m: string) => { setMode(m); try { localStorage.setItem(MODE_KEY, m); } catch { /* private mode */ } };
-  const showLive = mode === 'live' && live;
+type Mode = 'chat' | 'live' | 'text';
+const isClaude = (t: { agent: string; status: { app?: string } | null }) => t.status?.app === 'claude-code' || /^claude/.test(t.agent);
+
+function Output({ addr, live, claude, cols, rows, working, stateKey }: { addr: string; live: boolean; claude: boolean; cols: number; rows: number; working: boolean; stateKey: string }) {
+  const [stored, setStored] = useState<Mode>(() => (localStorage.getItem(MODE_KEY) as Mode) || 'chat');
+  const pick = (m: Mode) => { setStored(m); try { localStorage.setItem(MODE_KEY, m); } catch { /* private mode */ } };
+  const modes: Mode[] = [...(claude ? ['chat' as const] : []), ...(live ? ['live' as const] : []), 'text'];
+  const mode: Mode = modes.includes(stored) ? stored : modes.includes('live') ? 'live' : 'text';
+  const LABEL: Record<Mode, string> = { chat: 'Chat', live: 'Live', text: 'Text' };
   return (
     <div className="relative h-full">
-      {showLive
-        ? <Suspense fallback={<div className="h-full bg-code" />}><LiveTerminal addr={addr} cols={cols} rows={rows} /></Suspense>
-        : <OutputPane addr={addr} working={working} stateKey={stateKey} />}
-      {live && (
-        <div className="absolute top-2 right-3 z-10 flex overflow-hidden rounded-md border border-white/10 bg-black/70 text-[11px] text-code-foreground backdrop-blur">
-          {(['live', 'text'] as const).map((m) => (
-            <button key={m} onClick={() => pick(m)} className={cn('px-2.5 py-1', mode === m ? 'bg-white/15 font-medium' : 'opacity-70')}>
-              {m === 'live' ? 'Live' : 'Text'}
+      <Suspense fallback={<div className="h-full bg-code" />}>
+        {mode === 'chat' && <ChatPane addr={addr} working={working} />}
+        {mode === 'live' && <LiveTerminal addr={addr} cols={cols} rows={rows} />}
+      </Suspense>
+      {mode === 'text' && <OutputPane addr={addr} working={working} stateKey={stateKey} />}
+      {modes.length > 1 && (
+        <div className={cn('absolute top-2 right-3 z-10 flex overflow-hidden rounded-md border text-[11px] backdrop-blur',
+          mode === 'chat' ? 'border-border bg-card/80 text-foreground' : 'border-white/10 bg-black/70 text-code-foreground')}>
+          {modes.map((m) => (
+            <button key={m} onClick={() => pick(m)} className={cn('px-2.5 py-1', mode === m ? (mode === 'chat' ? 'bg-accent font-medium' : 'bg-white/15 font-medium') : 'opacity-70')}>
+              {LABEL[m]}
             </button>
           ))}
         </div>
