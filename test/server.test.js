@@ -10,7 +10,7 @@ test('sameOrigin only accepts the page own origin', () => {
   assert.equal(sameOrigin(req('not a url')), false);
 });
 
-test('publicFile serves known types inside public/ only', async () => {
+test('publicFile serves known types inside dist/ only', async () => {
   const { publicFile } = await import('../server.js');
   const root = '/srv/public';
   assert.equal(publicFile('/', root), '/srv/public/index.html');

@@ -200,10 +200,13 @@ const MIME = {
   '.webmanifest': 'application/manifest+json',
   '.png': 'image/png',
   '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
 };
-const PUBLIC = path.join(HERE, 'public');
+// The Vite build of web/ (npm run build).
+const PUBLIC = path.join(HERE, 'dist');
 
-// Resolve a URL path to a file in public/, or null. No traversal, fixed types.
+// Resolve a URL path to a file in dist/, or null. No traversal, fixed types.
 export function publicFile(urlPath, root = PUBLIC) {
   let rel;
   try { rel = decodeURIComponent(urlPath); } catch { return null; }
@@ -217,8 +220,14 @@ async function serveStatic(req, res, url) {
   const file = publicFile(url.pathname);
   if (!file) return false;
   let body;
-  try { body = await fs.readFile(file); } catch { return false; }
-  res.writeHead(200, { 'content-type': MIME[path.extname(file)], 'cache-control': 'no-cache' });
+  try { body = await fs.readFile(file); } catch {
+    if (url.pathname !== '/') return false;
+    send(res, 503, 'The web UI is not built yet. Run `npm run build` (or `npm run dev`).', 'text/plain; charset=utf-8');
+    return true;
+  }
+  // Vite puts a content hash in asset names: those can be cached for good.
+  const immutable = url.pathname.startsWith('/assets/');
+  res.writeHead(200, { 'content-type': MIME[path.extname(file)], 'cache-control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache' });
   res.end(body);
   return true;
 }
