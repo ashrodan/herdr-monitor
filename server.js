@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import http from 'node:http';
 import { spawn, execFile } from 'node:child_process';
 import { openSync, closeSync } from 'node:fs';
+import zlib from 'node:zlib';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,6 +14,7 @@ import { buildLayout, repoInfo, terminalsIn } from './lib/sidebar.js';
 import { prStatus } from './lib/pr.js';
 import { chatFor } from './lib/transcript.js';
 import { loadVapid, Subscriptions, sendPush } from './lib/push.js';
+import { answerKeys, currentQuestion } from './lib/answer.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOST = process.env.HOST || '127.0.0.1';
@@ -248,8 +250,16 @@ async function start() {
 // ---- HTTP ----
 
 function send(res, code, body, type = 'application/json; charset=utf-8') {
-  res.writeHead(code, { 'content-type': type, 'cache-control': 'no-store' });
-  res.end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body));
+  let data = typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body);
+  const headers = { 'content-type': type, 'cache-control': 'no-store' };
+  // Big answers (a long transcript is ~700 KB) go gzipped: over Tailscale to a
+  // phone that is most of the wait.
+  if (data.length > 16 * 1024 && /\bgzip\b/.test(res.req?.headers['accept-encoding'] || '')) {
+    data = zlib.gzipSync(data, { level: 4 });
+    headers['content-encoding'] = 'gzip'; headers.vary = 'accept-encoding';
+  }
+  res.writeHead(code, headers);
+  res.end(data);
 }
 
 function readJson(req, limit = 64 * 1024) {
@@ -510,6 +520,22 @@ const routes = [
     const { keys } = await readJson(req);
     if (!Array.isArray(keys) || !keys.length || keys.length > 20 || !keys.every(isDialogKey)) return send(res, 400, { error: 'keys: up to 20 of up, down, left, right, tab, shift+tab, space, enter, esc, backspace, a-z, 0-9' });
     send(res, 200, await rpc.call('terminal.keys', { terminal: addr, keys }));
+  }],
+  // Tap an option of the question form on screen: read the screen to find
+  // which question it shows, then press the keys a person would.
+  // Body: {questions: [{question, options, multi}], q, option} or {questions, action: 'submit'}.
+  ['POST', /^\/api\/terminals\/([^/]+)\/answer$/, async (req, res, [addr]) => {
+    if (!terminalOr404(res, addr)) return;
+    const { questions, q = 0, option = 0, action = 'pick' } = await readJson(req);
+    if (!Array.isArray(questions) || !questions.length || questions.length > 10) return send(res, 400, { error: 'questions required' });
+    const qs = questions.map((x) => ({ question: String(x?.question || ''), options: Number(x?.options) | 0, multi: x?.multi === true }));
+    if (action !== 'submit' && !(Number.isInteger(q) && q >= 0 && q < qs.length && Number.isInteger(option) && option >= 0 && option < qs[q].options)) return send(res, 400, { error: 'no such option' });
+    const screen = await rpc.call('terminal.read', { terminal: addr, lines: 80 });
+    const current = currentQuestion(String(screen?.text ?? ''), qs.map((x) => x.question));
+    if (current < 0) return send(res, 409, { error: 'the question form is not on screen' });
+    const keys = answerKeys({ current, total: qs.length, q, option, rows: (qs[q]?.options || 0) + 1, multi: qs[q]?.multi, action });
+    for (let i = 0; i < keys.length; i += 20) await rpc.call('terminal.keys', { terminal: addr, keys: keys.slice(i, i + 20) });
+    send(res, 200, { ok: true, keys });
   }],
   // An image for the agent: hc keeps it beside the terminal (on its machine,
   // removed with the terminal) and returns its path; the page puts the path

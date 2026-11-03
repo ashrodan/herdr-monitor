@@ -71,7 +71,7 @@ export function AgentView({ live, addr, tab }: { live: Live; addr: string; tab: 
       {t.status?.progress != null && <div className="h-0.5 bg-border"><div className="h-full bg-working" style={{ width: `${Math.min(100, t.status.progress)}%` }} /></div>}
 
       <div className="min-h-0 flex-1">
-        {tab === 'output' && <Output addr={addr} live={t.state === 'live'} chat={hasChat(t)} outbox={outbox} delivered={delivered} cols={t.cols || 80} rows={t.rows || 24} working={st === 'working'} stateKey={st} />}
+        {tab === 'output' && <Output addr={addr} live={t.state === 'live'} chat={hasChat(t)} outbox={outbox} delivered={delivered} cols={t.cols || 80} rows={t.rows || 24} working={st === 'working'} blocked={st === 'blocked'} stateKey={st} />}
         {tab === 'commits' && <CommitsPane addr={addr} />}
         {tab === 'status' && <StatusPane addr={addr} data={pr} onData={setPr} />}
       </div>
@@ -99,7 +99,7 @@ type Mode = 'chat' | 'live' | 'text';
 const CHAT_APPS = /^(claude|claude-code|omp|pi)$/;
 const hasChat = (t: { agent: string; status: { app?: string } | null }) => CHAT_APPS.test(t.status?.app || '') || CHAT_APPS.test(t.agent);
 
-function Output({ addr, live, chat, outbox, delivered, cols, rows, working, stateKey }: { addr: string; live: boolean; chat: boolean; outbox: Sent[]; delivered: (ids: number[]) => void; cols: number; rows: number; working: boolean; stateKey: string }) {
+function Output({ addr, live, chat, outbox, delivered, cols, rows, working, blocked, stateKey }: { addr: string; live: boolean; chat: boolean; outbox: Sent[]; delivered: (ids: number[]) => void; cols: number; rows: number; working: boolean; blocked: boolean; stateKey: string }) {
   const [stored, setStored] = useState<Mode>(() => (localStorage.getItem(MODE_KEY) as Mode) || 'chat');
   const pick = (m: Mode) => { setStored(m); try { localStorage.setItem(MODE_KEY, m); } catch { /* private mode */ } };
   const modes: Mode[] = [...(chat ? ['chat' as const] : []), ...(live ? ['live' as const] : []), 'text'];
@@ -108,7 +108,7 @@ function Output({ addr, live, chat, outbox, delivered, cols, rows, working, stat
   return (
     <div className="relative h-full">
       <Suspense fallback={<div className="h-full bg-code" />}>
-        {mode === 'chat' && <ChatPane addr={addr} working={working} outbox={outbox} delivered={delivered} />}
+        {mode === 'chat' && <ChatPane addr={addr} working={working} blocked={blocked} outbox={outbox} delivered={delivered} />}
         {mode === 'live' && <LiveTerminal addr={addr} cols={cols} rows={rows} />}
       </Suspense>
       {mode === 'text' && <OutputPane addr={addr} working={working} stateKey={stateKey} />}
@@ -236,7 +236,7 @@ function Composer({ addr, blocked, finished, kind, exitCode, onSent }: { addr: s
   // Keep focus (and so the keyboard) in the box when a button is tapped.
   const keepFocus = (e: React.PointerEvent | React.MouseEvent) => e.preventDefault();
 
-  const info = blocked ? `Waiting at a ${kind || 'dialog'}. Answer with the keys below (Live shows the dialog), or type a reply.`
+  const info = blocked ? `Waiting at a ${kind || 'dialog'}. Tap an answer in Chat, or type one here.`
     : finished ? `Finished${exitCode != null ? ` with exit code ${exitCode}` : ''}.` : null;
 
   return (
@@ -289,32 +289,8 @@ function Composer({ addr, blocked, finished, kind, exitCode, onSent }: { addr: s
           </Button>
         </div>
       </div>
-      {blocked && <DialogKeys addr={addr} onNote={setNote} />}
     </form>
   );
 }
 
 interface Attached { id: string; url: string; state: 'uploading' | 'ready' | 'error'; path?: string; error?: string }
-
-// Keys to answer a dialog (an ask form, a permission prompt): move, pick, submit.
-const DIALOG_KEYS: { key: string; label: string; wide?: boolean }[] = [
-  { key: 'up', label: '↑' }, { key: 'down', label: '↓' }, { key: 'left', label: '←' }, { key: 'right', label: '→' },
-  { key: 'tab', label: 'Tab' }, { key: 'space', label: 'Space' }, { key: 'enter', label: 'Enter', wide: true }, { key: 'esc', label: 'Esc' },
-];
-function DialogKeys({ addr, onNote }: { addr: string; onNote: (n: { text: string; tone?: 'err' } | null) => void }) {
-  const press = async (key: string) => {
-    const r = await post(`/api/terminals/${addr}/keys`, { keys: [key] });
-    if (!r.ok) onNote({ text: `Key not sent: ${r.body.error}`, tone: 'err' });
-  };
-  return (
-    <div className="flex gap-1 px-1 pt-2 pb-1" role="group" aria-label="Dialog keys">
-      {DIALOG_KEYS.map((k) => (
-        <Button key={k.key} type="button" variant="outline" size="sm" onClick={() => press(k.key)}
-          onPointerDown={(e) => e.preventDefault()} aria-label={`Press ${k.key}`}
-          className={cn('h-9 min-w-0 flex-1 px-0 text-[13px]', k.wide && 'flex-[1.4] border-blocked/60 font-medium text-blocked')}>
-          {k.label}
-        </Button>
-      ))}
-    </div>
-  );
-}
