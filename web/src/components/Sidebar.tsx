@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { GitBranch } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Live } from '@/live';
-import { age, displayName, groupAgents, spaceState, stateOf } from '@/model';
+import { age, agentTrees, displayName, groupAgents, spaceState, stateOf } from '@/model';
 import type { Space, Terminal } from '@/types';
 import { open, spaceRoute } from '@/route';
 import { Glyph, SpaceAvatar, StatusMark } from './marks';
@@ -37,9 +37,10 @@ export function SpacesList({ live, selected }: { live: Live; selected?: string }
   );
 }
 
-// Agents two ways: by state (default, flat), or by space (each space in
-// Herdr's order, worktrees under their repo, its agents under it).
-type AgentsView = 'state' | 'space';
+// Agents three ways: by state (default, flat); by space (each space in
+// Herdr's order, worktrees under their repo, its agents under it); nested
+// (each agent with the sub-agents and terminals it started).
+type AgentsView = 'state' | 'space' | 'nested';
 const VIEW_KEY = 'herdr-monitor.agentsView';
 
 export function AgentsList({ live, selected, now }: { live: Live; selected?: string; now: number }) {
@@ -47,17 +48,18 @@ export function AgentsList({ live, selected, now }: { live: Live; selected?: str
   const pick = (v: AgentsView) => { setView(v); try { localStorage.setItem(VIEW_KEY, v); } catch { /* private mode */ } };
   const groups = groupAgents([...live.terminals.values()]);
   if (!groups.length) return <Empty>{live.connected ? 'No agents running.' : 'Connecting to Herdr…'}</Empty>;
-  const agentRow = (t: Terminal, label: string, indent = false) => (
+  const agentRow = (t: Terminal, label: string, indent = false, depth = 0) => (
     <li key={t.address}>
-      <button className={cn(row, indent && 'pl-8', selected === t.address && 'bg-accent')}
+      <button className={cn(row, indent && 'pl-8', selected === t.address && 'bg-accent')} style={depth ? { paddingLeft: 12 + depth * 20 } : undefined}
         onClick={() => open({ view: 'agent', addr: t.address, tab: 'output' })}>
+        {depth > 0 && <span className="-ml-3.5 w-2.5 shrink-0 text-muted-foreground/60" aria-hidden>└</span>}
         <Glyph agent={t.agent} reported={t.reported} />
         <span className="min-w-0 flex-1">
           <span className="block truncate font-medium">{label}</span>
           {(t.status?.msg || t.title) && <span className="block truncate text-xs text-muted-foreground">{t.status?.msg || t.title}</span>}
         </span>
         <span className="text-xs tabular-nums text-muted-foreground">{age(t.changed_ms, now)}</span>
-        <StatusMark state={stateOf(t)} />
+        <StatusMark state={t.status ? stateOf(t) : null} />
       </button>
     </li>
   );
@@ -65,10 +67,10 @@ export function AgentsList({ live, selected, now }: { live: Live; selected?: str
     <div className="px-1.5">
       <div className="flex justify-end px-2 pt-1" role="group" aria-label="Group agents">
         <div className="flex overflow-hidden rounded-md border text-[11px]">
-          {(['state', 'space'] as const).map((v) => (
+          {(['state', 'space', 'nested'] as const).map((v) => (
             <button key={v} onClick={() => pick(v)} aria-pressed={view === v}
               className={cn('px-2.5 py-1', view === v ? 'bg-accent font-medium' : 'text-muted-foreground')}>
-              {v === 'state' ? 'By state' : 'By space'}
+              {v === 'state' ? 'By state' : v === 'space' ? 'By space' : 'Nested'}
             </button>
           ))}
         </div>
@@ -80,7 +82,13 @@ export function AgentsList({ live, selected, now }: { live: Live; selected?: str
           </h3>
           <ul>{g.rows.map(({ t }) => agentRow(t, displayName(t, live.spaces)))}</ul>
         </section>
-      )) : <BySpace live={live} render={(s, agents) => {
+      )) : view === 'nested' ? (
+        <div className="pt-1">{agentTrees([...live.terminals.values()]).map((rows) => (
+          <ul key={rows[0].t.address} className="mb-1 border-b border-border/50 pb-1 last:border-b-0">
+            {rows.map(({ t, depth }) => agentRow(t, depth ? (t.name || t.agent) : displayName(t, live.spaces), false, depth))}
+          </ul>
+        ))}</div>
+      ) : <BySpace live={live} render={(s, agents) => {
         return (
           <section key={s.id} className="mb-1">
             <h3 className={cn('flex items-center gap-2 px-3 pt-2 pb-0.5 text-[13px] font-semibold', s.parent && 'pl-5')}>

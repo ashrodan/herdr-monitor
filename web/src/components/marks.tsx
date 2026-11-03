@@ -9,6 +9,7 @@ export function StatusMark({ state, className }: { state: AgentState | 'finished
   if (state === 'blocked') return <span className={cn(base, 'bg-blocked ring-2 ring-blocked/25', className)} title="blocked" />;
   if (state === 'error') return <span className={cn(base, 'bg-error', className)} title="error" />;
   if (state === 'done') return <span className={cn(base, 'bg-done', className)} title="done" />;
+  if (state === null) return <span className={cn(base, className)} aria-hidden />; // no status: an empty slot keeps rows aligned
   if (state === 'finished') return <span className={cn(base, 'bg-idle/40', className)} title="finished" />;
   return <span className={cn(base, 'border-[1.5px] border-idle', className)} title="idle" />;
 }
