@@ -3,3 +3,7 @@ node_modules/
 .env.*
 .DS_Store
 dist/
+
+# Written by herdr-app check
+herdr-mod/**/*.d.ts
+herdr-mod/**/jsconfig.json

@@ -7,7 +7,7 @@ HERE=$(cd "$(dirname "$0")/.." && pwd)
 APP=${HERDR_APP_HOME:-$HOME/.config/herdr-app}
 DEST="$APP/mods/summary"
 mkdir -p "$DEST"
-cp "$HERE"/herdr-mod/summary/*.js "$HERE"/herdr-mod/summary/*.json "$HERE"/herdr-mod/summary/*.svg "$DEST"/
+cp "$HERE"/herdr-mod/summary/*.js "$HERE"/herdr-mod/summary/mod.json "$HERE"/herdr-mod/summary/*.svg "$DEST"/
 herdr-app check "$DEST"
 if [ "${1:-}" = "--layout" ] && [ -n "${2:-}" ]; then
   node "$HERE/scripts/mod-layout.js" "$APP/layouts/$2.json"
