@@ -141,7 +141,7 @@ function Prose({ text }: { text: string }) {
   );
 }
 
-// A question the agent asked you. Read only: answer it in Herdr.
+// A question the agent asked you. Answer it with the keys under the reply box.
 function Question({ q }: { q: QuestionPart }) {
   const waiting = !q.result;
   return (
@@ -163,7 +163,7 @@ function Question({ q }: { q: QuestionPart }) {
         </div>
       ))}
       <p className={cn('mt-3 text-xs', waiting ? 'text-blocked' : 'text-muted-foreground')}>
-        {waiting ? 'Waiting for your answer. Answer it in Herdr: this page does not answer questions.' : `Answered: ${q.result!.text.split('\n')[0].slice(0, 200)}`}
+        {waiting ? 'Waiting for your answer: use the keys under the reply box (Live shows the form).' : `Answered: ${q.result!.text.split('\n')[0].slice(0, 200)}`}
       </p>
     </div>
   );

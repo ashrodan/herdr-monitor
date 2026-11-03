@@ -196,11 +196,12 @@ function Composer({ addr, blocked, finished, kind, exitCode, onSent }: { addr: s
     return () => clearTimeout(id);
   }, [note]);
 
-  const canSend = !!value.trim() && !blocked && !finished && !sending;
+  const canSend = !!value.trim() && !finished && !sending;
   const send = async () => {
     if (!canSend) return;
     setSending(true);
-    const r = await post(`/api/terminals/${addr}/send`, { text: value });
+    // At a dialog, force: the text goes to the dialog (e.g. an "Other" answer).
+    const r = await post(`/api/terminals/${addr}/send`, blocked ? { text: value, force: true } : { text: value });
     setSending(false);
     if (r.ok) { onSent?.(value); setValue(''); setNote({ text: 'Sent.' }); } else setNote({ text: `Not sent: ${r.body.error}`, tone: 'err' });
   };
@@ -211,7 +212,7 @@ function Composer({ addr, blocked, finished, kind, exitCode, onSent }: { addr: s
   // Keep focus (and so the keyboard) in the box when a button is tapped.
   const keepFocus = (e: React.PointerEvent | React.MouseEvent) => e.preventDefault();
 
-  const info = blocked ? `Waiting at a ${kind || 'dialog'}. Answer it in Herdr: this page does not answer approvals.`
+  const info = blocked ? `Waiting at a ${kind || 'dialog'}. Answer with the keys below (Live shows the dialog), or type a reply.`
     : finished ? `Finished${exitCode != null ? ` with exit code ${exitCode}` : ''}.` : null;
 
   return (
@@ -225,11 +226,11 @@ function Composer({ addr, blocked, finished, kind, exitCode, onSent }: { addr: s
           <Square className="size-3.5 fill-current" />
         </Button>
         <div className={cn('flex min-w-0 flex-1 items-end rounded-[22px] border bg-background pl-4 pr-1 transition-colors focus-within:border-ring',
-          (blocked || finished) && 'opacity-60')}>
+          finished && 'opacity-60')}>
           <textarea ref={box} value={value} rows={1} disabled={finished}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => { if (!coarse && e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }}
-            placeholder={blocked ? 'Agent is waiting at a dialog' : 'Reply to the agent'}
+            placeholder={blocked ? 'Type an answer' : 'Reply to the agent'}
             title={coarse ? undefined : 'Enter sends, Shift+Enter adds a new line'}
             aria-label="Reply to the agent"
             enterKeyHint={coarse ? 'enter' : 'send'} autoCapitalize="sentences" autoCorrect="on" spellCheck autoComplete="off"
@@ -240,6 +241,30 @@ function Composer({ addr, blocked, finished, kind, exitCode, onSent }: { addr: s
           </Button>
         </div>
       </div>
+      {blocked && <DialogKeys addr={addr} onNote={setNote} />}
     </form>
+  );
+}
+
+// Keys to answer a dialog (an ask form, a permission prompt): move, pick, submit.
+const DIALOG_KEYS: { key: string; label: string; wide?: boolean }[] = [
+  { key: 'up', label: '↑' }, { key: 'down', label: '↓' }, { key: 'left', label: '←' }, { key: 'right', label: '→' },
+  { key: 'tab', label: 'Tab' }, { key: 'space', label: 'Space' }, { key: 'enter', label: 'Enter', wide: true }, { key: 'esc', label: 'Esc' },
+];
+function DialogKeys({ addr, onNote }: { addr: string; onNote: (n: { text: string; tone?: 'err' } | null) => void }) {
+  const press = async (key: string) => {
+    const r = await post(`/api/terminals/${addr}/keys`, { keys: [key] });
+    if (!r.ok) onNote({ text: `Key not sent: ${r.body.error}`, tone: 'err' });
+  };
+  return (
+    <div className="flex gap-1 px-1 pt-2 pb-1" role="group" aria-label="Dialog keys">
+      {DIALOG_KEYS.map((k) => (
+        <Button key={k.key} type="button" variant="outline" size="sm" onClick={() => press(k.key)}
+          onPointerDown={(e) => e.preventDefault()} aria-label={`Press ${k.key}`}
+          className={cn('h-9 min-w-0 flex-1 px-0 text-[13px]', k.wide && 'flex-[1.4] border-blocked/60 font-medium text-blocked')}>
+          {k.label}
+        </Button>
+      ))}
+    </div>
   );
 }

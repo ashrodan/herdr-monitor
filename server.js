@@ -400,6 +400,8 @@ async function icons() {
   return iconIndex;
 }
 
+export const isDialogKey = (k) => typeof k === 'string' && /^(up|down|left|right|tab|shift\+tab|space|enter|esc|backspace|[a-z0-9])$/.test(k);
+
 const routes = [
   ['GET', /^\/api\/icons$/, async (req, res) => {
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'max-age=3600' });
@@ -469,10 +471,19 @@ const routes = [
   }],
   ['POST', /^\/api\/terminals\/([^/]+)\/send$/, async (req, res, [addr]) => {
     if (!terminalOr404(res, addr)) return;
-    const { text } = await readJson(req);
+    const { text, force } = await readJson(req);
     if (typeof text !== 'string' || !text.trim()) return send(res, 400, { error: 'text required' });
-    // No `force`: hc refuses to type into an agent at an approval dialog.
-    send(res, 200, await rpc.call('terminal.send', { terminal: addr, text }));
+    // force: type even while the agent waits at a dialog (the page asks for it
+    // only then). Without it, hc refuses to type into a blocked agent.
+    send(res, 200, await rpc.call('terminal.send', { terminal: addr, text, force: force === true }));
+  }],
+  // Navigation keys only, to answer a dialog: arrows, tab, space, enter, esc,
+  // backspace, and single letters or digits (option shortcuts).
+  ['POST', /^\/api\/terminals\/([^/]+)\/keys$/, async (req, res, [addr]) => {
+    if (!terminalOr404(res, addr)) return;
+    const { keys } = await readJson(req);
+    if (!Array.isArray(keys) || !keys.length || keys.length > 20 || !keys.every(isDialogKey)) return send(res, 400, { error: 'keys: up to 20 of up, down, left, right, tab, shift+tab, space, enter, esc, backspace, a-z, 0-9' });
+    send(res, 200, await rpc.call('terminal.keys', { terminal: addr, keys }));
   }],
   ['POST', /^\/api\/terminals\/([^/]+)\/interrupt$/, async (req, res, [addr]) => {
     if (!terminalOr404(res, addr)) return;

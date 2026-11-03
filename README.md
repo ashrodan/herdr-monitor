@@ -75,8 +75,12 @@ not from this repo.
   to the internet: do not use Tailscale Funnel.
 - A POST must come from the page's own origin. Other websites cannot send
   text to your agents.
-- The page does not answer approval dialogs. When an agent is blocked, the
-  Send button is off. `terminal.send` is called without `force`.
+- The page can answer dialogs (questions and permission prompts). While an
+  agent is blocked, a key pad sends navigation keys only (arrows, Tab, Space,
+  Enter, Esc, Backspace, single letters and digits; no Ctrl or Alt), and Send
+  types into the dialog with `force`. Otherwise `terminal.send` is called
+  without `force`, so hc refuses to type into an agent that just became
+  blocked.
 
 ## How it works
 

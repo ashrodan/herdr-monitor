@@ -72,3 +72,9 @@ test('httpsLocation expands the short MagicDNS name to the full one', async () =
   assert.equal(httpsLocation('box', '/', 7400, 'box.tail1.ts.net'), 'https://box.tail1.ts.net:7400/');
   assert.equal(httpsLocation('other', '/', 7400, 'box.tail1.ts.net'), 'https://other:7400/');
 });
+
+import { isDialogKey } from '../server.js';
+test('isDialogKey: navigation keys, letters and digits only', () => {
+  for (const k of ['up', 'down', 'left', 'right', 'tab', 'shift+tab', 'space', 'enter', 'esc', 'backspace', 'a', '7']) assert.ok(isDialogKey(k), k);
+  for (const k of ['ctrl+c', 'alt+x', 'f5', 'ab', 'A', '', 'enter;rm', null]) assert.ok(!isDialogKey(k), String(k));
+});
