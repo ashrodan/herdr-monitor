@@ -46,11 +46,10 @@ export function AgentsList({ live, selected, now }: { live: Live; selected?: str
             {g.label}<span className="font-normal tabular-nums">{g.count}</span>
           </h3>
           <ul>
-            {g.rows.map(({ t, depth, state }) => (
+            {g.rows.map(({ t, state }) => (
               <li key={t.address}>
-                <button className={cn(row, selected === t.address && 'bg-accent')} style={{ paddingLeft: 12 + depth * 18 }}
+                <button className={cn(row, selected === t.address && 'bg-accent')}
                   onClick={() => open({ view: 'agent', addr: t.address, tab: 'output' })}>
-                  {depth > 0 && <span className="-ml-3 text-muted-foreground/60" aria-hidden>└</span>}
                   <Glyph agent={t.agent} reported={t.reported} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-medium">{displayName(t, live.spaces)}</span>
