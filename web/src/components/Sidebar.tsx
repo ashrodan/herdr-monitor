@@ -2,7 +2,7 @@ import { GitBranch } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Live } from '@/live';
 import { age, displayName, groupAgents, spaceState } from '@/model';
-import { go } from '@/route';
+import { open, spaceRoute } from '@/route';
 import { Glyph, SpaceAvatar, StatusMark } from './marks';
 
 const row = 'flex w-full items-center gap-2.5 px-3 py-2 text-left rounded-md hover:bg-accent/70 active:bg-accent focus-visible:outline-2';
@@ -27,7 +27,7 @@ export function SpacesList({ live, selected }: { live: Live; selected?: string }
           <li key={s.id}>
             {s.virtual
               ? <div className={cn(row, 'hover:bg-transparent active:bg-transparent cursor-default')}>{body}</div>
-              : <button className={cn(row, s.parent && 'pl-5', selected === s.id && 'bg-accent')} onClick={() => go({ view: 'space', id: s.id })}>{body}</button>}
+              : <button className={cn(row, s.parent && 'pl-5', selected === s.id && 'bg-accent')} onClick={() => open(spaceRoute(s, live.terminals))}>{body}</button>}
           </li>
         );
       })}
@@ -49,7 +49,7 @@ export function AgentsList({ live, selected, now }: { live: Live; selected?: str
             {g.rows.map(({ t, depth }) => (
               <li key={t.address}>
                 <button className={cn(row, selected === t.address && 'bg-accent')} style={{ paddingLeft: 12 + depth * 18 }}
-                  onClick={() => go({ view: 'agent', addr: t.address, tab: 'output' })}>
+                  onClick={() => open({ view: 'agent', addr: t.address, tab: 'output' })}>
                   {depth > 0 && <span className="-ml-3 text-muted-foreground/60" aria-hidden>└</span>}
                   <Glyph agent={t.agent} reported={t.reported} />
                   <span className="min-w-0 flex-1">

@@ -1,8 +1,7 @@
-import { ChevronLeft } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import type { Live } from '@/live';
 import { age, isShell, rawStateOf, shortPath } from '@/model';
-import { back, go } from '@/route';
+import { switchTo } from '@/route';
+import { BackButton } from './BackButton';
 import { Glyph, SpaceAvatar, StatusMark } from './marks';
 
 export function SpaceView({ live, id, now }: { live: Live; id: string; now: number }) {
@@ -10,7 +9,7 @@ export function SpaceView({ live, id, now }: { live: Live; id: string; now: numb
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex items-center gap-2 border-b px-2 py-2 md:px-4">
-        <Button variant="ghost" size="icon" className="lg:hidden" onClick={back} aria-label="Back"><ChevronLeft /></Button>
+        <BackButton />
         {s && <SpaceAvatar space={s} />}
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-base font-semibold">{s?.name || 'Space'}</h2>
@@ -30,7 +29,7 @@ export function SpaceView({ live, id, now }: { live: Live; id: string; now: numb
                 return (
                   <li key={a} className="border-b last:border-b-0">
                     <button className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left hover:bg-accent/70 active:bg-accent"
-                      onClick={() => go({ view: 'agent', addr: a, tab: 'output' })}>
+                      onClick={() => switchTo({ view: 'agent', addr: a, tab: 'output' })}>
                       <Glyph agent={t.agent} reported={t.reported} />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate font-medium">{t.name || t.agent}{isShell(t) && <span className="ml-1.5 text-xs font-normal text-muted-foreground">shell</span>}</span>

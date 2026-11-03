@@ -1,13 +1,12 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
-import { ArrowUp, ChevronLeft, GitCommitHorizontal, GitPullRequest, Square, Terminal as TerminalIcon } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { ArrowUp, GitCommitHorizontal, GitPullRequest, Square, Terminal as TerminalIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 import { getJson, post } from '@/api';
 import type { Live } from '@/live';
-import { displayName, markSeen, rawStateOf, shortPath } from '@/model';
-import { back, go, type AgentTab } from '@/route';
+import { markSeen, rawStateOf } from '@/model';
+import { go, type AgentTab } from '@/route';
 import type { PrStatus } from '@/types';
 import { CommitsPane } from './CommitsPane';
 // xterm.js and the Markdown renderer are large: load them when first used.
@@ -15,12 +14,9 @@ import type { Sent } from './ChatPane';
 const ChatPane = lazy(() => import('./ChatPane').then((m) => ({ default: m.ChatPane })));
 const LiveTerminal = lazy(() => import('./LiveTerminal').then((m) => ({ default: m.LiveTerminal })));
 import { StatusPane } from './StatusPane';
-import { Glyph } from './marks';
+import { BackButton } from './BackButton';
+import { PaneSwitcher } from './PaneSwitcher';
 
-const PILL: Record<string, string> = {
-  working: 'text-working border-working/40', blocked: 'text-blocked border-blocked/40', error: 'text-error border-error/40',
-  done: 'text-done border-done/40', idle: 'text-muted-foreground', finished: 'text-muted-foreground',
-};
 
 export function AgentView({ live, addr, tab }: { live: Live; addr: string; tab: AgentTab }) {
   const t = live.terminals.get(addr);
@@ -46,7 +42,7 @@ export function AgentView({ live, addr, tab }: { live: Live; addr: string; tab: 
   if (!t) {
     return (
       <div className="flex h-full flex-col">
-        <Header onBack={back}><h2 className="text-base font-semibold">{addr}</h2></Header>
+        <Header><h2 className="text-base font-semibold">{addr}</h2></Header>
         <p className="p-6 text-sm text-muted-foreground">{live.connected ? 'This terminal is gone.' : 'Connecting…'}</p>
       </div>
     );
@@ -58,17 +54,8 @@ export function AgentView({ live, addr, tab }: { live: Live; addr: string; tab: 
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* One header: who, what it does, and the view switch. */}
-      <Header onBack={back}>
-        <Glyph agent={t.agent} reported={t.reported} />
-        <div className="min-w-0 flex-1" title={`${t.address}${t.where ? ` · ${t.where}` : ''} · ${t.cwd}`}>
-          <div className="flex items-center gap-2">
-            <h2 className="truncate text-[15px] font-semibold leading-tight">{displayName(t, live.spaces)}</h2>
-            <Badge variant="outline" className={cn('shrink-0 px-1.5 py-0 text-[11px] font-normal', PILL[st])}>{st}{t.status?.kind ? ` · ${t.status.kind}` : ''}</Badge>
-          </div>
-          <p className="truncate text-xs text-muted-foreground">
-            {t.status?.msg || t.title || <span className="font-mono">{t.where || t.address} · {shortPath(t.cwd)}</span>}
-          </p>
-        </div>
+      <Header>
+        <PaneSwitcher t={t} live={live} tab={tab} />
         <Tabs value={tab} onValueChange={setTab} className="shrink-0">
           <TabsList className="h-8">
             <TabsTrigger value="output" className="px-2" aria-label="Output" title="Output"><TerminalIcon /><span className="hidden sm:inline">Output</span></TabsTrigger>
@@ -92,10 +79,10 @@ export function AgentView({ live, addr, tab }: { live: Live; addr: string; tab: 
   );
 }
 
-function Header({ onBack, children }: { onBack: () => void; children: React.ReactNode }) {
+function Header({ children }: { children: React.ReactNode }) {
   return (
-    <header className="flex items-center gap-2 border-b py-1.5 pr-2 pl-1 md:px-4">
-      <Button variant="ghost" size="icon" className="-mr-1 lg:hidden" onClick={onBack} aria-label="Back"><ChevronLeft /></Button>
+    <header className="flex items-center gap-1 border-b py-1.5 pr-2 pl-1 md:px-4">
+      <BackButton />
       {children}
     </header>
   );
