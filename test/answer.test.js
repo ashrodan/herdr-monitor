@@ -2,19 +2,19 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { answerKeys, currentQuestion } from '../lib/answer.js';
 
-const SCREEN = `older output mentioning Domain
+const SCREEN = `older output mentioning Theme
 ╭─ Ask ────────────────────────────────╮
-│  Twilio    Domain    Cutover    Submit │
-│ Copy ccare-checkin's Twilio credentials (TWILIO_ACCOUNT_SID,  │
-│ TWILIO_AUTH_TOKEN) into ccare-shop on Vercel?            │
+│  Database    Theme    Deploy    Submit │
+│ Which database should the example app use for its local   │
+│ development setup (SQLITE_PATH, DATABASE_URL)?             │
 ├──────────────────────────────────────┤
-│   Production + Preview (Recommended)                     │`;
-const QS = ["Copy ccare-checkin's Twilio credentials (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN) into ccare-shop on Vercel?", 'Production domain for the till?', 'Cut over now?'];
+│   SQLite (Recommended)                                   │`;
+const QS = ['Which database should the example app use for its local development setup (SQLITE_PATH, DATABASE_URL)?', 'Which theme for the docs site?', 'Deploy now?'];
 
 test('currentQuestion: matches the wrapped question inside the Ask box', () => {
   assert.equal(currentQuestion(SCREEN, QS), 0);
-  assert.equal(currentQuestion(SCREEN.replace(/Copy[\s\S]*Vercel\?/, 'Production domain for the till?'), QS), 1);
-  assert.equal(currentQuestion('╭─ Ask ─╮\n│ Twilio Domain Cutover Submit │\n│ 1 unanswered question; enter still submits. │', QS), 3);
+  assert.equal(currentQuestion(SCREEN.replace(/Which[\s\S]*URL\)\?/, 'Which theme for the docs site?'), QS), 1);
+  assert.equal(currentQuestion('╭─ Ask ─╮\n│ Database Theme Deploy Submit │\n│ 1 unanswered question; enter still submits. │', QS), 3);
   assert.equal(currentQuestion('no form here', QS), -1);
 });
 
