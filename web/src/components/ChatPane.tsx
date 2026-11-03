@@ -1,51 +1,66 @@
-// Claude Code's own conversation for an agent, read from its transcript:
-// your prompts as bubbles, Claude's replies as Markdown, tool calls as
+// An agent's own conversation (Claude Code, omp or pi), read from its session:
+// your prompts as bubbles, its replies as Markdown, tool calls as
 // compact rows that open to show their result.
 import { useEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
-import { AlertCircle, Brain, ChevronRight, Wrench } from 'lucide-react';
+import { AlertCircle, Brain, Check, ChevronRight, Loader2, MessageCircleQuestion, Wrench } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { getJson } from '@/api';
+import { getJson, post } from '@/api';
 
 interface ToolPart { kind: 'tool'; id: string; name: string; summary: string; result: { text: string; error: boolean; truncated: boolean } | null }
 interface TextPart { kind: 'text' | 'thinking'; text: string }
-type Part = TextPart | ToolPart;
+interface QuestionPart { kind: 'question'; id: string; name: string; questions: { header: string; question: string; multi: boolean; options: { label: string; description: string }[] }[]; result: { text: string; error: boolean } | null }
+type Part = TextPart | ToolPart | QuestionPart;
 interface Message { id: string; role: 'user' | 'assistant' | 'system'; at: string | null; parts: Part[] }
 // A reply sent from this page that is not in the transcript yet.
 export interface Sent { id: number; text: string; at: number }
 interface Chat { available: boolean; reason?: string; truncated?: boolean; messages?: Message[]; version?: string; unchanged?: boolean; session?: { name: string | null } }
 
-export function ChatPane({ addr, working, outbox = [], delivered }: { addr: string; working: boolean; outbox?: Sent[]; delivered?: (ids: number[]) => void }) {
-  const [chat, setChat] = useState<Chat | null>(null);
+// The last chat seen per terminal, so coming back (or the view remounting)
+// shows it at once while the new one loads.
+const cache = new Map<string, Chat>();
+
+export function ChatPane({ addr, working, blocked = false, outbox = [], delivered }: { addr: string; working: boolean; blocked?: boolean; outbox?: Sent[]; delivered?: (ids: number[]) => void }) {
+  const [chat, setChat] = useState<Chat | null>(() => cache.get(addr) ?? null);
   const [err, setErr] = useState<string | null>(null);
   const version = useRef<string | undefined>(undefined);
   const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
   const reload = useRef<() => void>(() => {});
 
+  // A new terminal: show its cached chat, then load. Only the version is
+  // asked for when nothing changed, so a poll costs a few bytes.
   useEffect(() => {
     let stop = false;
-    version.current = undefined;
-    setChat(null); setErr(null); atBottom.current = true;
+    const cached = cache.get(addr);
+    version.current = cached?.version;
+    setChat(cached ?? null); setErr(null); atBottom.current = true;
     const load = async () => {
       try {
         const d = await getJson<Chat>(`/api/terminals/${addr}/chat${version.current ? `?v=${encodeURIComponent(version.current)}` : ''}`);
         if (stop || d.unchanged) return;
         version.current = d.version;
+        cache.set(addr, d);
         setChat(d); setErr(null);
       } catch (e) { if (!stop) setErr((e as Error).message); }
     };
     reload.current = load;
     load();
-    // Fast while the agent works; slower when it is idle.
-    const id = setInterval(load, working ? 2000 : 8000);
-    return () => { stop = true; clearInterval(id); };
+    return () => { stop = true; reload.current = () => {}; };
+  }, [addr]);
+
+  // Poll fast while the agent works, slower when it is idle. A change of
+  // state changes only the pace: the messages stay on screen.
+  useEffect(() => {
+    reload.current();
+    const id = setInterval(() => reload.current(), working ? 2000 : 8000);
+    return () => clearInterval(id);
   }, [addr, working]);
 
   // A reply was sent: show it at the bottom and look for it in the
-  // transcript now, then again shortly (Claude writes it within a second or two).
+  // transcript now, then again shortly (agents write it within a second or two).
   useEffect(() => {
     if (!outbox.length) return;
     atBottom.current = true;
@@ -74,13 +89,16 @@ export function ChatPane({ addr, working, outbox = [], delivered }: { addr: stri
   if (!chat) return <p className="p-4 text-sm text-muted-foreground">Loading the conversation…</p>;
   if (!chat.available) return <p className="p-4 text-sm text-muted-foreground">{chat.reason} Use Live or Text.</p>;
 
+  // The question the agent waits on: the last one without an answer.
+  const lastAsk = [...(chat.messages ?? [])].reverse().find((m) => m.parts.some((p) => p.kind === 'question' && !p.result))?.id;
+
   return (
     <div ref={scroller} className="h-full overflow-y-auto overscroll-contain"
       onScroll={(e) => { const el = e.currentTarget; atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60; }}>
       <div className="mx-auto flex max-w-3xl flex-col gap-3 px-3 pt-11 pb-4 md:px-6">
         {chat.truncated && <p className="text-center text-xs text-muted-foreground">Older messages are not shown (long transcript).</p>}
         {!chat.messages?.length && <p className="text-sm text-muted-foreground">No messages yet.</p>}
-        {chat.messages?.map((m) => <MessageView key={m.id} m={m} />)}
+        {chat.messages?.map((m) => <MessageView key={m.id} m={m} live={blocked && m.id === lastAsk ? addr : null} />)}
         {outbox.map((s) => (
           <div key={s.id} className="ml-auto flex max-w-[85%] flex-col items-end gap-0.5">
             <UserBubble text={s.text} className="opacity-70" />
@@ -93,7 +111,7 @@ export function ChatPane({ addr, working, outbox = [], delivered }: { addr: stri
   );
 }
 
-function MessageView({ m }: { m: Message }) {
+function MessageView({ m, live }: { m: Message; live: string | null }) {
   if (m.role === 'user') {
     return <div className="ml-auto max-w-[85%]"><UserBubble text={textOf(m)} /></div>;
   }
@@ -101,7 +119,7 @@ function MessageView({ m }: { m: Message }) {
     return <p className="text-center text-xs text-muted-foreground [overflow-wrap:anywhere]">{m.parts.map((p) => (p.kind === 'text' ? p.text : '')).join(' ')}</p>;
   }
   // Assistant: text blocks in order; runs of tool calls fold into one group.
-  const blocks: (TextPart | ToolPart[])[] = [];
+  const blocks: (TextPart | QuestionPart | ToolPart[])[] = [];
   for (const p of m.parts) {
     if (p.kind === 'tool') {
       const prev = blocks[blocks.length - 1];
@@ -111,6 +129,7 @@ function MessageView({ m }: { m: Message }) {
   return (
     <div className="flex flex-col gap-2">
       {blocks.map((b, i) => Array.isArray(b) ? <ToolGroup key={i} tools={b} />
+        : b.kind === 'question' ? <Question key={i} q={b} addr={live} />
         : b.kind === 'thinking' ? <Thinking key={i} text={b.text} />
         : <Prose key={i} text={b.text} />)}
     </div>
@@ -135,6 +154,83 @@ function Prose({ text }: { text: string }) {
   return (
     <div className="prose-chat text-[15px] leading-relaxed [overflow-wrap:anywhere] md:text-sm">
       <Markdown remarkPlugins={[remarkGfm]} components={LINKS}>{text}</Markdown>
+    </div>
+  );
+}
+
+// A question the agent asked you. While the agent waits on it (addr set),
+// tap an option to answer: the server presses the keys in the form for you.
+function Question({ q, addr }: { q: QuestionPart; addr: string | null }) {
+  const waiting = !q.result;
+  const [picked, setPicked] = useState<Record<string, boolean>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  const [note, setNote] = useState<{ text: string; err?: boolean } | null>(null);
+  const shape = q.questions.map((x) => ({ question: x.question, options: x.options.length, multi: x.multi }));
+  // One single-choice question: a tap answers it. Otherwise each tap fills
+  // the form in, and Submit sends it.
+  const needsSubmit = q.questions.length > 1 || q.questions.some((x) => x.multi);
+  const act = async (key: string, body: object) => {
+    if (!addr || busy) return;
+    setBusy(key); setNote(null);
+    const r = await post(`/api/terminals/${addr}/answer`, { questions: shape, ...body });
+    setBusy(null);
+    if (!r.ok) { setNote({ text: r.body.error === 'the question form is not on screen' ? 'The form is not on screen. Open Live to answer.' : `Not sent: ${r.body.error}`, err: true }); return false; }
+    return true;
+  };
+  const tap = async (i: number, j: number) => {
+    const k = `${i}.${j}`;
+    if (!(await act(k, { q: i, option: j }))) return;
+    setPicked((p) => q.questions[i].multi ? { ...p, [k]: !p[k] }
+      : { ...Object.fromEntries(Object.entries(p).filter(([x]) => !x.startsWith(`${i}.`))), [k]: true });
+    setNote({ text: needsSubmit ? 'Picked. Submit when ready.' : 'Answer sent.' });
+  };
+  const submit = async () => { if (await act('submit', { action: 'submit' })) setNote({ text: 'Submitted.' }); };
+
+  return (
+    <div className={cn('rounded-xl border p-3 text-sm', waiting ? 'border-blocked/50 bg-blocked/5' : 'bg-card/60')}>
+      {q.questions.map((x, i) => (
+        <div key={i} className={cn(i > 0 && 'mt-3 border-t pt-3')}>
+          <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+            <MessageCircleQuestion className={cn('size-3.5', waiting && 'text-blocked')} />{x.header || 'Question'}{x.multi && ' · pick any'}
+          </p>
+          <p className="mt-1 font-medium">{x.question}</p>
+          <ol className="mt-2 space-y-1.5">
+            {x.options.map((o, j) => {
+              const k = `${i}.${j}`;
+              const body = (
+                <>
+                  <span className={cn('mt-px grid size-5 shrink-0 place-items-center rounded-full border text-[11px] text-muted-foreground',
+                    picked[k] && 'border-blocked bg-blocked text-background')}>
+                    {busy === k ? <Loader2 className="size-3 animate-spin" /> : picked[k] ? <Check className="size-3" /> : j + 1}
+                  </span>
+                  <span className="min-w-0"><span className="font-medium">{o.label}</span>{o.description && <span className="block text-xs text-muted-foreground">{o.description}</span>}</span>
+                </>
+              );
+              return (
+                <li key={j}>
+                  {addr ? (
+                    <button type="button" onClick={() => tap(i, j)} disabled={!!busy}
+                      className={cn('flex w-full gap-2 rounded-lg border border-transparent px-2 py-2 text-left hover:bg-accent/60 active:bg-accent',
+                        picked[k] && 'border-blocked/50 bg-blocked/10')}>{body}</button>
+                  ) : <div className="flex gap-2 px-2">{body}</div>}
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+      ))}
+      {addr && needsSubmit && (
+        <button type="button" onClick={submit} disabled={!!busy}
+          className="mt-3 flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-blocked font-medium text-background disabled:opacity-60">
+          {busy === 'submit' && <Loader2 className="size-4 animate-spin" />}Submit
+        </button>
+      )}
+      <p className={cn('mt-3 text-xs', waiting && note?.err ? 'text-error' : waiting ? 'text-blocked' : 'text-muted-foreground')}>
+        {!waiting ? `Answered: ${q.result!.text.split('\n')[0].slice(0, 200)}`
+          : note ? note.text
+          : addr ? (needsSubmit ? 'Tap your answers, then Submit. To write your own, type it below.' : 'Tap an answer. To write your own, type it below.')
+          : 'Waiting for an answer.'}
+      </p>
     </div>
   );
 }

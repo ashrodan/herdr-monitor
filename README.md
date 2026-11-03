@@ -75,8 +75,14 @@ not from this repo.
   to the internet: do not use Tailscale Funnel.
 - A POST must come from the page's own origin. Other websites cannot send
   text to your agents.
-- The page does not answer approval dialogs. When an agent is blocked, the
-  Send button is off. `terminal.send` is called without `force`.
+- The page can answer dialogs. In the Chat view, a tap on an option of an
+  omp or pi question form calls `POST /api/terminals/:t/answer`. The server
+  reads the screen to find the question the form shows, then presses only
+  navigation keys (arrows, Space, Enter; no Ctrl or Alt). If the form is not
+  on screen, it presses nothing. While an agent is blocked, Send types into
+  the dialog with `force`. Otherwise `terminal.send` is called
+  without `force`, so hc refuses to type into an agent that just became
+  blocked.
 
 ## How it works
 

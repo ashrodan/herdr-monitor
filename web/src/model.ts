@@ -66,23 +66,42 @@ export function ago(iso: string | null | undefined): string {
 
 export const shortPath = (p: string | null | undefined) => (p || '').replace(/^\/(Users|home)\/[^/]+(?=\/|$)/, '~');
 
-// Agents grouped by state; children right after their parent.
+// Agents grouped by their own state, flat: the space view keeps the
+// hierarchy. Only terminals with a status count as agents (as in Herdr), so dev
+// servers and shells stay out.
+export interface AgentRow { t: Terminal; state: AgentState }
 export function groupAgents(terminals: Terminal[]) {
-  const live = terminals.filter((t) => isAgent(t) && t.state !== 'finished');
-  const byState = new Map<AgentState, Terminal[]>();
-  for (const g of GROUPS) byState.set(g.state, []);
-  for (const t of live) (byState.get(stateOf(t)) || byState.get('idle')!).push(t);
+  const agents = terminals.filter((t) => t.state !== 'finished' && !!t.status);
   return GROUPS.map((g) => {
-    const rows = byState.get(g.state)!.sort((a, b) => (b.changed_ms || 0) - (a.changed_ms || 0));
-    const inGroup = new Set(rows.map((t) => t.address));
-    const out: { t: Terminal; depth: number }[] = [];
-    const add = (t: Terminal, depth: number) => {
-      out.push({ t, depth });
-      for (const c of rows) if (c.parent === t.address) add(c, depth + 1);
-    };
-    for (const t of rows) if (!t.parent || !inGroup.has(t.parent)) add(t, t.parent ? 1 : 0);
-    return { ...g, rows: out };
+    const rows: AgentRow[] = agents.filter((t) => stateOf(t) === g.state)
+      .sort((a, b) => (b.changed_ms || 0) - (a.changed_ms || 0))
+      .map((t) => ({ t, state: g.state }));
+    return { ...g, rows, count: rows.length };
   }).filter((g) => g.rows.length);
+}
+
+// Agents as trees: each agent with the sub-agents and terminals it started
+// (dev servers, shells), no state sections. Families sort by their latest
+// activity. Only terminals with a status start a family.
+export interface TreeRow { t: Terminal; depth: number; agent: boolean }
+export function agentTrees(terminals: Terminal[]): TreeRow[][] {
+  const live = terminals.filter((t) => t.state !== 'finished');
+  const by = new Map(live.map((t) => [t.address, t]));
+  const kids = new Map<string, Terminal[]>();
+  for (const t of live) if (t.parent && by.has(t.parent)) kids.set(t.parent, [...(kids.get(t.parent) || []), t]);
+  const isRoot = (t: Terminal) => !!t.status && !(t.parent && by.get(t.parent)?.status);
+  const families = live.filter(isRoot).map((root) => {
+    const rows: TreeRow[] = [];
+    let latest = 0;
+    const walk = (t: Terminal, depth: number) => {
+      rows.push({ t, depth, agent: !!t.status });
+      latest = Math.max(latest, t.changed_ms || 0);
+      for (const c of (kids.get(t.address) || []).sort((a, b) => (b.changed_ms || 0) - (a.changed_ms || 0))) walk(c, depth + 1);
+    };
+    walk(root, 0);
+    return { rows, latest };
+  });
+  return families.sort((a, b) => b.latest - a.latest).map((f) => f.rows);
 }
 
 // The most urgent state among a space's terminals, for its dot.

@@ -1,9 +1,10 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
-import { ArrowUp, GitCommitHorizontal, GitPullRequest, Square, Terminal as TerminalIcon } from 'lucide-react';
+import { ArrowUp, ImagePlus, Loader2, X, GitCommitHorizontal, GitPullRequest, Square, Terminal as TerminalIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 import { getJson, post } from '@/api';
+import { uploadImage } from '@/upload';
 import type { Live } from '@/live';
 import { markSeen, rawStateOf } from '@/model';
 import { go, type AgentTab } from '@/route';
@@ -70,7 +71,7 @@ export function AgentView({ live, addr, tab }: { live: Live; addr: string; tab: 
       {t.status?.progress != null && <div className="h-0.5 bg-border"><div className="h-full bg-working" style={{ width: `${Math.min(100, t.status.progress)}%` }} /></div>}
 
       <div className="min-h-0 flex-1">
-        {tab === 'output' && <Output addr={addr} live={t.state === 'live'} claude={isClaude(t)} outbox={outbox} delivered={delivered} cols={t.cols || 80} rows={t.rows || 24} working={st === 'working'} stateKey={st} />}
+        {tab === 'output' && <Output addr={addr} live={t.state === 'live'} chat={hasChat(t)} outbox={outbox} delivered={delivered} cols={t.cols || 80} rows={t.rows || 24} working={st === 'working'} blocked={st === 'blocked'} stateKey={st} />}
         {tab === 'commits' && <CommitsPane addr={addr} />}
         {tab === 'status' && <StatusPane addr={addr} data={pr} onData={setPr} />}
       </div>
@@ -89,23 +90,25 @@ function Header({ children }: { children: React.ReactNode }) {
 }
 
 // Output, three ways:
-// - Chat: Claude Code's own conversation (Claude agents only; their default);
+// - Chat: the agent's own conversation (Claude Code, omp, pi; their default);
 // - Live: the real terminal, read only;
 // - Text: the screen as text that wraps, with Load history.
 const MODE_KEY = 'herdr-monitor.output';
 type Mode = 'chat' | 'live' | 'text';
-const isClaude = (t: { agent: string; status: { app?: string } | null }) => t.status?.app === 'claude-code' || /^claude/.test(t.agent);
+// Agents whose own session the server can read: Claude Code, omp and pi.
+const CHAT_APPS = /^(claude|claude-code|omp|pi)$/;
+const hasChat = (t: { agent: string; status: { app?: string } | null }) => CHAT_APPS.test(t.status?.app || '') || CHAT_APPS.test(t.agent);
 
-function Output({ addr, live, claude, outbox, delivered, cols, rows, working, stateKey }: { addr: string; live: boolean; claude: boolean; outbox: Sent[]; delivered: (ids: number[]) => void; cols: number; rows: number; working: boolean; stateKey: string }) {
+function Output({ addr, live, chat, outbox, delivered, cols, rows, working, blocked, stateKey }: { addr: string; live: boolean; chat: boolean; outbox: Sent[]; delivered: (ids: number[]) => void; cols: number; rows: number; working: boolean; blocked: boolean; stateKey: string }) {
   const [stored, setStored] = useState<Mode>(() => (localStorage.getItem(MODE_KEY) as Mode) || 'chat');
   const pick = (m: Mode) => { setStored(m); try { localStorage.setItem(MODE_KEY, m); } catch { /* private mode */ } };
-  const modes: Mode[] = [...(claude ? ['chat' as const] : []), ...(live ? ['live' as const] : []), 'text'];
+  const modes: Mode[] = [...(chat ? ['chat' as const] : []), ...(live ? ['live' as const] : []), 'text'];
   const mode: Mode = modes.includes(stored) ? stored : modes.includes('live') ? 'live' : 'text';
   const LABEL: Record<Mode, string> = { chat: 'Chat', live: 'Live', text: 'Text' };
   return (
     <div className="relative h-full">
       <Suspense fallback={<div className="h-full bg-code" />}>
-        {mode === 'chat' && <ChatPane addr={addr} working={working} outbox={outbox} delivered={delivered} />}
+        {mode === 'chat' && <ChatPane addr={addr} working={working} blocked={blocked} outbox={outbox} delivered={delivered} />}
         {mode === 'live' && <LiveTerminal addr={addr} cols={cols} rows={rows} />}
       </Suspense>
       {mode === 'text' && <OutputPane addr={addr} working={working} stateKey={stateKey} />}
@@ -177,8 +180,26 @@ function Composer({ addr, blocked, finished, kind, exitCode, onSent }: { addr: s
   const [note, setNote] = useState<{ text: string; tone?: 'err' } | null>(null);
   const [sending, setSending] = useState(false);
   const box = useRef<HTMLTextAreaElement>(null);
+  const picker = useRef<HTMLInputElement>(null);
+  // Images to send: each uploads at once; its path joins the reply on Send.
+  const [images, setImages] = useState<Attached[]>([]);
   const coarse = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
-  useEffect(() => { setValue(''); setNote(null); }, [addr]);
+  useEffect(() => { setValue(''); setNote(null); setImages((old) => { old.forEach((i) => URL.revokeObjectURL(i.url)); return []; }); }, [addr]);
+
+  const attach = (files: Iterable<File>) => {
+    for (const file of files) {
+      if (!file.type.startsWith('image/')) { setNote({ text: `${file.name || 'That file'} is not an image.`, tone: 'err' }); continue; }
+      const id = Math.random().toString(36).slice(2);
+      setImages((l) => [...l, { id, url: URL.createObjectURL(file), state: 'uploading' }]);
+      uploadImage(addr, file).then(
+        (path) => setImages((l) => l.map((i) => (i.id === id ? { ...i, state: 'ready', path } : i))),
+        (err: Error) => setImages((l) => l.map((i) => (i.id === id ? { ...i, state: 'error', error: err.message } : i))),
+      );
+    }
+  };
+  const drop = (id: string) => setImages((l) => l.filter((i) => { if (i.id === id) URL.revokeObjectURL(i.url); return i.id !== id; }));
+  const ready = images.filter((i) => i.state === 'ready');
+  const uploading = images.some((i) => i.state === 'uploading');
 
   // Grow with the text (field-sizing is not in every Safari yet).
   useEffect(() => {
@@ -194,13 +215,19 @@ function Composer({ addr, blocked, finished, kind, exitCode, onSent }: { addr: s
     return () => clearTimeout(id);
   }, [note]);
 
-  const canSend = !!value.trim() && !blocked && !finished && !sending;
+  const canSend = (!!value.trim() || ready.length > 0) && !uploading && !finished && !sending;
   const send = async () => {
     if (!canSend) return;
     setSending(true);
-    const r = await post(`/api/terminals/${addr}/send`, { text: value });
+    // At a dialog, force: the text goes to the dialog (e.g. an "Other" answer).
+    // Image paths follow the text; Claude Code and omp read an image from its path.
+    const text = [value.trim(), ...ready.map((i) => i.path)].filter(Boolean).join(' ');
+    const r = await post(`/api/terminals/${addr}/send`, blocked ? { text, force: true } : { text });
     setSending(false);
-    if (r.ok) { onSent?.(value); setValue(''); setNote({ text: 'Sent.' }); } else setNote({ text: `Not sent: ${r.body.error}`, tone: 'err' });
+    if (r.ok) {
+      onSent?.(text); setValue(''); setNote({ text: 'Sent.' });
+      setImages((l) => { l.forEach((i) => URL.revokeObjectURL(i.url)); return []; });
+    } else setNote({ text: `Not sent: ${r.body.error}`, tone: 'err' });
   };
   const interrupt = async () => {
     const r = await post(`/api/terminals/${addr}/interrupt`);
@@ -209,7 +236,7 @@ function Composer({ addr, blocked, finished, kind, exitCode, onSent }: { addr: s
   // Keep focus (and so the keyboard) in the box when a button is tapped.
   const keepFocus = (e: React.PointerEvent | React.MouseEvent) => e.preventDefault();
 
-  const info = blocked ? `Waiting at a ${kind || 'dialog'}. Answer it in Herdr: this page does not answer approvals.`
+  const info = blocked ? `Waiting at a ${kind || 'dialog'}. Tap an answer in Chat, or type one here.`
     : finished ? `Finished${exitCode != null ? ` with exit code ${exitCode}` : ''}.` : null;
 
   return (
@@ -217,21 +244,45 @@ function Composer({ addr, blocked, finished, kind, exitCode, onSent }: { addr: s
       {(info || note) && (
         <p role="status" className={cn('px-2 pb-1.5 text-xs', info && blocked ? 'text-blocked' : note?.tone === 'err' ? 'text-error' : 'text-muted-foreground')}>{info || note?.text}</p>
       )}
+      {images.length > 0 && (
+        <ul className="flex gap-2 overflow-x-auto px-12 pb-2" aria-label="Images to send">
+          {images.map((i) => (
+            <li key={i.id} className="relative size-14 shrink-0" title={i.error || i.path || 'Uploading…'}>
+              <img src={i.url} alt="" className={cn('size-14 rounded-lg border object-cover', i.state !== 'ready' && 'opacity-50', i.state === 'error' && 'border-error')} />
+              {i.state === 'uploading' && <Loader2 className="absolute inset-0 m-auto size-5 animate-spin text-foreground" />}
+              {i.state === 'error' && <span className="absolute inset-x-0 bottom-0 rounded-b-lg bg-error/90 text-center text-[10px] text-white">failed</span>}
+              <button type="button" onClick={() => drop(i.id)} aria-label="Remove image"
+                className="absolute -top-1.5 -right-1.5 grid size-5 place-items-center rounded-full border bg-background text-muted-foreground shadow">
+                <X className="size-3" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       <div className="flex items-end gap-1.5">
         <Button type="button" variant="ghost" size="icon" className="size-10 shrink-0 rounded-full text-muted-foreground"
           disabled={finished} onPointerDown={keepFocus} onMouseDown={keepFocus} onClick={interrupt} aria-label="Interrupt (stop key)" title="Interrupt (stop key)">
           <Square className="size-3.5 fill-current" />
         </Button>
-        <div className={cn('flex min-w-0 flex-1 items-end rounded-[22px] border bg-background pl-4 pr-1 transition-colors focus-within:border-ring',
-          (blocked || finished) && 'opacity-60')}>
+        <div className={cn('flex min-w-0 flex-1 items-end rounded-[22px] border bg-background pl-1 pr-1 transition-colors focus-within:border-ring',
+          finished && 'opacity-60')}
+          onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); }}
+          onDrop={(e) => { if (e.dataTransfer.files.length) { e.preventDefault(); attach(e.dataTransfer.files); } }}>
+          <input ref={picker} type="file" accept="image/*" multiple hidden
+            onChange={(e) => { if (e.target.files) attach(e.target.files); e.target.value = ''; }} />
+          <Button type="button" variant="ghost" size="icon" className="my-1 size-8 shrink-0 rounded-full text-muted-foreground"
+            disabled={finished} onClick={() => picker.current?.click()} aria-label="Add an image" title="Add an image (or paste one)">
+            <ImagePlus className="size-4" />
+          </Button>
           <textarea ref={box} value={value} rows={1} disabled={finished}
             onChange={(e) => setValue(e.target.value)}
+            onPaste={(e) => { const files = [...e.clipboardData.files].filter((f) => f.type.startsWith('image/')); if (files.length) { e.preventDefault(); attach(files); } }}
             onKeyDown={(e) => { if (!coarse && e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }}
-            placeholder={blocked ? 'Agent is waiting at a dialog' : 'Reply to the agent'}
+            placeholder={blocked ? 'Type an answer' : 'Reply to the agent'}
             title={coarse ? undefined : 'Enter sends, Shift+Enter adds a new line'}
             aria-label="Reply to the agent"
             enterKeyHint={coarse ? 'enter' : 'send'} autoCapitalize="sentences" autoCorrect="on" spellCheck autoComplete="off"
-            className="max-h-40 min-h-[40px] w-full resize-none bg-transparent py-[9px] text-[16px] leading-[22px] outline-none placeholder:text-muted-foreground md:text-[14px]" />
+            className="max-h-40 min-h-[40px] w-full resize-none bg-transparent py-[9px] pl-1 text-[16px] leading-[22px] outline-none placeholder:text-muted-foreground md:text-[14px]" />
           <Button type="submit" size="icon" className={cn('my-1 ml-1 size-8 shrink-0 rounded-full transition-opacity', !canSend && 'opacity-30')}
             disabled={!canSend} onPointerDown={keepFocus} onMouseDown={keepFocus} aria-label="Send" title="Send">
             <ArrowUp className="size-4" strokeWidth={2.5} />
@@ -241,3 +292,5 @@ function Composer({ addr, blocked, finished, kind, exitCode, onSent }: { addr: s
     </form>
   );
 }
+
+interface Attached { id: string; url: string; state: 'uploading' | 'ready' | 'error'; path?: string; error?: string }
