@@ -1,4 +1,5 @@
 // herdr-monitor: watch and answer Herdr (hc) agents from a browser.
+import crypto from 'node:crypto';
 import http from 'node:http';
 import { spawn, execFile } from 'node:child_process';
 import { openSync, closeSync } from 'node:fs';
@@ -259,6 +260,31 @@ function readJson(req, limit = 64 * 1024) {
   });
 }
 
+// A request body as bytes, at most `limit` (hc's put takes 8 MB).
+const MAX_UPLOAD = 8 * 1024 * 1024;
+function readBytes(req, limit = MAX_UPLOAD) {
+  return new Promise((resolve, reject) => {
+    const parts = []; let size = 0;
+    req.on('data', (c) => { size += c.length; if (size > limit) { reject(Object.assign(new Error('image too large (8 MB at most)'), { status: 413 })); req.destroy(); } else parts.push(c); });
+    req.on('end', () => resolve(Buffer.concat(parts)));
+    req.on('error', reject);
+  });
+}
+
+// An image's type from its first bytes (not from what the browser claims).
+export function imageKind(buf) {
+  if (!buf || buf.length < 12) return null;
+  if (buf[0] === 0x89 && buf.toString('latin1', 1, 4) === 'PNG') return 'png';
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpg';
+  if (buf.toString('latin1', 0, 4) === 'GIF8') return 'gif';
+  if (buf.toString('latin1', 0, 4) === 'RIFF' && buf.toString('latin1', 8, 12) === 'WEBP') return 'webp';
+  return null;
+}
+
+// The uploaded image's file name: when, plus a little randomness.
+export const uploadName = (kind, now = new Date()) =>
+  `image-${now.toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15)}-${crypto.randomBytes(3).toString('hex')}.${kind}`;
+
 // Only the page itself may drive agents: block cross-site POSTs.
 export function sameOrigin(req) {
   const origin = req.headers.origin;
@@ -484,6 +510,18 @@ const routes = [
     const { keys } = await readJson(req);
     if (!Array.isArray(keys) || !keys.length || keys.length > 20 || !keys.every(isDialogKey)) return send(res, 400, { error: 'keys: up to 20 of up, down, left, right, tab, shift+tab, space, enter, esc, backspace, a-z, 0-9' });
     send(res, 200, await rpc.call('terminal.keys', { terminal: addr, keys }));
+  }],
+  // An image for the agent: hc keeps it beside the terminal (on its machine,
+  // removed with the terminal) and returns its path; the page puts the path
+  // in the reply. Types nothing itself.
+  ['POST', /^\/api\/terminals\/([^/]+)\/upload$/, async (req, res, [addr]) => {
+    if (!terminalOr404(res, addr)) return;
+    let buf;
+    try { buf = await readBytes(req); } catch (e) { return send(res, e.status || 400, { error: e.message }); }
+    const kind = imageKind(buf);
+    if (!kind) return send(res, 415, { error: 'not a PNG, JPEG, GIF or WebP image' });
+    const r = await rpc.call('terminal.put', { terminal: addr, name: uploadName(kind), data: buf.toString('base64') });
+    send(res, 200, { path: r?.path ?? r, bytes: buf.length });
   }],
   ['POST', /^\/api\/terminals\/([^/]+)\/interrupt$/, async (req, res, [addr]) => {
     if (!terminalOr404(res, addr)) return;

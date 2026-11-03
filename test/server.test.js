@@ -78,3 +78,17 @@ test('isDialogKey: navigation keys, letters and digits only', () => {
   for (const k of ['up', 'down', 'left', 'right', 'tab', 'shift+tab', 'space', 'enter', 'esc', 'backspace', 'a', '7']) assert.ok(isDialogKey(k), k);
   for (const k of ['ctrl+c', 'alt+x', 'f5', 'ab', 'A', '', 'enter;rm', null]) assert.ok(!isDialogKey(k), String(k));
 });
+
+import { imageKind, uploadName } from '../server.js';
+test('imageKind: from the first bytes', () => {
+  const pad = (b) => Buffer.concat([Buffer.from(b), Buffer.alloc(16)]);
+  assert.equal(imageKind(pad([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), 'png');
+  assert.equal(imageKind(pad([0xff, 0xd8, 0xff, 0xe0])), 'jpg');
+  assert.equal(imageKind(pad([...Buffer.from('GIF89a')])), 'gif');
+  assert.equal(imageKind(Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WEBPVP8 ')])), 'webp');
+  assert.equal(imageKind(pad([...Buffer.from('<svg xmlns=')])), null);
+  assert.equal(imageKind(Buffer.from('short')), null);
+});
+test('uploadName: dated, random, with the type', () => {
+  assert.match(uploadName('png', new Date('2026-11-03T04:05:06Z')), /^image-20261103-040506-[0-9a-f]{6}\.png$/);
+});
