@@ -43,10 +43,10 @@ export function AgentsList({ live, selected, now }: { live: Live; selected?: str
       {groups.map((g) => (
         <section key={g.state} className="mb-2">
           <h3 className="flex items-center gap-2 px-3 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-            {g.label}<span className="font-normal tabular-nums">{g.rows.length}</span>
+            {g.label}<span className="font-normal tabular-nums">{g.count}</span>
           </h3>
           <ul>
-            {g.rows.map(({ t, depth }) => (
+            {g.rows.map(({ t, depth, state }) => (
               <li key={t.address}>
                 <button className={cn(row, selected === t.address && 'bg-accent')} style={{ paddingLeft: 12 + depth * 18 }}
                   onClick={() => open({ view: 'agent', addr: t.address, tab: 'output' })}>
@@ -57,7 +57,7 @@ export function AgentsList({ live, selected, now }: { live: Live; selected?: str
                     {(t.status?.msg || t.title) && <span className="block truncate text-xs text-muted-foreground">{t.status?.msg || t.title}</span>}
                   </span>
                   <span className="text-xs tabular-nums text-muted-foreground">{age(t.changed_ms, now)}</span>
-                  <StatusMark state={g.state} />
+                  <StatusMark state={state} />
                 </button>
               </li>
             ))}

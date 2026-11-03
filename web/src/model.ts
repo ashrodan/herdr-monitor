@@ -66,22 +66,38 @@ export function ago(iso: string | null | undefined): string {
 
 export const shortPath = (p: string | null | undefined) => (p || '').replace(/^\/(Users|home)\/[^/]+(?=\/|$)/, '~');
 
-// Agents grouped by state; children right after their parent.
+// Agents grouped by state, like Herdr's sidebar. A family (an agent, its
+// sub-agents and the terminals it started, e.g. a dev server) stays
+// together under its parent, in the group of its most urgent member. Only
+// agents that report a status start a family; a shell or program shows only
+// under the agent that started it.
+const URGENCY: AgentState[] = ['blocked', 'error', 'done', 'working', 'idle'];
+export interface AgentRow { t: Terminal; depth: number; state: AgentState | null }
 export function groupAgents(terminals: Terminal[]) {
-  const live = terminals.filter((t) => isAgent(t) && t.state !== 'finished');
-  const byState = new Map<AgentState, Terminal[]>();
-  for (const g of GROUPS) byState.set(g.state, []);
-  for (const t of live) (byState.get(stateOf(t)) || byState.get('idle')!).push(t);
-  return GROUPS.map((g) => {
-    const rows = byState.get(g.state)!.sort((a, b) => (b.changed_ms || 0) - (a.changed_ms || 0));
-    const inGroup = new Set(rows.map((t) => t.address));
-    const out: { t: Terminal; depth: number }[] = [];
-    const add = (t: Terminal, depth: number) => {
-      out.push({ t, depth });
-      for (const c of rows) if (c.parent === t.address) add(c, depth + 1);
+  const live = terminals.filter((t) => t.state !== 'finished');
+  const by = new Map(live.map((t) => [t.address, t]));
+  const kids = new Map<string, Terminal[]>();
+  for (const t of live) if (t.parent && by.has(t.parent)) kids.set(t.parent, [...(kids.get(t.parent) || []), t]);
+  const reports = (t: Terminal) => t.reported || !!t.status;
+  const isRoot = (t: Terminal) => reports(t) && !(t.parent && by.has(t.parent) && reports(by.get(t.parent)!));
+
+  const families = live.filter(isRoot).map((root) => {
+    const rows: AgentRow[] = [];
+    let state: AgentState = 'idle', changed = 0;
+    const walk = (t: Terminal, depth: number) => {
+      const own = reports(t) ? stateOf(t) : null;
+      rows.push({ t, depth, state: own });
+      if (own && URGENCY.indexOf(own) < URGENCY.indexOf(state)) state = own;
+      changed = Math.max(changed, t.changed_ms || 0);
+      for (const c of (kids.get(t.address) || []).sort((a, b) => (b.changed_ms || 0) - (a.changed_ms || 0))) walk(c, depth + 1);
     };
-    for (const t of rows) if (!t.parent || !inGroup.has(t.parent)) add(t, t.parent ? 1 : 0);
-    return { ...g, rows: out };
+    walk(root, 0);
+    return { state, changed, rows };
+  });
+  return GROUPS.map((g) => {
+    const fams = families.filter((f) => f.state === g.state).sort((a, b) => b.changed - a.changed);
+    const rows = fams.flatMap((f) => f.rows);
+    return { ...g, rows, count: rows.filter((r) => r.state).length };
   }).filter((g) => g.rows.length);
 }
 
