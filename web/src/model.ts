@@ -90,3 +90,17 @@ export function spaceState(s: Space, terminals: Map<string, Terminal>): AgentSta
   const states = s.tabs.flatMap((tb) => tb.terminals).map((a) => terminals.get(a)).filter((t): t is Terminal => !!t && t.state !== 'finished').map(stateOf);
   return (['blocked', 'error', 'working'] as AgentState[]).find((x) => states.includes(x)) || null;
 }
+
+// The pane to open for a space: the one that most needs you (waiting, then
+// done, then working), else its first agent, else its first terminal.
+const RANK: Record<string, number> = { blocked: 0, error: 0, done: 1, working: 2 };
+export function bestTerminal(s: Space, terminals: Map<string, Terminal>): string | null {
+  let best: string | null = null, bestRank = 9;
+  for (const tb of s.tabs) for (const a of tb.terminals) {
+    const t = terminals.get(a);
+    if (!t) continue;
+    const r = t.state === 'finished' ? 5 : RANK[stateOf(t)] ?? (isAgent(t) ? 3 : 4);
+    if (r < bestRank) { best = a; bestRank = r; }
+  }
+  return best;
+}
