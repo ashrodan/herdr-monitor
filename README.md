@@ -6,6 +6,17 @@ herdr-core (`hc`) through its JSON-RPC socket. The server has no runtime
 dependencies. The UI is Vite + React + TypeScript + Tailwind + shadcn/ui,
 built to `dist/`.
 
+![Answering an agent's questions from a phone](docs/demo.gif)
+
+- **Agents by state**: waiting, working and done, across every Herdr space.
+  You can also group them by space, or nest them under the agent that
+  started them.
+- **Chat**: Claude Code, omp and pi conversations, rendered for a phone.
+- **Answer questions**: tap the options of an agent's question form.
+- **Reply**: type, paste or attach an image.
+- **Push notifications** when an agent needs you (installed as a PWA).
+- **Overview**: every open PR in your spaces, with checks and reviews.
+
 ## Run it
 
     npm install        # or: bun install
@@ -103,3 +114,7 @@ not from this repo.
 
     npm test           # server and library tests (node:test)
     npm run typecheck  # the UI
+
+## License
+
+MIT. See [LICENSE](LICENSE).
