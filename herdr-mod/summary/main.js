@@ -99,7 +99,10 @@ export default class Summary extends View {
     if (!force && have && Date.now() - have.at < maxAge) return;
     if (inflight && Date.now() - inflight < 60_000) return;
     const started = inflight = Date.now();
-    this.loading = true; cx.notify();
+    // No cx.notify() here: render calls this (the panel's catch-up), and
+    // render may not ask for another render. The spinner shows from the
+    // render that is running, or from the caller's own notify.
+    this.loading = true;
     cx.spawn(async (cx) => {
       try {
         const value = await loadPrs();
@@ -194,7 +197,7 @@ export default class Summary extends View {
         .child(prs ? `${prs.repos} repo${prs.repos === 1 ? "" : "s"} · PRs ${age(prs.at)}${age(prs.at) === "now" ? "" : " ago"}` : "Loading PRs…"))
       .child(div().id("summary-refresh").size(24).flex().items_center().justify_center().rounded(5).cursor_pointer()
         .hover((s) => s.bg(t.raised)).text_color(t.muted).tooltip("Refresh PRs and recaps")
-        .on_click((_e, cx) => { this.recaps.clear(); this.loadPrs(cx, true); })
+        .on_click((_e, cx) => { this.recaps.clear(); this.loadPrs(cx, true); cx.notify(); })
         .child(this.loading ? svg("mods/summary/spinner.svg").size(13).spin(900) : svg("mods/summary/refresh.svg").size(13)));
 
     const tiles = h_flex().px(12).pt(10).pb(4).gap(6).flex_none()
