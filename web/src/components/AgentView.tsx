@@ -70,7 +70,7 @@ export function AgentView({ live, addr, tab }: { live: Live; addr: string; tab: 
       {t.status?.progress != null && <div className="h-0.5 bg-border"><div className="h-full bg-working" style={{ width: `${Math.min(100, t.status.progress)}%` }} /></div>}
 
       <div className="min-h-0 flex-1">
-        {tab === 'output' && <Output addr={addr} live={t.state === 'live'} claude={isClaude(t)} outbox={outbox} delivered={delivered} cols={t.cols || 80} rows={t.rows || 24} working={st === 'working'} stateKey={st} />}
+        {tab === 'output' && <Output addr={addr} live={t.state === 'live'} chat={hasChat(t)} outbox={outbox} delivered={delivered} cols={t.cols || 80} rows={t.rows || 24} working={st === 'working'} stateKey={st} />}
         {tab === 'commits' && <CommitsPane addr={addr} />}
         {tab === 'status' && <StatusPane addr={addr} data={pr} onData={setPr} />}
       </div>
@@ -89,17 +89,19 @@ function Header({ children }: { children: React.ReactNode }) {
 }
 
 // Output, three ways:
-// - Chat: Claude Code's own conversation (Claude agents only; their default);
+// - Chat: the agent's own conversation (Claude Code, omp, pi; their default);
 // - Live: the real terminal, read only;
 // - Text: the screen as text that wraps, with Load history.
 const MODE_KEY = 'herdr-monitor.output';
 type Mode = 'chat' | 'live' | 'text';
-const isClaude = (t: { agent: string; status: { app?: string } | null }) => t.status?.app === 'claude-code' || /^claude/.test(t.agent);
+// Agents whose own session the server can read: Claude Code, omp and pi.
+const CHAT_APPS = /^(claude|claude-code|omp|pi)$/;
+const hasChat = (t: { agent: string; status: { app?: string } | null }) => CHAT_APPS.test(t.status?.app || '') || CHAT_APPS.test(t.agent);
 
-function Output({ addr, live, claude, outbox, delivered, cols, rows, working, stateKey }: { addr: string; live: boolean; claude: boolean; outbox: Sent[]; delivered: (ids: number[]) => void; cols: number; rows: number; working: boolean; stateKey: string }) {
+function Output({ addr, live, chat, outbox, delivered, cols, rows, working, stateKey }: { addr: string; live: boolean; chat: boolean; outbox: Sent[]; delivered: (ids: number[]) => void; cols: number; rows: number; working: boolean; stateKey: string }) {
   const [stored, setStored] = useState<Mode>(() => (localStorage.getItem(MODE_KEY) as Mode) || 'chat');
   const pick = (m: Mode) => { setStored(m); try { localStorage.setItem(MODE_KEY, m); } catch { /* private mode */ } };
-  const modes: Mode[] = [...(claude ? ['chat' as const] : []), ...(live ? ['live' as const] : []), 'text'];
+  const modes: Mode[] = [...(chat ? ['chat' as const] : []), ...(live ? ['live' as const] : []), 'text'];
   const mode: Mode = modes.includes(stored) ? stored : modes.includes('live') ? 'live' : 'text';
   const LABEL: Record<Mode, string> = { chat: 'Chat', live: 'Live', text: 'Text' };
   return (

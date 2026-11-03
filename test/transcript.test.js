@@ -73,3 +73,54 @@ test('readTail drops the partial first line', async () => {
   assert.equal(r.truncated, true);
   assert.deepEqual(r.lines.filter(Boolean), ['cccc']);
 });
+
+// ---- omp / pi sessions
+import { parseOmp, ompSessionFile } from '../lib/transcript.js';
+
+const omp = (o) => JSON.stringify({ timestamp: '2026-11-02T00:00:00Z', ...o });
+test('parseOmp: prompts, replies, tool calls with results, notices', () => {
+  const lines = [
+    omp({ type: 'session', id: 's1', cwd: '/x' }),
+    omp({ type: 'message', id: 'u1', message: { role: 'user', attribution: 'user', content: [{ type: 'text', text: 'review PR 1' }] } }),
+    omp({ type: 'message', id: 'a1', message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'hmm' }, { type: 'toolCall', id: 'c1', name: 'read', arguments: { path: 'pr://o/r/1', i: 'Reading PR' }, intent: 'Reading PR' }] } }),
+    omp({ type: 'message', id: 'r1', message: { role: 'toolResult', toolCallId: 'c1', toolName: 'read', content: [{ type: 'text', text: '# PR 1' }], isError: false } }),
+    omp({ type: 'message', id: 'a2', message: { role: 'assistant', content: [{ type: 'text', text: 'Looks good.' }] } }),
+    omp({ type: 'message', id: 'd1', message: { role: 'developer', content: [{ type: 'text', text: '<system-reminder>rule</system-reminder>' }] } }),
+    omp({ type: 'custom_message', id: 'n1', customType: 'async-result', display: true, content: '<system-notice>\nBackground job ServerReview has completed. Resume your work.\n</system-notice>' }),
+    omp({ type: 'compaction', id: 'k1', summary: '## Goal' }),
+  ];
+  const m = parseOmp(lines);
+  assert.deepEqual(m.map((x) => x.role), ['user', 'assistant', 'system', 'system']);
+  assert.equal(m[0].parts[0].text, 'review PR 1');
+  const [think, tool, text] = m[1].parts;
+  assert.equal(think.kind, 'thinking');
+  assert.deepEqual([tool.kind, tool.name, tool.summary, tool.result.text], ['tool', 'read', 'pr://o/r/1', '# PR 1']);
+  assert.equal(text.text, 'Looks good.');
+  assert.equal(m[2].parts[0].text, 'Background job ServerReview has completed');
+  assert.equal(m[3].parts[0].text, 'Context compacted');
+});
+
+test('ompSessionFile: the open .jsonl under a sessions root, cached per pid', async () => {
+  let calls = 0;
+  const lsof = async () => { calls++; return 'p42\nn/dev/null\nn/h/.omp/agent/sessions/-x/2026_abc.jsonl\nn/h/other/log.jsonl\n'; };
+  const roots = ['/h/.omp/agent/sessions'];
+  assert.equal(await ompSessionFile(42, { roots, lsof }), '/h/.omp/agent/sessions/-x/2026_abc.jsonl');
+  assert.equal(await ompSessionFile(42, { roots, lsof }), '/h/.omp/agent/sessions/-x/2026_abc.jsonl');
+  assert.equal(calls, 1);
+  assert.equal(await ompSessionFile(43, { roots, lsof: async () => 'n/h/other/log.jsonl\n' }), null);
+});
+
+test('questions from AskUserQuestion and ask become question parts', () => {
+  const qs = { questions: [{ header: 'Next', question: 'What next?', multi: true, options: [{ label: 'A', description: 'do a' }, { label: 'B' }] }] };
+  const claude = parseTranscript([JSON.stringify({ type: 'assistant', uuid: 'a', message: { content: [{ type: 'tool_use', id: 't1', name: 'AskUserQuestion', input: qs }] } })]);
+  const p = claude[0].parts[0];
+  assert.equal(p.kind, 'question');
+  assert.deepEqual(p.questions[0].options.map((o) => o.label), ['A', 'B']);
+  const o = parseOmp([
+    JSON.stringify({ type: 'message', id: 'a', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'c', name: 'ask', arguments: { i: 'x', ...qs } }] } }),
+    JSON.stringify({ type: 'message', id: 'r', message: { role: 'toolResult', toolCallId: 'c', content: [{ type: 'text', text: 'User chose: A' }] } }),
+  ]);
+  assert.equal(o[0].parts[0].kind, 'question');
+  assert.equal(o[0].parts[0].questions[0].multi, true);
+  assert.equal(o[0].parts[0].result.text, 'User chose: A');
+});

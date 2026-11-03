@@ -1,17 +1,18 @@
-// Claude Code's own conversation for an agent, read from its transcript:
-// your prompts as bubbles, Claude's replies as Markdown, tool calls as
+// An agent's own conversation (Claude Code, omp or pi), read from its session:
+// your prompts as bubbles, its replies as Markdown, tool calls as
 // compact rows that open to show their result.
 import { useEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
-import { AlertCircle, Brain, ChevronRight, Wrench } from 'lucide-react';
+import { AlertCircle, Brain, ChevronRight, MessageCircleQuestion, Wrench } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getJson } from '@/api';
 
 interface ToolPart { kind: 'tool'; id: string; name: string; summary: string; result: { text: string; error: boolean; truncated: boolean } | null }
 interface TextPart { kind: 'text' | 'thinking'; text: string }
-type Part = TextPart | ToolPart;
+interface QuestionPart { kind: 'question'; id: string; name: string; questions: { header: string; question: string; multi: boolean; options: { label: string; description: string }[] }[]; result: { text: string; error: boolean } | null }
+type Part = TextPart | ToolPart | QuestionPart;
 interface Message { id: string; role: 'user' | 'assistant' | 'system'; at: string | null; parts: Part[] }
 // A reply sent from this page that is not in the transcript yet.
 export interface Sent { id: number; text: string; at: number }
@@ -45,7 +46,7 @@ export function ChatPane({ addr, working, outbox = [], delivered }: { addr: stri
   }, [addr, working]);
 
   // A reply was sent: show it at the bottom and look for it in the
-  // transcript now, then again shortly (Claude writes it within a second or two).
+  // transcript now, then again shortly (agents write it within a second or two).
   useEffect(() => {
     if (!outbox.length) return;
     atBottom.current = true;
@@ -101,7 +102,7 @@ function MessageView({ m }: { m: Message }) {
     return <p className="text-center text-xs text-muted-foreground [overflow-wrap:anywhere]">{m.parts.map((p) => (p.kind === 'text' ? p.text : '')).join(' ')}</p>;
   }
   // Assistant: text blocks in order; runs of tool calls fold into one group.
-  const blocks: (TextPart | ToolPart[])[] = [];
+  const blocks: (TextPart | QuestionPart | ToolPart[])[] = [];
   for (const p of m.parts) {
     if (p.kind === 'tool') {
       const prev = blocks[blocks.length - 1];
@@ -111,6 +112,7 @@ function MessageView({ m }: { m: Message }) {
   return (
     <div className="flex flex-col gap-2">
       {blocks.map((b, i) => Array.isArray(b) ? <ToolGroup key={i} tools={b} />
+        : b.kind === 'question' ? <Question key={i} q={b} />
         : b.kind === 'thinking' ? <Thinking key={i} text={b.text} />
         : <Prose key={i} text={b.text} />)}
     </div>
@@ -135,6 +137,34 @@ function Prose({ text }: { text: string }) {
   return (
     <div className="prose-chat text-[15px] leading-relaxed [overflow-wrap:anywhere] md:text-sm">
       <Markdown remarkPlugins={[remarkGfm]} components={LINKS}>{text}</Markdown>
+    </div>
+  );
+}
+
+// A question the agent asked you. Read only: answer it in Herdr.
+function Question({ q }: { q: QuestionPart }) {
+  const waiting = !q.result;
+  return (
+    <div className={cn('rounded-xl border p-3 text-sm', waiting ? 'border-blocked/50 bg-blocked/5' : 'bg-card/60')}>
+      {q.questions.map((x, i) => (
+        <div key={i} className={cn(i > 0 && 'mt-3 border-t pt-3')}>
+          <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+            <MessageCircleQuestion className={cn('size-3.5', waiting && 'text-blocked')} />{x.header || 'Question'}{x.multi && ' · pick any'}
+          </p>
+          <p className="mt-1 font-medium">{x.question}</p>
+          <ol className="mt-2 space-y-1.5">
+            {x.options.map((o, j) => (
+              <li key={j} className="flex gap-2">
+                <span className="mt-px size-5 shrink-0 rounded-full border text-center text-[11px] leading-[18px] text-muted-foreground">{j + 1}</span>
+                <span className="min-w-0"><span className="font-medium">{o.label}</span>{o.description && <span className="block text-xs text-muted-foreground">{o.description}</span>}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      ))}
+      <p className={cn('mt-3 text-xs', waiting ? 'text-blocked' : 'text-muted-foreground')}>
+        {waiting ? 'Waiting for your answer. Answer it in Herdr: this page does not answer questions.' : `Answered: ${q.result!.text.split('\n')[0].slice(0, 200)}`}
+      </p>
     </div>
   );
 }
