@@ -12,7 +12,7 @@
 // shows, and again only when that agent changes.
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { agents, spaces, layout, theme, run, shared, setShared, nextCommand, props } from "herdr";
+import { agents, spaces, panes, layout, theme, run, shared, setShared, nextCommand, props } from "herdr";
 import { loadPrs, loadRecap, age } from "./data.js";
 
 const MOD = "summary";
@@ -26,6 +26,10 @@ const KINDS = ["waiting", "done", "working", "prs"];
 const TITLE = { waiting: "Waiting for you", done: "Done, not seen", working: "Working", prs: "Open PRs" };
 
 let inflight = 0; // one PR load at a time across copies (they share this module)
+// When PRs were last checked. A load that finds nothing new updates only this,
+// not the shared value: setShared redraws every mod in the window.
+let checkedAt = 0;
+const prsAt = () => Math.max(shared(PRS)?.at ?? 0, checkedAt);
 
 function findNode(node, id) {
   if (node?.id === id) return node;
@@ -35,6 +39,14 @@ function findNode(node, id) {
 function panelShown() {
   const root = layout(), panel = findNode(root, "panel"), body = findNode(root, "panel-body");
   return Boolean(panel && !panel.hidden && body?.active === PANEL_BLOCK);
+}
+
+// The panel copy is on screen: in the panel, or as a pane in the tab on
+// screen (the fallback when the layout has no panel block).
+function panelCopyShown() {
+  if (panelShown()) return true;
+  const tab = spaces().find((s) => s.active)?.tabs?.find((t) => t.active)?.id ?? null;
+  return panes().some((p) => p.mod === MOD && p.tab === tab);
 }
 
 // Open the panel on a list. With no panel block in the layout, open a pane.
@@ -86,7 +98,7 @@ export default class Summary extends View {
   command(name, cx) {
     const c = String(name).replace(/^summary[.:]/, "");
     if (c === "refresh") { this.loadPrs(cx, true); this.recaps.clear(); return; }
-    if (!this.bar && panelShown() && (KINDS.includes(c) || c === "all")) { setShared(VIEW, c); return; }
+    if (!this.bar && panelCopyShown() && (KINDS.includes(c) || c === "all")) { setShared(VIEW, c); return; }
     if (!this.bar) return; // the bar opens and toggles; the panel would do it twice
     if (c === "open") openPanel(null);
     else if (c === "toggle") togglePanel(null);
@@ -96,7 +108,7 @@ export default class Summary extends View {
   // Load PRs unless the shared ones are younger than maxAge (or force).
   loadPrs(cx, force, maxAge = PR_FRESH) {
     const have = shared(PRS);
-    if (!force && have && Date.now() - have.at < maxAge) return;
+    if (!force && have && Date.now() - prsAt() < maxAge) return;
     if (inflight && Date.now() - inflight < 60_000) return;
     const started = inflight = Date.now();
     // No cx.notify() here: render calls this (the panel's catch-up), and
@@ -106,7 +118,9 @@ export default class Summary extends View {
     cx.spawn(async (cx) => {
       try {
         const value = await loadPrs();
-        setShared(PRS, value); // at changes each load: one redraw per load
+        const { at: _a, ...now } = value, { at: _b, ...before } = shared(PRS) ?? {};
+        checkedAt = value.at;
+        if (JSON.stringify(now) !== JSON.stringify(before)) setShared(PRS, value); // redraw only on a change
       } catch (e) {
         setShared(PRS, { ...(shared(PRS) ?? { prs: [], repos: 0 }), at: Date.now(), errors: [{ repo: "", error: String(e).slice(0, 120) }] });
       } finally {
@@ -168,7 +182,7 @@ export default class Summary extends View {
   // ------------------------------------------------------------ the panel
 
   renderPanel(t, cx) {
-    const shown = panelShown();
+    const shown = panelCopyShown();
     if (shown && this.stale) { this.stale = false; this.loadPrs(cx, false); }
     if (!shown) this.stale = true;
 
@@ -194,7 +208,7 @@ export default class Summary extends View {
     const header = h_flex().px(12).h(40).flex_none().items_center().gap(8).border_b(1).border_color(t.border)
       .child(div().text_size(13).font_semibold().child("Summary"))
       .child(div().flex_1().text_size(11).text_color(t.dim).truncate()
-        .child(prs ? `${prs.repos} repo${prs.repos === 1 ? "" : "s"} · PRs ${age(prs.at)}${age(prs.at) === "now" ? "" : " ago"}` : "Loading PRs…"))
+        .child(prs ? `${prs.repos} repo${prs.repos === 1 ? "" : "s"} · PRs ${age(prsAt())}${age(prsAt()) === "now" ? "" : " ago"}` : "Loading PRs…"))
       .child(div().id("summary-refresh").size(24).flex().items_center().justify_center().rounded(5).cursor_pointer()
         .hover((s) => s.bg(t.raised)).text_color(t.muted).tooltip("Refresh PRs and recaps")
         .on_click((_e, cx) => { this.recaps.clear(); this.loadPrs(cx, true); cx.notify(); })

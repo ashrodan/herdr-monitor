@@ -15,6 +15,12 @@ herdr-monitor's Overview.
 
 ## Install
 
+To have an agent install it, tell it:
+
+> Read ~/.config/herdr-app/AGENTS.md, then add this mod: https://github.com/ashrodan/herdr-monitor/tree/main/herdr-mod/summary
+
+Or run the script from a clone of this repo:
+
 ```sh
 scripts/install-mod.sh --layout main-browser   # copy, check, add the blocks
 scripts/install-mod.sh                         # copy and check only
@@ -50,4 +56,8 @@ The first goes in the status row, the second in the `panel-body` stack.
   when an agent changes. Each read is `hc get`, the session file and the last
   600 kB of the transcript, filtered by `grep` before JavaScript sees it.
   Local agents only.
+- A PR load that finds nothing new does not write the shared value, so it
+  does not redraw the window.
+- Hidden copies do no work: the panel loads recaps and catches up on PRs only
+  when it is on screen (in the panel, or as a pane in the tab on screen).
 - Nothing in it writes: no actions on PRs or agents.
