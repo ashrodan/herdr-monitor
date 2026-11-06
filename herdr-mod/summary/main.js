@@ -4,32 +4,40 @@
 // - the bar (props {bar: true}, in the status row): counts of agents waiting,
 //   done and working, and open PRs. A click opens the panel on that list.
 // - the panel (in the right panel stack, no props): the lists, each Claude
-//   agent's latest recap, and every open PR in the repos of the open spaces.
+//   agent's latest recap, the web apps running in each space (with their
+//   tailnet URL), and every open PR in the repos of the open spaces.
 //
 // Agent facts are Herdr's own (agents()), so they cost nothing. PRs come from
 // `gh pr list` per repo, at most every 2 minutes, shared between the copies
-// through setShared("summary.prs"). Recaps are read only for rows the panel
+// through setShared("summary.prs"). Apps come from one port scan per machine
+// every minute, shared through setShared("summary.apps"). Recaps are read only for rows the panel
 // shows, and again only when that agent changes.
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { agents, spaces, panes, layout, theme, run, shared, setShared, nextCommand, props } from "herdr";
-import { loadPrs, loadRecap, age } from "./data.js";
+import { loadPrs, loadApps, shareApp, loadRecap, age } from "./data.js";
 
 const MOD = "summary";
 const PANEL_BLOCK = "summary"; // the block id in the layout's panel-body stack
 const PRS = "summary.prs";
+const APPS = "summary.apps";
 const VIEW = "summary.view";
-const PR_EVERY = 120_000;   // the bar refreshes PRs this often
-const PR_FRESH = 60_000;    // the panel trusts shared PRs this young
-const SHOW = { waiting: 8, done: 6, working: 6, prs: 8 };
-const KINDS = ["waiting", "done", "working", "prs"];
-const TITLE = { waiting: "Waiting for you", done: "Done, not seen", working: "Working", prs: "Open PRs" };
+const SHOW = { waiting: 8, done: 6, working: 6, apps: 10, prs: 8 };
+const KINDS = ["waiting", "done", "working", "apps", "prs"];
+const TITLE = { waiting: "Waiting for you", done: "Done, not seen", working: "Working", apps: "Running apps", prs: "Open PRs" };
 
-let inflight = 0; // one PR load at a time across copies (they share this module)
-// When PRs were last checked. A load that finds nothing new updates only this,
-// not the shared value: setShared redraws every mod in the window.
-let checkedAt = 0;
-const prsAt = () => Math.max(shared(PRS)?.at ?? 0, checkedAt);
+// The slow facts, each loaded by the bar on a timer and shared with the panel.
+//   every: the bar reloads this often; fresh: the panel trusts values this young.
+const FACTS = {
+  prs: { key: PRS, load: loadPrs, every: 120_000, fresh: 60_000, empty: { prs: [], repos: 0 } },
+  apps: { key: APPS, load: loadApps, every: 60_000, fresh: 30_000, empty: { apps: [] } },
+};
+// Per fact, across copies (they share this module): the load in flight, and
+// when it was last checked. A load that finds nothing new updates only
+// checked, not the shared value: setShared redraws every mod in the window.
+const inflight = { prs: 0, apps: 0 };
+const checked = { prs: 0, apps: 0 };
+const factAt = (kind) => Math.max(shared(FACTS[kind].key)?.at ?? 0, checked[kind]);
 
 function findNode(node, id) {
   if (node?.id === id) return node;
@@ -86,18 +94,23 @@ export default class Summary extends View {
     this.bar = Boolean(props()?.bar);
     this.recaps = new Map(); // address -> { seq, recap, loading }
     this.stale = true;
+    this.loading = { prs: false, apps: false };
+    this.sharing = new Map(); // app key -> { busy, error }
     if (this.bar) {
-      // The bar is always on screen: it keeps the PR facts fresh for both copies.
-      cx.timer.every(PR_EVERY, (cx) => this.loadPrs(cx, false, PR_EVERY - 10_000));
-      this.loadPrs(cx, false, PR_EVERY - 10_000);
+      // The bar is always on screen: it keeps the slow facts fresh for both copies.
+      for (const kind of Object.keys(FACTS)) {
+        const { every } = FACTS[kind];
+        cx.timer.every(every, (cx) => this.load(kind, cx, false, every - 10_000));
+        this.load(kind, cx, false, every - 10_000);
+      }
     }
     cx.spawn(async (cx) => { for (;;) { this.command(await nextCommand(), cx); cx.notify(); } });
   }
 
-  // summary.open, .toggle, .all, .waiting, .done, .working, .prs, .refresh
+  // summary.open, .toggle, .all, .waiting, .done, .working, .apps, .prs, .refresh
   command(name, cx) {
     const c = String(name).replace(/^summary[.:]/, "");
-    if (c === "refresh") { this.loadPrs(cx, true); this.recaps.clear(); return; }
+    if (c === "refresh") { this.refresh(cx); return; }
     if (!this.bar && panelCopyShown() && (KINDS.includes(c) || c === "all")) { setShared(VIEW, c); return; }
     if (!this.bar) return; // the bar opens and toggles; the panel would do it twice
     if (c === "open") openPanel(null);
@@ -105,28 +118,48 @@ export default class Summary extends View {
     else if (KINDS.includes(c) || c === "all") openPanel(c);
   }
 
-  // Load PRs unless the shared ones are younger than maxAge (or force).
-  loadPrs(cx, force, maxAge = PR_FRESH) {
-    const have = shared(PRS);
-    if (!force && have && Date.now() - prsAt() < maxAge) return;
-    if (inflight && Date.now() - inflight < 60_000) return;
-    const started = inflight = Date.now();
+  // Reload PRs, apps and recaps now.
+  refresh(cx) {
+    this.recaps.clear();
+    for (const kind of Object.keys(FACTS)) this.load(kind, cx, true);
+  }
+
+  // Load one fact (prs, apps) unless the shared value is younger than maxAge (or force).
+  load(kind, cx, force, maxAge = FACTS[kind].fresh) {
+    const f = FACTS[kind];
+    const have = shared(f.key);
+    if (!force && have && Date.now() - factAt(kind) < maxAge) return;
+    if (inflight[kind] && Date.now() - inflight[kind] < 60_000) return;
+    const started = inflight[kind] = Date.now();
     // No cx.notify() here: render calls this (the panel's catch-up), and
     // render may not ask for another render. The spinner shows from the
     // render that is running, or from the caller's own notify.
-    this.loading = true;
+    this.loading[kind] = true;
     cx.spawn(async (cx) => {
       try {
-        const value = await loadPrs();
-        const { at: _a, ...now } = value, { at: _b, ...before } = shared(PRS) ?? {};
-        checkedAt = value.at;
-        if (JSON.stringify(now) !== JSON.stringify(before)) setShared(PRS, value); // redraw only on a change
+        const value = await f.load();
+        const { at: _a, ...now } = value, { at: _b, ...before } = shared(f.key) ?? {};
+        checked[kind] = value.at;
+        if (JSON.stringify(now) !== JSON.stringify(before)) setShared(f.key, value); // redraw only on a change
       } catch (e) {
-        setShared(PRS, { ...(shared(PRS) ?? { prs: [], repos: 0 }), at: Date.now(), errors: [{ repo: "", error: String(e).slice(0, 120) }] });
+        setShared(f.key, { ...(shared(f.key) ?? f.empty), at: Date.now(), errors: [{ repo: "", error: String(e).slice(0, 120) }] });
       } finally {
-        if (inflight === started) inflight = 0;
-        this.loading = false; cx.notify();
+        if (inflight[kind] === started) inflight[kind] = 0;
+        this.loading[kind] = false; cx.notify();
       }
+    });
+  }
+
+  // Share an app on the tailnet (Tailscale Serve), then scan again.
+  share(app, cx) {
+    if (this.sharing.get(app.key)?.busy) return;
+    this.sharing.set(app.key, { busy: true, error: null });
+    cx.spawn(async (cx) => {
+      let error = null;
+      try { error = await shareApp(app); } catch (e) { error = String(e).slice(0, 160); }
+      this.sharing.set(app.key, { busy: false, error });
+      this.load("apps", cx, true);
+      cx.notify();
     });
   }
 
@@ -156,7 +189,7 @@ export default class Summary extends View {
 
   renderBar(t) {
     const b = buckets();
-    const prs = shared(PRS);
+    const prs = shared(PRS), apps = shared(APPS);
     const view = panelShown() ? shared(VIEW) : null;
     const chip = (kind, icon, n, label, color) => h_flex().id(`summary-${kind}`).h(22).px(7).gap(5).items_center().flex_shrink_0()
       .rounded(5).cursor_pointer().hover((s) => s.bg(t.raised)).when(view === kind, (el) => el.bg(t.selected ?? t.raised))
@@ -176,6 +209,7 @@ export default class Summary extends View {
       .child(chip("waiting", svg("mods/summary/alert.svg").size(12), b.waiting.length, "waiting", t.blocked))
       .child(chip("done", svg("mods/summary/check.svg").size(12), b.done.length, "done", t.done))
       .child(chip("working", b.working.length ? svg("mods/summary/spinner.svg").size(11).spin(900) : dot(t.dim), b.working.length, "working", t.working))
+      .child(chip("apps", svg("mods/summary/globe.svg").size(12), apps?.apps?.length ?? 0, apps ? "apps" : "apps …", t.foreground))
       .child(chip("prs", svg("mods/summary/pr.svg").size(12), prs?.prs?.length ?? 0, prs ? "PRs" : "PRs …", t.foreground));
   }
 
@@ -183,18 +217,18 @@ export default class Summary extends View {
 
   renderPanel(t, cx) {
     const shown = panelCopyShown();
-    if (shown && this.stale) { this.stale = false; this.loadPrs(cx, false); }
+    if (shown && this.stale) { this.stale = false; this.load("prs", cx, false); this.load("apps", cx, false); }
     if (!shown) this.stale = true;
 
     const b = buckets();
-    const prs = shared(PRS);
+    const prs = shared(PRS), apps = shared(APPS);
     const view = shared(VIEW) ?? "all";
     const one = KINDS.includes(view) ? view : null;
-    const lists = { ...b, prs: prs?.prs ?? [] };
+    const lists = { ...b, apps: apps?.apps ?? [], prs: prs?.prs ?? [] };
 
     // Recaps only for rows on screen.
     if (shown) {
-      const rows = one ? (one === "prs" ? [] : lists[one]) : [...b.waiting.slice(0, SHOW.waiting), ...b.done.slice(0, SHOW.done), ...b.working.slice(0, SHOW.working)];
+      const rows = one ? (one === "prs" || one === "apps" ? [] : lists[one]) : [...b.waiting.slice(0, SHOW.waiting), ...b.done.slice(0, SHOW.done), ...b.working.slice(0, SHOW.working)];
       this.loadRecaps(rows, cx);
     }
 
@@ -203,28 +237,33 @@ export default class Summary extends View {
       .hover((s) => s.bg(t.raised))
       .on_click(() => setShared(VIEW, one === kind ? "all" : kind))
       .child(div().text_size(18).font_semibold().text_color(n ? color ?? t.foreground : t.dim).child(String(n)))
-      .child(div().text_size(10.5).text_color(t.muted).truncate().child(kind === "prs" ? "Open PRs" : kind === "done" ? "Done" : kind === "waiting" ? "Waiting" : "Working"));
+      .child(div().text_size(10.5).text_color(t.muted).truncate().child({ prs: "PRs", done: "Done", waiting: "Waiting", working: "Working", apps: "Apps" }[kind]));
 
     const header = h_flex().px(12).h(40).flex_none().items_center().gap(8).border_b(1).border_color(t.border)
       .child(div().text_size(13).font_semibold().child("Summary"))
       .child(div().flex_1().text_size(11).text_color(t.dim).truncate()
-        .child(prs ? `${prs.repos} repo${prs.repos === 1 ? "" : "s"} · PRs ${age(prsAt())}${age(prsAt()) === "now" ? "" : " ago"}` : "Loading PRs…"))
+        .child(prs ? `${prs.repos} repo${prs.repos === 1 ? "" : "s"} · PRs ${age(factAt("prs"))}${age(factAt("prs")) === "now" ? "" : " ago"}` : "Loading PRs…"))
       .child(div().id("summary-refresh").size(24).flex().items_center().justify_center().rounded(5).cursor_pointer()
-        .hover((s) => s.bg(t.raised)).text_color(t.muted).tooltip("Refresh PRs and recaps")
-        .on_click((_e, cx) => { this.recaps.clear(); this.loadPrs(cx, true); cx.notify(); })
-        .child(this.loading ? svg("mods/summary/spinner.svg").size(13).spin(900) : svg("mods/summary/refresh.svg").size(13)));
+        .hover((s) => s.bg(t.raised)).text_color(t.muted).tooltip("Refresh PRs, apps and recaps")
+        .on_click((_e, cx) => { this.refresh(cx); cx.notify(); })
+        .child(this.loading.prs || this.loading.apps ? svg("mods/summary/spinner.svg").size(13).spin(900) : svg("mods/summary/refresh.svg").size(13)));
 
     const tiles = h_flex().px(12).pt(10).pb(4).gap(6).flex_none()
       .child(tile("waiting", b.waiting.length, t.blocked))
       .child(tile("done", b.done.length, t.done))
       .child(tile("working", b.working.length, t.working))
+      .child(tile("apps", lists.apps.length, null))
       .child(tile("prs", lists.prs.length, null));
 
     const parts = [];
     for (const kind of one ? [one] : KINDS) {
       const rows = lists[kind];
       if (!one && !rows.length && kind !== "waiting") continue;
-      parts.push(this.section(t, kind, rows, one ? Infinity : SHOW[kind], prs));
+      parts.push(this.section(t, kind, rows, one ? Infinity : SHOW[kind], kind === "apps" ? apps : prs));
+    }
+    if (apps?.errors?.length && (!one || one === "apps")) {
+      parts.push(v_flex().px(6).pt(8).gap(2).text_size(11).text_color(t.dim)
+        .children(apps.errors.slice(0, 3).map((e, i) => div().id(`app-err-${i}`).truncate().child(`Apps on ${e.machine ?? "this Mac"}: ${e.error}`))));
     }
     if (prs?.errors?.length && (!one || one === "prs")) {
       parts.push(v_flex().px(6).pt(8).gap(2).text_size(11).text_color(t.dim)
@@ -235,16 +274,17 @@ export default class Summary extends View {
       .child(header).child(tiles).child(body);
   }
 
-  section(t, kind, rows, limit, prs) {
+  section(t, kind, rows, limit, facts) {
     const head = h_flex().px(6).pb(3).gap(6).items_center().text_size(11).font_semibold().text_color(t.muted)
         .child(TITLE[kind]).child(div().text_color(t.dim).child(String(rows.length)));
     const el = v_flex().id(`section-${kind}`).pt(10).gap(1).child(head);
     if (!rows.length) {
       return el.child(div().px(6).py(4).text_size(11.5).text_color(t.dim)
-        .child(kind === "waiting" ? "Nothing needs you." : kind === "prs" ? (prs ? "No open PRs." : "Loading…") : "None."));
+        .child(kind === "waiting" ? "Nothing needs you." : kind === "prs" ? (facts ? "No open PRs." : "Loading…")
+          : kind === "apps" ? (facts ? "No web app runs in a space." : "Looking for apps…") : "None."));
     }
     const shown = rows.slice(0, limit);
-    return el.children(shown.map((r) => (kind === "prs" ? this.prRow(t, r) : this.agentRow(t, r, kind))))
+    return el.children(shown.map((r) => (kind === "prs" ? this.prRow(t, r) : kind === "apps" ? this.appRow(t, r) : this.agentRow(t, r, kind))))
       .when(rows.length > shown.length, (el) => el.child(div().id(`more-${kind}`).px(6).py(3).text_size(11.5).text_color(t.accent).cursor_pointer()
         .on_click(() => setShared(VIEW, kind)).child(`${rows.length - shown.length} more`)));
   }
@@ -266,6 +306,36 @@ export default class Summary extends View {
           : div().size(7).flex_none().rounded(4).bg(color)))
       .when(Boolean(title) && !recap, (el) => el.child(div().pl(21).text_size(11.5).text_color(t.muted).truncate().child(title)))
       .when(Boolean(recap), (el) => el.child(div().pl(21).text_size(11.5).text_color(t.muted).child(recap.text)));
+  }
+
+  // A web app: space, port and program; the tailnet URL, or a Share button
+  // when the app listens on this machine only. A click opens the URL.
+  appRow(t, a) {
+    const share = this.sharing.get(a.key);
+    const open = a.url ?? (a.machine ? null : a.local);
+    const button = (id, label, tip, fn) => div().id(id).flex_none().px(6).h(18).flex().items_center().rounded(4)
+      .border(1).border_color(t.border).text_size(10.5).text_color(t.muted).cursor_pointer()
+      .hover((s) => s.bg(t.surface)).tooltip(tip)
+      .on_click((_e, cx) => { cx.stop_propagation(); fn(cx); cx.notify(); })
+      .child(label);
+    const where = a.machine ? `${a.space} · ${a.machine}` : a.space;
+    return v_flex().id(`app-${a.key}`).px(6).py(5).gap(2).rounded(6)
+      .when(Boolean(open), (el) => el.cursor_pointer().hover((s) => s.bg(t.raised)).tooltip(`Open ${open}`)
+        .on_click((_e, cx) => cx.open_url(open)))
+      .child(h_flex().gap(7).items_center().min_w(0)
+        .child(svg("mods/summary/globe.svg").size(13).flex_none().text_color(a.url ? t.done : t.dim))
+        .child(div().flex_1().min_w(0).truncate().font_semibold().child(where))
+        .child(div().flex_none().text_color(t.muted).child(`:${a.port}`))
+        .child(div().flex_none().max_w(90).truncate().text_size(11).text_color(t.dim).child(a.program)))
+      .child(h_flex().pl(20).gap(6).items_center().min_w(0)
+        .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(a.url ? t.muted : t.dim)
+          .child(a.url ?? (share?.busy ? "Sharing on the tailnet…" : "This machine only")))
+        .when(Boolean(a.url), (el) => el.child(button(`copy-${a.key}`, "Copy", `Copy ${a.url}`, (cx) => cx.write_to_clipboard(a.url))))
+        .when(!a.url && !share?.busy, (el) => el.child(button(`share-${a.key}`, "Share",
+          `Tailscale Serve: https://<this machine>:${a.port} → ${a.target}`, (cx) => this.share(a, cx)))))
+      .when(Boolean(a.hostBlocked), (el) => el.child(div().pl(20).text_size(11).text_color(t.blocked)
+        .child("Refuses the tailnet host name. Vite: server.allowedHosts: ['.ts.net']")))
+      .when(Boolean(share?.error), (el) => el.child(div().pl(20).text_size(11).text_color(t.blocked).truncate().child(share.error)));
   }
 
   prRow(t, p) {
