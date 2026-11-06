@@ -212,11 +212,12 @@ let events = null;
 async function resync() {
   events?.removeAllListeners('close');
   events?.close();
-  events = new HcConnection(SOCKET);
-  await events.connect();
-  events.on('event', onEvent);
-  events.on('close', () => setConnected(false));
-  events.on('error', () => {});
+  // Handlers go on before connect: a socket hc drops at once must still count.
+  const e = events = new HcConnection(SOCKET);
+  e.on('event', onEvent);
+  e.on('close', () => { if (events === e) setConnected(false); });
+  e.on('error', () => {});
+  await e.connect();
   const sub = await events.call('events.subscribe', {});
   terminals.clear();
   for (const t of sub.terminals) terminals.set(t.address, remember(summarize(t)));
@@ -231,19 +232,32 @@ function setConnected(v) {
   if (!v) setTimeout(start, 2000);
 }
 
+// Connect both sockets. One start at a time; a close of either socket while
+// connected starts again (setConnected). A socket that closes during start
+// fails the start, which then retries: before, a command socket that hc
+// dropped while start waited was never noticed, so health said "connected"
+// while every send failed with "hc not connected".
+let starting = false;
 async function start() {
+  if (starting) return;
+  starting = true;
   try {
-    rpc = new HcConnection(SOCKET);
-    await rpc.connect();
+    const c = new HcConnection(SOCKET);
+    c.on('error', () => {});
+    c.on('close', () => { if (rpc === c) setConnected(false); });
+    rpc?.close();
+    rpc = c;
+    await c.connect();
     await loadSeed();
-    rpc.on('error', () => {});
-    rpc.on('close', () => setConnected(false));
     await resync();
+    if (!c.socket || !events?.socket) throw new Error('hc closed the connection during start');
     setConnected(true);
     console.log(`connected to hc at ${SOCKET} (${terminals.size} terminals)`);
   } catch (err) {
     console.error(`hc connect failed (${err.message}); retrying in 2s`);
     setTimeout(start, 2000);
+  } finally {
+    starting = false;
   }
 }
 
@@ -453,7 +467,7 @@ const routes = [
   }],
   ['GET', /^\/api\/sidebar$/, (req, res) => send(res, 200, { spaces: layout })],
   ['GET', /^\/api\/overview$/, async (req, res, m, url) => send(res, 200, await overview({ fresh: url.searchParams.has('fresh') }))],
-  ['GET', /^\/api\/health$/, (req, res) => send(res, 200, { ok: true, connected, socket: SOCKET, terminals: terminals.size })],
+  ['GET', /^\/api\/health$/, (req, res) => send(res, 200, { ok: true, connected: connected && Boolean(rpc?.socket && events?.socket), socket: SOCKET, terminals: terminals.size })],
   ['GET', /^\/api\/terminals$/, (req, res) => send(res, 200, snapshot())],
   ['GET', /^\/api\/events$/, (req, res) => {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
