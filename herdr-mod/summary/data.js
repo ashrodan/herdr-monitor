@@ -189,7 +189,9 @@ export async function loadApps() {
       const probes = parseProbe((await exec("sh", ["-c", PROBE, "sh", scan.dns, ...probeArgs(keep)], { on })).stdout);
       for (const a of apps({ ...scan, listeners: keep }, probes, on)) {
         const s = spaceOf(a, terms, mine);
-        list.push({ ...a, space: s.name, spaceId: s.id });
+        // The app's terminal, when a pane shows it (so a click can focus it).
+        const shown = a.term && [a.term, `${on}/${a.term}`].find((id) => terms.get(id) === s);
+        list.push({ ...a, space: s.name, spaceId: s.id, terminal: shown || null });
       }
     } catch (e) { errors.push({ machine: on ?? "this Mac", error: String(e).slice(0, 120) }); }
   });

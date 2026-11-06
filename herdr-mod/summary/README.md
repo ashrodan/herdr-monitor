@@ -11,7 +11,8 @@ herdr-monitor's Overview.
     away summary, else its last reply). Click a row to show the agent.
   - Running apps: each web app that runs in a space, on this Mac or on a
     remote machine, with its port, program (vite, next, …) and tailnet URL.
-    Click a row to open it; Copy copies the URL. An app that listens on
+    Click a row to show its space (and the app's terminal, when a pane
+    shows it); Open opens the URL; Copy copies it. An app that listens on
     `localhost` only shows "This machine only" and a **Share** button (see
     below). When a shared Vite app refuses the tailnet host name, the row says
     so: add `server.allowedHosts: ['.ts.net']` to its Vite config.

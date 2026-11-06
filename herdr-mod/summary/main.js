@@ -308,8 +308,9 @@ export default class Summary extends View {
       .when(Boolean(recap), (el) => el.child(div().pl(21).text_size(11.5).text_color(t.muted).child(recap.text)));
   }
 
-  // A web app: space, port and program; the tailnet URL, or a Share button
-  // when the app listens on this machine only. A click opens the URL.
+  // A web app: space, port and program; the tailnet URL with Open and Copy,
+  // or a Share button when the app listens on this machine only. A click on
+  // the row shows its space (and focuses the app's terminal when a pane shows it).
   appRow(t, a) {
     const share = this.sharing.get(a.key);
     const open = a.url ?? (a.machine ? null : a.local);
@@ -319,9 +320,12 @@ export default class Summary extends View {
       .on_click((_e, cx) => { cx.stop_propagation(); fn(cx); cx.notify(); })
       .child(label);
     const where = a.machine ? `${a.space} · ${a.machine}` : a.space;
-    return v_flex().id(`app-${a.key}`).px(6).py(5).gap(2).rounded(6)
-      .when(Boolean(open), (el) => el.cursor_pointer().hover((s) => s.bg(t.raised)).tooltip(`Open ${open}`)
-        .on_click((_e, cx) => cx.open_url(open)))
+    return v_flex().id(`app-${a.key}`).px(6).py(5).gap(2).rounded(6).cursor_pointer()
+      .hover((s) => s.bg(t.raised)).tooltip(`Show ${a.space}`)
+      .on_click(() => {
+        run("space.select", { id: a.spaceId });
+        if (a.terminal) run("pane.focus", { terminal: a.terminal });
+      })
       .child(h_flex().gap(7).items_center().min_w(0)
         .child(svg("mods/summary/globe.svg").size(13).flex_none().text_color(a.url ? t.done : t.dim))
         .child(div().flex_1().min_w(0).truncate().font_semibold().child(where))
@@ -330,6 +334,7 @@ export default class Summary extends View {
       .child(h_flex().pl(20).gap(6).items_center().min_w(0)
         .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(a.url ? t.muted : t.dim)
           .child(a.url ?? (share?.busy ? "Sharing on the tailnet…" : "This machine only")))
+        .when(Boolean(open), (el) => el.child(button(`open-${a.key}`, "Open", `Open ${open}`, (cx) => cx.open_url(open))))
         .when(Boolean(a.url), (el) => el.child(button(`copy-${a.key}`, "Copy", `Copy ${a.url}`, (cx) => cx.write_to_clipboard(a.url))))
         .when(!a.url && !share?.busy, (el) => el.child(button(`share-${a.key}`, "Share",
           `Tailscale Serve: https://<this machine>:${a.port} → ${a.target}`, (cx) => this.share(a, cx)))))
