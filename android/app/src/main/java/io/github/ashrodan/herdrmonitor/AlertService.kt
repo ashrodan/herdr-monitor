@@ -38,6 +38,8 @@ class AlertService : Service() {
     private val asks = ConcurrentHashMap<String, Part.Ask>()
     private val running = ConcurrentHashMap<String, Job>()
     private lateinit var prefs: Prefs
+    // The server the records above are for.
+    private var server: String? = null
     private val net = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) { reconnect() }
     }
@@ -65,6 +67,7 @@ class AlertService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (!prefs.alerts) { stopSelf(); return START_NOT_STICKY }
         if (intent?.action == ACTION_RECONNECT || link?.isActive != true) reconnect()
+        else if (intent?.action == ACTION_PINS) scope.launch { resyncRunning() }
         return START_STICKY
     }
 
@@ -88,6 +91,9 @@ class AlertService : Service() {
         // registerDefaultNetworkCallback calls onAvailable right away: skip
         // that one when a link is already starting.
         if (firstNetwork) { firstNetwork = false; if (link?.isActive == true) return }
+        val srv = prefs.server
+        if (server != null && server != srv) forgetServer()
+        server = srv
         val gen = ++generation
         link?.cancel()
         link = scope.launch {
@@ -95,7 +101,9 @@ class AlertService : Service() {
             while (isActive && gen == generation) {
                 val api = Api(prefs.server)
                 try {
-                    api.stream("/api/agents/stream", SseParser(onEvent = { onEvent(it) }, onComment = { heard() }),
+                    // After a reconnect the old read can still hand over
+                    // one line: only this link's generation counts.
+                    api.stream("/api/agents/stream", SseParser(onEvent = { if (gen == generation) onEvent(it) }, onComment = { if (gen == generation) heard() }),
                         onOpen = { backoff.reset() }, isCancelled = { gen != generation })
                 } catch (_: Exception) { }
                 if (gen != generation) return@launch
@@ -105,6 +113,18 @@ class AlertService : Service() {
                 delay(backoff.next())
             }
         }
+    }
+
+    // The server changed: what the service knows of the old one's agents
+    // goes, and so do their notifications. The new server's posted record
+    // matches the screen again (nothing of it is on screen).
+    private fun forgetServer() {
+        for (a in running.keys.toList()) stopRunning(a)
+        agents.clear()
+        asks.clear()
+        app.serviceStates.clear()
+        Notifier.cancelAllAgents(this)
+        prefs.posted = emptyMap()
     }
 
     private var lastHeard = 0L
@@ -197,6 +217,12 @@ class AlertService : Service() {
     // space name in the agent's name, the only link the stream gives).
     private fun prFor(a: AgentInfo): Pr? = prs.firstOrNull { a.name.startsWith(it.spaceName) }?.pr
 
+    // The pins changed: look again at the agents the service knows, with no
+    // new link. Unpinned ones first, so their places free up for the pinned.
+    private fun resyncRunning() {
+        agents.values.sortedBy { wantsRunning(it.state, prefs.quiet, it.address in prefs.pinned) }.forEach(::syncRunning)
+    }
+
     // A pinned working agent gets a silent running notification: its
     // current step and stage, read from its transcript every 15 s while it
     // works. At most MAX_RUNNING at once. Quiet agents: none.
@@ -243,11 +269,14 @@ class AlertService : Service() {
 
     companion object {
         const val ACTION_RECONNECT = "io.github.ashrodan.herdrmonitor.RECONNECT"
+        const val ACTION_PINS = "io.github.ashrodan.herdrmonitor.PINS"
 
-        fun start(c: Context, reconnect: Boolean = false) {
+        fun start(c: Context, reconnect: Boolean = false) = start(c, if (reconnect) ACTION_RECONNECT else null)
+
+        fun start(c: Context, action: String?) {
             if (!c.app.prefs.alerts) return
             val i = Intent(c, AlertService::class.java)
-            if (reconnect) i.action = ACTION_RECONNECT
+            if (action != null) i.action = action
             runCatching { c.startForegroundService(i) }
         }
 

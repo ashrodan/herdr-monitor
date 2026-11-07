@@ -34,3 +34,40 @@ test('machineHost: a remote terminal on its machine tailnet name', () => {
   assert.equal(machineHost('box/t1', machines, peers), null);
   assert.equal(machineHost('gone/t1', machines, peers), null);
 });
+
+test('samePrograms: a port carries over only while the same live program runs', async () => {
+  const { samePrograms } = await import('../lib/apps.js');
+  assert.equal(samePrograms({ pid: 10 }, { pid: 10, state: 'live' }), true);
+  assert.equal(samePrograms({ pid: 10 }, { pid: 11, state: 'live' }), false);
+  assert.equal(samePrograms({ pid: 10 }, { pid: 10, state: 'finished' }), false);
+  assert.equal(samePrograms({ pid: null }, { pid: null, state: 'live' }), false);
+  assert.equal(samePrograms(undefined, { pid: 10, state: 'live' }), false);
+});
+
+test('portAnswers: true for a listening port, false for a closed one', async () => {
+  const net = await import('node:net');
+  const { portAnswers } = await import('../lib/apps.js');
+  const srv = net.createServer(() => {});
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const { port } = srv.address();
+  assert.equal(await portAnswers(port), true);
+  await new Promise((r) => srv.close(r));
+  assert.equal(await portAnswers(port), false);
+});
+
+test('PortChecks: drops a port after 2 misses in a row, at most one check a minute', async () => {
+  const { PortChecks } = await import('../lib/apps.js');
+  let t = 0;
+  const c = new PortChecks({ now: () => t });
+  assert.equal(c.due('t1'), true);
+  assert.equal(c.record('t1', false), false); // one miss: keep (it may be starting)
+  assert.equal(c.due('t1'), false);
+  t = 60000;
+  assert.equal(c.record('t1', true), false);  // answered: the count starts again
+  t = 120000;
+  assert.equal(c.record('t1', false), false);
+  t = 180000;
+  assert.equal(c.record('t1', false), true);  // two in a row: drop
+  c.forget('t1');
+  assert.equal(c.due('t1'), true);
+});

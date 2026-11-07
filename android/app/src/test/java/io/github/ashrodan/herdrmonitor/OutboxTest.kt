@@ -16,25 +16,26 @@ class OutboxTest {
         override fun save(json: String) { this.json = json }
     }
 
+    private val S = "http://mac.ts.net:7400"
     private var now = 1_000L
     private fun box(mem: Mem = Mem()) = Outbox(mem) { now++ }
 
     @Test fun appendKeepsOrder() {
         val b = box()
-        b.add("t1", "one", false)
-        b.add("t2", "other", false)
-        b.add("t1", "two", false)
-        assertEquals(listOf("one", "two"), b.forAddress("t1").map { it.text })
+        b.add(S, "t1", "one", false)
+        b.add(S, "t2", "other", false)
+        b.add(S, "t1", "two", false)
+        assertEquals(listOf("one", "two"), b.forAddress(S, "t1").map { it.text })
         assertEquals(listOf("one", "other", "two"), b.items.value.map { it.text })
     }
 
     @Test fun aSuccessfulFlushRemovesOnlyTheSentItems() = runBlocking {
         val b = box()
-        b.add("t1", "one", false)
-        b.add("t1", "two", false)
+        b.add(S, "t1", "one", false)
+        b.add(S, "t1", "two", false)
         val sent = mutableListOf<String>()
         // The second send fails: only "one" goes.
-        val n = b.flush({ false }) { item, _ -> if (item.text == "two") error("down"); sent += item.text }
+        val n = b.flush(S, { false }) { item, _ -> if (item.text == "two") error("down"); sent += item.text }
         assertEquals(1, n)
         assertEquals(listOf("one"), sent)
         assertEquals(listOf("two"), b.items.value.map { it.text })
@@ -42,10 +43,10 @@ class OutboxTest {
 
     @Test fun aFailedFlushKeepsTheHeadAndDoesNotSendTheNext() = runBlocking {
         val b = box()
-        b.add("t1", "one", false)
-        b.add("t1", "two", false)
+        b.add(S, "t1", "one", false)
+        b.add(S, "t1", "two", false)
         val tried = mutableListOf<String>()
-        val n = b.flush({ false }) { item, _ -> tried += item.text; error("HTTP 502") }
+        val n = b.flush(S, { false }) { item, _ -> tried += item.text; error("HTTP 502") }
         assertEquals(0, n)
         assertEquals(listOf("one"), tried)
         val head = b.items.value.first()
@@ -57,23 +58,23 @@ class OutboxTest {
 
     @Test fun aFailureForOneAgentDoesNotHoldBackAnother() = runBlocking {
         val b = box()
-        b.add("t1", "stuck", false)
-        b.add("t2", "fine", false)
+        b.add(S, "t1", "stuck", false)
+        b.add(S, "t2", "fine", false)
         val sent = mutableListOf<String>()
-        b.flush({ false }) { item, _ -> if (item.address == "t1") error("gone"); sent += item.text }
+        b.flush(S, { false }) { item, _ -> if (item.address == "t1") error("gone"); sent += item.text }
         assertEquals(listOf("fine"), sent)
         assertEquals(listOf("stuck"), b.items.value.map { it.text })
     }
 
     @Test fun twoFlushesAtOnceDoNotSendTheHeadTwice() = runBlocking {
         val b = box()
-        b.add("t1", "one", false)
+        b.add(S, "t1", "one", false)
         val gate = CompletableDeferred<Unit>()
         var calls = 0
         val send: suspend (OutItem, Boolean) -> Unit = { _, _ -> calls++; gate.await() }
-        val first = async { b.flush({ false }, send) }
+        val first = async { b.flush(S, { false }, send) }
         yield() // the first flush is now inside send, waiting on the gate
-        val second = async { b.flush({ false }, send) }
+        val second = async { b.flush(S, { false }, send) }
         assertEquals(0, second.await())
         gate.complete(Unit)
         assertEquals(1, first.await())
@@ -84,9 +85,9 @@ class OutboxTest {
     @Test fun saveAndLoadRoundTripIncludingLastError() = runBlocking {
         val mem = Mem()
         val b = box(mem)
-        b.add("dai/t1", "quote \" back\\slash\nnew line\ttab é 🚀", true)
-        b.add("t2", "plain", false)
-        b.flush({ true }) { item, _ -> if (item.address == "dai/t1") error("HTTP 409: \"busy\"") }
+        b.add(S, "dai/t1", "quote \" back\\slash\nnew line\ttab é 🚀", true)
+        b.add(S, "t2", "plain", false)
+        b.flush(S, { true }) { item, _ -> if (item.address == "dai/t1") error("HTTP 409: \"busy\"") }
         val again = Outbox(Mem(mem.json))
         assertEquals(b.items.value, again.items.value)
         val item = again.items.value.single()
@@ -104,20 +105,20 @@ class OutboxTest {
 
     @Test fun deleteRemovesOneItemAndLeavesTheRest() {
         val b = box()
-        b.add("t1", "one", false)
-        val two = b.add("t1", "two", false)
-        b.add("t1", "three", false)
+        b.add(S, "t1", "one", false)
+        val two = b.add(S, "t1", "two", false)
+        b.add(S, "t1", "three", false)
         b.remove(two.id)
         assertEquals(listOf("one", "three"), b.items.value.map { it.text })
     }
 
     @Test fun forceIsClearedWhenTheAgentIsNoLongerBlocked() = runBlocking {
         val b = box()
-        b.add("t1", "answer", true)
-        b.add("t2", "answer", true)
-        b.add("t3", "note", false)
+        b.add(S, "t1", "answer", true)
+        b.add(S, "t2", "answer", true)
+        b.add(S, "t3", "note", false)
         val forced = mutableMapOf<String, Boolean>()
-        b.flush({ it == "t2" || it == "t3" }) { item, force -> forced[item.address] = force }
+        b.flush(S, { it == "t2" || it == "t3" }) { item, force -> forced[item.address] = force }
         assertFalse(forced["t1"]!!) // queued at a dialog, no longer blocked
         assertTrue(forced["t2"]!!)  // still blocked
         assertFalse(forced["t3"]!!) // not queued at a dialog
@@ -125,13 +126,115 @@ class OutboxTest {
 
     @Test fun anItemTheTranscriptShowsIsDropped() {
         val b = box()
-        val item = b.add("t1", "hello there", false) // createdMs = 1000
-        b.add("t2", "hello there", false)
+        val item = b.add(S, "t1", "hello there", false) // createdMs = 1000
+        b.add(S, "t2", "hello there", false)
         // An older message with the same text does not count.
-        b.dropDelivered("t1", listOf("hello there" to 500L))
+        b.dropDelivered(S, "t1", listOf("hello there" to 500L))
         assertEquals(2, b.items.value.size)
-        b.dropDelivered("t1", listOf("  hello there \n" to item.createdMs + 10))
+        b.dropDelivered(S, "t1", listOf("  hello there \n" to item.createdMs + 10))
         assertEquals(listOf("t2"), b.items.value.map { it.address })
+    }
+
+    @Test fun aFlushSendsOnlyThisServersItems() = runBlocking {
+        val b = box()
+        b.add(S, "t1", "for this server", false)
+        b.add("http://other:7400", "t1", "for the other server", false)
+        val sent = mutableListOf<String>()
+        assertEquals(1, b.flush(S, { false }) { item, _ -> sent += item.text })
+        assertEquals(listOf("for this server"), sent)
+        assertEquals(listOf("for the other server"), b.items.value.map { it.text })
+        assertTrue(b.forAddress(S, "t1").isEmpty())
+        // This server's transcript of t1 does not drop the other server's item.
+        b.dropDelivered(S, "t1", listOf("for the other server" to 99_999L))
+        assertEquals(1, b.items.value.size)
+    }
+
+    @Test fun anItemSavedWithoutAServerBelongsToTheLegacyServer() {
+        val old = "[{\"id\":\"a\",\"address\":\"t1\",\"text\":\"hi\",\"force\":false,\"createdMs\":5,\"attempts\":0,\"lastError\":null}]"
+        val b = Outbox(Mem(old), legacyServer = S)
+        assertEquals(S, b.items.value.single().server)
+    }
+
+    @Test fun failuresAreSortedByWhatTheyMean() {
+        assertEquals(Failure.Refused, failureOf(HttpError(404, "no such terminal")))
+        assertEquals(Failure.Refused, failureOf(HttpError(409, "busy")))
+        assertEquals(Failure.Refused, failureOf(HttpError(400, "text required")))
+        assertEquals(Failure.Retry, failureOf(HttpError(429, "slow down")))
+        assertEquals(Failure.Retry, failureOf(HttpError(502, "hc down")))
+        assertEquals(Failure.Retry, failureOf(java.net.ConnectException("refused")))
+        assertEquals(Failure.MaybeSent, failureOf(MaybeSentException(java.net.SocketTimeoutException("read timed out"))))
+    }
+
+    @Test fun aFailedFirstSendGetsTheMatchingState() {
+        // A notification Reply that fails keeps its text in this state.
+        assertEquals(OutState.FAILED, stateAfter(Failure.Refused))
+        assertEquals(OutState.UNCONFIRMED, stateAfter(Failure.MaybeSent))
+        assertEquals(OutState.WAITING, stateAfter(Failure.Retry))
+        val b = box()
+        val i = b.add(S, "t1", "from a notification", true, "no such terminal", OutState.FAILED)
+        assertEquals(OutState.FAILED, i.state)
+        assertEquals(S, i.server)
+    }
+
+    @Test fun aRefusedItemIsMarkedFailedAndDoesNotHoldBackTheNext() = runBlocking {
+        val b = box()
+        b.add(S, "t1", "refused", false)
+        b.add(S, "t1", "next", false)
+        val tried = mutableListOf<String>()
+        val n = b.flush(S, { false }) { item, _ -> tried += item.text; if (item.text == "refused") throw HttpError(404, "no such terminal") }
+        assertEquals(1, n)
+        assertEquals(listOf("refused", "next"), tried)
+        val left = b.items.value.single()
+        assertEquals(OutState.FAILED, left.state)
+        assertEquals("no such terminal", left.lastError)
+        // A later flush does not try it again.
+        tried.clear()
+        assertEquals(0, b.flush(S, { false }) { item, _ -> tried += item.text })
+        assertTrue(tried.isEmpty())
+    }
+
+    @Test fun anUnconfirmedSendIsNeverSentAgainByItself() = runBlocking {
+        val b = box()
+        val item = b.add(S, "t1", "maybe", false)
+        var calls = 0
+        b.flush(S, { false }) { _, _ -> calls++; throw MaybeSentException(java.net.SocketTimeoutException("read timed out")) }
+        b.flush(S, { false }) { _, _ -> calls++ }
+        assertEquals(1, calls)
+        assertEquals(OutState.UNCONFIRMED, b.items.value.single().state)
+        // The transcript shows it: it goes away.
+        b.dropDelivered(S, "t1", listOf("maybe" to item.createdMs + 1))
+        assertTrue(b.items.value.isEmpty())
+    }
+
+    @Test fun afterMaxAttemptsAnItemFailsAndTheNextGoes() = runBlocking {
+        val b = box()
+        b.add(S, "t1", "stuck", false)
+        b.add(S, "t1", "next", false)
+        val sent = mutableListOf<String>()
+        repeat(MAX_ATTEMPTS - 1) {
+            b.flush(S, { false }) { item, _ -> if (item.text == "stuck") error("HTTP 502"); sent += item.text }
+        }
+        assertTrue(sent.isEmpty())
+        assertEquals(OutState.WAITING, b.items.value.first().state)
+        b.flush(S, { false }) { item, _ -> if (item.text == "stuck") error("HTTP 502"); sent += item.text }
+        assertEquals(listOf("next"), sent)
+        val stuck = b.items.value.single()
+        assertEquals(OutState.FAILED, stuck.state)
+        assertEquals(MAX_ATTEMPTS, stuck.attempts)
+        // Send again: it waits once more, and goes.
+        b.retry(stuck.id)
+        assertEquals(1, b.flush(S, { false }) { item, _ -> sent += item.text })
+        assertEquals(listOf("next", "stuck"), sent)
+    }
+
+    @Test fun theStateSurvivesASaveAndALoad() = runBlocking {
+        val mem = Mem()
+        val b = box(mem)
+        b.add(S, "t1", "x", false)
+        b.flush(S, { false }) { _, _ -> throw HttpError(409, "busy") }
+        val again = Outbox(Mem(mem.json))
+        assertEquals(b.items.value, again.items.value)
+        assertEquals(OutState.FAILED, again.items.value.single().state)
     }
 
     @Test fun userTextsReadsTimes() {

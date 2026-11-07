@@ -164,3 +164,51 @@ test('nameOf uses the name, else the space and a named tab', async () => {
   assert.equal(m.nameOf({ space: 's1', tab: 'tc' }), 'app');
   assert.equal(m.nameOf({ where: 'w / 1', agent: 'claude' }), 'w');
 });
+
+// Review item 6: a port does not outlive its program.
+test('a local app port that stops answering is dropped after two misses', async () => {
+  const answers = ANSWERS();
+  answers['events.subscribe'] = { terminals: [{ address: 't9', state: 'live', title: 'vite', foreground: { pid: 7, argv: ['vite', '--port', '5173'] } }] };
+  const { m, out } = await setup({ answers, monitor: { portAnswers: async () => false } });
+  m.portChecks = new (m.portChecks.constructor)({ gapMs: 0 });
+  await m.start();
+  assert.equal(m.terminals.get('t9').listen.port, 5173);
+  await m.scanApps();
+  assert.equal(m.terminals.get('t9').listen?.port, 5173); // one miss is not enough
+  await m.scanApps();
+  assert.equal(m.terminals.get('t9').listen, null);
+  assert.ok(terminalEvents(out).some(([, t]) => t.address === 't9' && t.listen === null));
+  m.stop();
+});
+
+test('a new program in a terminal forgets the port read off the old screen', async () => {
+  let pid = 1;
+  const answers = ANSWERS();
+  answers['events.subscribe'] = { terminals: [{ address: 't9', state: 'live', title: 'zsh', foreground: { pid: 1, argv: ['zsh'] } }] };
+  answers['terminal.read'] = { text: '  Local:   http://localhost:3000/' };
+  answers['terminal.get'] = () => ({ terminal: { address: 't9', state: 'live', title: 'zsh', foreground: { pid, argv: ['zsh'] } } });
+  const { m } = await setup({ answers, monitor: { portAnswers: async () => true } });
+  await m.start();
+  await m.scanApps();
+  assert.equal(m.terminals.get('t9').listen.port, 3000);
+  await m.refreshOne('t9'); // the same program: the port stays
+  assert.equal(m.terminals.get('t9').listen.port, 3000);
+  pid = 2;
+  await m.refreshOne('t9'); // a new program: the port goes
+  assert.equal(m.terminals.get('t9').listen, null);
+  assert.equal(m.screenListen.has('t9'), false);
+  m.stop();
+});
+
+test('a removed terminal leaves nothing in the app scan maps', async () => {
+  const answers = ANSWERS();
+  const { m } = await setup({ answers });
+  await m.start();
+  m.screenRead.set('t1', 1); m.screenListen.set('t1', { scheme: 'http', port: 1 });
+  answers['terminal.get'] = new Error('not_found');
+  await m.refreshOne('t1');
+  assert.equal(m.terminals.has('t1'), false);
+  assert.equal(m.screenRead.has('t1'), false);
+  assert.equal(m.screenListen.has('t1'), false);
+  m.stop();
+});

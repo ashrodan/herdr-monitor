@@ -33,6 +33,12 @@ fun pathPart(s: String): String = URLEncoder.encode(s, "UTF-8").replace("+", "%2
 
 class HttpError(val code: Int, message: String) : IOException(message)
 
+// The request body went out, but no answer came back (a read timeout, or the
+// link dropped). The server may already have acted on it, so a caller must
+// not repeat it blindly.
+class MaybeSentException(cause: IOException) :
+    IOException("No answer after the send (${cause.message ?: cause.javaClass.simpleName})", cause)
+
 // Blocking HTTP calls against one server. Call them off the main thread.
 class Api(val base: String) {
 
@@ -68,7 +74,7 @@ class Api(val base: String) {
         c.setFixedLengthStreamingMode(bytes.size)
         try {
             c.outputStream.use { it.write(bytes) }
-            return c.body()
+            return try { c.body() } catch (e: HttpError) { throw e } catch (e: IOException) { throw MaybeSentException(e) }
         } finally { c.disconnect() }
     }
 

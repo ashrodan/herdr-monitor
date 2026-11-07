@@ -95,8 +95,12 @@ WebView.
 - **New session**: the button on Home. Pick a space and a harness (Claude
   Code or omp) and type the task. The server starts the agent in that
   space's folder (`POST /api/sessions`) and the app opens it.
-- **Agent**: Chat, Text, Commits and Status, and a box to reply, attach an
-  image, press dialog keys or stop the agent.
+- **Spaces**: opening a space shows its agent sessions in Herdr order. Swipe
+  left or right to move between them. App servers and raw shells are not
+  swipe pages.
+- **Agent**: Chat is the primary surface. PR, commits, status and running
+  app-server pills sit above the reply box. **Session options** holds the
+  raw terminal, sibling shells, stop, branch copy and share actions.
 - **Fast start**: the app keeps the last sessions, PRs and last words it
   read from each server (in its cache folder, at most a day old). A cold
   start shows them at once, dimmed, with "Showing sessions from 9:31" until

@@ -42,8 +42,9 @@ class App : Application() {
     fun togglePin(address: String) {
         val next = if (address in pins.value) pins.value - address else pins.value + address
         pins.value = next; prefs.pinned = next
-        // Running notifications follow the pins: the service looks again.
-        AlertService.start(this, reconnect = true)
+        // Running notifications follow the pins: the service looks again at
+        // the agents it knows, on the link it has.
+        AlertService.start(this, AlertService.ACTION_PINS)
     }
     // The theme the screens draw with; Settings changes it.
     // Home's filter, asked for from outside (the Herdr tile: Needs you).
@@ -54,12 +55,14 @@ class App : Application() {
         (serviceStates[address] ?: store.live.value.terminals[address]?.status) == "blocked"
 
     // Send the outbox now (the alert service calls this when it connects).
-    // Outbox.flush ignores a call while one runs.
+    // Only the items typed for the server in use go, and only to it; items of
+    // another server wait until that server is in use again. Outbox.flush
+    // ignores a call while one runs.
     fun flushOutbox() {
-        if (outbox.items.value.isEmpty()) return
+        val server = prefs.server
+        if (outbox.items.value.none { it.server == server && it.state == OutState.WAITING }) return
         scope.launch {
-            val api = Api(prefs.server)
-            outbox.flush(::isBlocked) { item, force -> api.send(item.address, item.text, force) }
+            outbox.flush(server, ::isBlocked) { item, force -> Api(item.server).send(item.address, item.text, force) }
         }
     }
 
@@ -83,6 +86,9 @@ class App : Application() {
     fun serverChanged() {
         digests.value = emptyMap()
         sent.value = emptyMap()
+        // Pins, seen and opened are per server (Prefs).
+        pins.value = prefs.pinned
+        serviceStates.clear()
         store.restart()
         readDigests()
     }
@@ -101,14 +107,14 @@ class App : Application() {
         store = Store({ prefs.server }, cache)
         loadDigests()
         Notifier.channels(this)
-        outbox = Outbox(prefs.outboxStorage)
+        outbox = Outbox(prefs.outboxStorage, legacyServer = prefs.server)
         pins.value = prefs.pinned
         // Flush when the app's link comes up, and every 15 s while replies wait.
         scope.launch { store.live.map { it.link }.distinctUntilChanged().collect { if (it == Link.Online) flushOutbox() } }
         scope.launch {
             while (true) {
                 delay(15_000)
-                if (outbox.items.value.isNotEmpty()) flushOutbox()
+                flushOutbox()
             }
         }
     }

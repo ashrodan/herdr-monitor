@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defaultSocket } from './lib/hc.js';
 import { repoCommits, commitDetail } from './lib/git.js';
-import { sessionRequest } from './lib/sessions.js';
+import { sessionRequest, sessionResult } from './lib/sessions.js';
 import { prStatus } from './lib/pr.js';
 import { chatFor } from './lib/transcript.js';
 import { loadVapid, Subscriptions, sendPush, configDir } from './lib/push.js';
@@ -356,8 +356,9 @@ const routes = [
   ['POST', /^\/api\/sessions$/, async (req, res) => {
     const r = sessionRequest(await readJson(req), monitor.layout);
     if (!r.ok) return send(res, r.status, { error: r.error });
-    const t = await monitor.call('terminal.run', r.params);
-    send(res, 200, { address: t.address, name: t.name ?? r.params.name });
+    const out = sessionResult(await monitor.call('terminal.run', r.params), r.params);
+    if (!out) return send(res, 502, { error: 'hc started no terminal' });
+    send(res, 200, out);
   }],
   ['POST', /^\/api\/terminals\/([^/]+)\/send$/, async (req, res, [addr]) => {
     if (!terminalOr404(res, addr)) return;

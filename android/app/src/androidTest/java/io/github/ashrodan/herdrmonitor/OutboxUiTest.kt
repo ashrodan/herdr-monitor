@@ -40,6 +40,14 @@ class OutboxUiTest {
         override suspend fun upload(address: String, bytes: ByteArray, type: String): String = error("HTTP 502")
     }
 
+    private class RefusingPort : ReplyPort {
+        var sends = 0
+        override suspend fun send(address: String, text: String, force: Boolean) { sends++; throw HttpError(404, "no such terminal") }
+        override suspend fun keys(address: String, keys: List<String>) {}
+        override suspend fun interrupt(address: String) {}
+        override suspend fun upload(address: String, bytes: ByteArray, type: String) = ""
+    }
+
     private fun show(outbox: Outbox, port: ReplyPort, online: Boolean) {
         rule.setContent {
             HerdrTheme {
@@ -81,10 +89,23 @@ class OutboxUiTest {
         assertEquals(listOf("first", "second"), outbox.items.value.map { it.text })
     }
 
+    @Test fun aRefusedSendIsNotQueuedAndTheTextStays() {
+        val outbox = Outbox(Mem())
+        val port = RefusingPort()
+        show(outbox, port, online = true)
+        rule.onNodeWithTag("composer-field").performTextInput("to nobody")
+        rule.onNodeWithTag("composer-send").performClick()
+        rule.waitUntil(5_000) { port.sends == 1 }
+        rule.waitForIdle()
+        assertTrue(outbox.items.value.isEmpty())
+        rule.onNodeWithTag("composer-note").assertTextContains("Not sent: no such terminal")
+        rule.onNodeWithTag("composer-field").assertTextContains("to nobody")
+    }
+
     @Test fun deleteRemovesThatQueuedBubble() {
         val outbox = Outbox(Mem())
-        val keep = outbox.add("t1", "keep me", false)
-        val drop = outbox.add("t1", "drop me", false)
+        val keep = outbox.add("", "t1", "keep me", false)
+        val drop = outbox.add("", "t1", "drop me", false)
         show(outbox, FailingPort(), online = false)
         rule.onAllNodesWithText("drop me").assertCountEquals(1)
         rule.onNodeWithTag("delete-${drop.id}").performClick()

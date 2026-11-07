@@ -7,9 +7,12 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeLeft
 import io.github.ashrodan.herdrmonitor.ui.ActivityCard
 import io.github.ashrodan.herdrmonitor.ui.Composer
 import io.github.ashrodan.herdrmonitor.ui.ReplyPort
+import io.github.ashrodan.herdrmonitor.ui.SpaceScreen
 import io.github.ashrodan.herdrmonitor.ui.components.QuestionBlock
 import io.github.ashrodan.herdrmonitor.ui.theme.HerdrTheme
 import org.junit.Assert.assertEquals
@@ -55,6 +58,41 @@ class SessionUiTest {
         rule.onNodeWithTag("composer-send").assertIsDisplayed()
         rule.onNodeWithTag("composer-field").performTextClearance()
         rule.onNodeWithTag("composer-stop").assertIsDisplayed()
+    }
+
+    @Test fun spaceSwipesBetweenAgentChatsAndKeepsToolsContextual() {
+        val first = Terminal("first", name = "First agent", agent = "claude", status = "working", space = "space", tab = "one")
+        val second = Terminal("second", name = "Second agent", agent = "omp", status = "idle", space = "space", tab = "two")
+        val server = Terminal("server", name = "Preview", agent = "node", space = "space", tab = "one",
+            listen = Listen("http", 3000, null))
+        val shell = Terminal("shell", agent = "zsh", space = "space", tab = "one")
+        val space = Space("space", "MNT-1", tabs = listOf(
+            SpaceTab("one", "one", true, listOf(first.address, server.address, shell.address)),
+            SpaceTab("two", "two", true, listOf(second.address)),
+        ))
+        val pr = OverviewPr(space.id, space.name, null, "feature",
+            Pr(12, "Modern UX", "https://example.test/12", false, "feature", null, null), "ready", 0, 0)
+        val live = Live(link = Link.Offline, terminals = listOf(first, second, server, shell).associateBy { it.address },
+            spaces = listOf(space), prs = listOf(pr), prsLoaded = true)
+
+        rule.setContent { HerdrTheme { SpaceScreen(live, space.id, go = {}, back = {}) } }
+
+        rule.onNodeWithText("First agent").assertIsDisplayed()
+        rule.onNodeWithTag("session-pill-pr-first").assertIsDisplayed()
+        rule.onNodeWithTag("session-pill-commits-first").assertIsDisplayed()
+        rule.onNodeWithTag("session-pill-status-first").assertIsDisplayed()
+        rule.onNodeWithTag("session-pill-server-first-server").assertExists()
+        rule.onNodeWithText("Terminal").assertDoesNotExist()
+        rule.onNodeWithText("Changes").assertDoesNotExist()
+
+        rule.onNodeWithTag("space-session-pager").performTouchInput { swipeLeft() }
+        rule.waitForIdle()
+        rule.onNodeWithText("Second agent").assertIsDisplayed()
+        rule.onNodeWithText("Swipe sessions · 2 of 2").assertIsDisplayed()
+
+        rule.onNodeWithTag("session-options-second").performClick()
+        rule.onNodeWithText("Raw terminal").assertIsDisplayed()
+        rule.onNodeWithText("Share").assertIsDisplayed()
     }
 
     @Test fun anActivityGroupOpensToItsSteps() {
