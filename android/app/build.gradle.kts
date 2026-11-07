@@ -1,7 +1,21 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
+    // Screenshot tests on the JVM (src/test/.../ScreenshotTest.kt), no device.
+    id("app.cash.paparazzi")
 }
+
+// Release signing (sideload only, no Play). The keystore stays outside the
+// repo: by default ~/.config/herdr-monitor/android-release.jks. Each value
+// comes from a Gradle property (~/.gradle/gradle.properties or -P) or else an
+// environment variable of the same name. Without a password, the release
+// build is unsigned and `assembleRelease` still works. See the README.
+fun signingValue(name: String): String? =
+    (findProperty(name) as String?)?.takeIf { it.isNotBlank() } ?: System.getenv(name)?.takeIf { it.isNotBlank() }
+val releaseStore = file(signingValue("HERDR_RELEASE_STORE_FILE")
+    ?: "${System.getProperty("user.home")}/.config/herdr-monitor/android-release.jks")
+val releaseStorePassword = signingValue("HERDR_RELEASE_STORE_PASSWORD")
+val canSignRelease = releaseStore.isFile && releaseStorePassword != null
 
 android {
     namespace = "io.github.ashrodan.herdrmonitor"
@@ -18,8 +32,18 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (canSignRelease) create("release") {
+            storeFile = releaseStore
+            storePassword = releaseStorePassword
+            keyAlias = signingValue("HERDR_RELEASE_KEY_ALIAS") ?: "herdr"
+            keyPassword = signingValue("HERDR_RELEASE_KEY_PASSWORD") ?: releaseStorePassword
+        }
+    }
+
     buildTypes {
         release {
+            if (canSignRelease) signingConfig = signingConfigs.getByName("release")
             // R8: shrinks and optimises the Compose code (a debug build is
             // several times slower to draw) and drops unused resources.
             isMinifyEnabled = true
@@ -47,8 +71,10 @@ android {
     }
 }
 
+// Bytecode for Android stays Java 17. The build itself runs on the JDK that
+// runs Gradle (21 or later): Paparazzi needs 21 to run its tests.
 kotlin {
-    jvmToolchain(17)
+    compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
 }
 
 dependencies {

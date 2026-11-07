@@ -1,0 +1,6 @@
+# Baseline profile: the app's own code, compiled ahead of time at install
+# (profileinstaller, which Compose already brings in). Compose, Material 3,
+# Navigation and Glance ship their own profiles; AGP merges them. Wildcards
+# cover every class and method of the app; R8 renames are applied by AGP.
+HSPLio/github/ashrodan/herdrmonitor/**->**(**)**
+Lio/github/ashrodan/herdrmonitor/**;
