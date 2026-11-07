@@ -9,7 +9,46 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import android.content.ClipData
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import io.github.ashrodan.herdrmonitor.Item
+import io.github.ashrodan.herdrmonitor.clock
+import io.github.ashrodan.herdrmonitor.dedupName
+import io.github.ashrodan.herdrmonitor.harnessMark
+import io.github.ashrodan.herdrmonitor.harnessName
+import io.github.ashrodan.herdrmonitor.runningTool
+import io.github.ashrodan.herdrmonitor.toolCounts
+import io.github.ashrodan.herdrmonitor.ticketOf
+import io.github.ashrodan.herdrmonitor.transcriptItems
+import io.github.ashrodan.herdrmonitor.whereOf
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.HorizontalDivider
@@ -109,11 +148,26 @@ fun AgentScreen(live: Live, address: String, back: () -> Unit, initialTab: Int =
     val ctx = LocalContext.current
     val api = remember(live) { ctx.app.store.api }
     val port = remember(api) { ApiPort(api) }
+    val scope = rememberCoroutineScope()
+    val clipboard = LocalClipboard.current
     val outboxAll by ctx.app.outbox.items.collectAsStateWithLifecycle()
     val queued = outboxAll.filter { it.address == address }
     val t = live.terminals[address]
     val now = rememberNow()
     var tab by remember { mutableIntStateOf(initialTab) }
+    var menu by remember { mutableStateOf(false) }
+
+    // Commits load once here: the Changes tab shows them, and its pill
+    // shows the changed-file count.
+    var commits by remember(address) { mutableStateOf<Commits?>(null) }
+    var commitsErr by remember(address) { mutableStateOf<String?>(null) }
+    val loadCommits = { fresh: Boolean ->
+        scope.launch {
+            io { Json.commits(api.get(api.terminalPath(address, "commits") + if (fresh) "?fresh" else "", 30000)) }
+                .onSuccess { commits = it; commitsErr = null }.onFailure { commitsErr = it.message }
+        }
+    }
+    LaunchedEffect(address, api.base) { loadCommits(false) }
 
     // Opening a finished agent counts as seeing it (as in the web UI), and
     // its alert goes.
@@ -124,26 +178,61 @@ fun AgentScreen(live: Live, address: String, back: () -> Unit, initialTab: Int =
     }
 
     val blocked = t?.status == "blocked"
+    val working = t?.status == "working"
     val rawState = if (t?.finished == true) "finished" else t?.status ?: "idle"
-    Scaffold(topBar = {
-        TopAppBar(
-            title = {
-                Column {
-                    Text(t?.let { displayName(it, live.spaces) } ?: address, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    val where = t?.let { whereOf(it, live.spaces) }
+    val name = t?.let { dedupName(displayName(it, live.spaces)) } ?: address
+    val branch = where?.space?.branch ?: commits?.branch
+    val pr = where?.space?.let { s -> live.prs.firstOrNull { it.space == s.id } }?.pr ?: commits?.pr
+    Scaffold(contentWindowInsets = WindowInsets(0), topBar = {
+        Column(Modifier.statusBarsPadding()) {
+            Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+                Column(Modifier.weight(1f).padding(start = 4.dp)) {
+                    Text(name, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    // "Working · MNT-1 · omp · 8:06": the time is how long the
+                    // agent has been in this state.
+                    val bits = listOfNotNull(
+                        STATE_WORD[rawState] ?: rawState,
+                        ticketOf(name) ?: where?.space?.name,
+                        t?.agent?.let { harnessName(it) },
+                        t?.changedMs?.let { clock(now - it) },
+                    )
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Dot(stateColor(rawState), 7.dp)
-                        Text("  ${STATE_LABEL[rawState] ?: rawState} · ${t?.agent ?: ""} · ${age(t?.changedMs, now)}",
-                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                        Dot(stateColor(rawState), 9.dp)
+                        Text("  " + bits.joinToString(" · "), style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
-            },
-            navigationIcon = { IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
-        )
+                IconButton(onClick = {
+                    val body = listOfNotNull(name, branch, pr?.url).joinToString("\n")
+                    ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, body), null))
+                }) { Icon(Icons.Default.Share, "Share") }
+                Box {
+                    IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "More") }
+                    DropdownMenu(menu, { menu = false }) {
+                        if (t != null && (working || blocked) && live.link == Link.Online) DropdownMenuItem({ Text("Stop") }, {
+                            menu = false
+                            scope.launch { io { api.interrupt(address) } }
+                        })
+                        DropdownMenuItem({ Text("Open terminal") }, { menu = false; tab = 1 })
+                        branch?.let { b ->
+                            DropdownMenuItem({ Text("Copy branch") }, {
+                                menu = false
+                                scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("branch", b))) }
+                            })
+                        }
+                    }
+                }
+            }
+            if (t != null) PillTabs(tab, { tab = it }, changes = commits?.dirty ?: 0)
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        }
     }, bottomBar = {
         // Offline, an agent the app has not heard of yet (a cold start) still
         // takes replies: they wait in the outbox.
         val offline = live.link != Link.Online
-        if (t != null && !t.finished) Composer(port, ctx.app.outbox, address, online = !offline, blocked, t.kind, working = t.status == "working")
+        if (t != null && !t.finished) Composer(port, ctx.app.outbox, address, online = !offline, blocked, t.kind, working = working, harness = t.agent)
         else if (t == null && offline) Composer(port, ctx.app.outbox, address, online = false, blocked = false, kind = null, working = false)
     }) { pad ->
         Column(Modifier.fillMaxSize().padding(pad)) {
@@ -153,24 +242,47 @@ fun AgentScreen(live: Live, address: String, back: () -> Unit, initialTab: Int =
                 else Text("This terminal is gone.", Modifier.padding(16.dp))
                 return@Column
             }
-            TabRow(selectedTabIndex = tab) {
-                listOf("Chat", "Text", "Commits", "Status").forEachIndexed { i, s -> Tab(selected = tab == i, onClick = { tab = i }, text = { Text(s) }) }
-            }
             when (tab) {
-                0 -> ChatTab(api, address, blocked, working = t.status == "working", queued)
+                0 -> ChatTab(api, address, blocked, working, t.agent, queued)
                 1 -> TextTab(api, address)
-                2 -> CommitsTab(api, address)
+                2 -> CommitsTab(api, address, commits, commitsErr) { loadCommits(true) }
                 else -> StatusTab(api, address)
             }
-            t.cwd?.let { Text(shortPath(it), Modifier.padding(horizontal = 12.dp, vertical = 2.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1) }
         }
     }
 }
 
-// ---- Chat ----
+private val STATE_WORD = mapOf("blocked" to "Needs you", "error" to "Failed", "done" to "Ready", "working" to "Working", "idle" to "Idle", "finished" to "Finished")
+private val TABS = listOf("Chat", "Terminal", "Changes", "Status")
+
+// Pill tabs: the selected one on secondaryContainer. Changes shows the
+// changed-file count when there is one.
+@Composable
+private fun PillTabs(selected: Int, onSelect: (Int) -> Unit, changes: Int) {
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 10.dp)
+        .selectableGroup(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        TABS.forEachIndexed { i, label ->
+            val on = i == selected
+            Row(Modifier.height(32.dp).clip(RoundedCornerShape(16.dp))
+                .background(if (on) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
+                .selectable(on, role = Role.Tab) { onSelect(i) }.padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Text(label, style = MaterialTheme.typography.labelLarge,
+                    color = if (on) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
+                if (i == 2 && changes > 0) {
+                    Spacer(Modifier.width(6.dp))
+                    Text("$changes", Modifier.clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                        .padding(horizontal = 6.dp, vertical = 1.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurface)
+                }
+            }
+        }
+    }
+}
+
+// ---- Chat: prose first, activity folded ----
 
 @Composable
-private fun ChatTab(api: Api, address: String, blocked: Boolean, working: Boolean, queued: List<OutItem>) {
+private fun ChatTab(api: Api, address: String, blocked: Boolean, working: Boolean, agent: String, queued: List<OutItem>) {
     val ctx = LocalContext.current
     var chat by remember(address) { mutableStateOf<Chat?>(null) }
     var err by remember(address) { mutableStateOf<String?>(null) }
@@ -186,17 +298,27 @@ private fun ChatTab(api: Api, address: String, blocked: Boolean, working: Boolea
     when {
         c == null && err != null -> NoChat("Could not read the transcript: $err", queued, error = true)
         c == null -> NoChat("Loading the conversation…", queued)
-        !c.available -> NoChat("${c.reason ?: "No transcript."} Use Text.", queued)
+        !c.available -> NoChat("${c.reason ?: "No transcript."} Use Terminal.", queued)
         else -> {
             val list = rememberLazyListState()
+            val items = remember(c) { transcriptItems(c.messages) }
             val waitingOn = if (blocked) lastUnansweredAsk(c.messages) else null
-            LaunchedEffect(c.messages.size, queued.size) { list.layoutInfo.totalItemsCount.takeIf { it > 0 }?.let { list.scrollToItem(it - 1) } }
-            LazyColumn(Modifier.fillMaxSize(), state = list, verticalArrangement = Arrangement.spacedBy(10.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp)) {
-                if (c.truncated) item { Text("Older messages are not shown (long transcript).", style = MaterialTheme.typography.labelSmall) }
-                if (c.messages.isEmpty()) item { Text("No messages yet.") }
-                items(c.messages, key = { it.id.ifEmpty { it.hashCode().toString() } }) { m -> MessageView(m, api, address, waitingOn) }
-                if (working) item { Text("Working…", color = stateColor("working"), style = MaterialTheme.typography.labelMedium) }
+            val running = if (working) runningTool(items) else null
+            LaunchedEffect(items.size, queued.size, working) { list.layoutInfo.totalItemsCount.takeIf { it > 0 }?.let { list.scrollToItem(it - 1) } }
+            LazyColumn(Modifier.fillMaxSize(), state = list, verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp)) {
+                if (c.truncated) item { SystemChip("Older messages are not shown (long transcript).") }
+                if (items.isEmpty()) item { SystemChip("No messages yet.") }
+                items(items, key = { it.key }) { i ->
+                    when (i) {
+                        is Item.Prose -> Prose(i, agent)
+                        is Item.User -> UserBubble(i.text)
+                        is Item.System -> SystemChip(i.text)
+                        is Item.Activity -> ActivityCard(i)
+                        is Item.Question -> AskCard(i.ask, api, address, live = i.ask === waitingOn)
+                    }
+                }
+                if (working) item(key = "live") { LiveStep(running) }
                 if (queued.isNotEmpty()) item(key = "outbox") { QueuedReplies(queued) { ctx.app.outbox.remove(it.id) } }
             }
         }
@@ -204,85 +326,132 @@ private fun ChatTab(api: Api, address: String, blocked: Boolean, working: Boolea
 }
 
 @Composable
-private fun MessageView(m: Message, api: Api, address: String, waitingOn: Part.Ask?) {
-    when (m.role) {
-        // Your prompt: a bubble on the right, at most ~85% wide, Markdown
-        // with single line breaks kept.
-        "user" -> BoxWithConstraints(Modifier.fillMaxWidth()) {
-            val w = maxWidth * 0.85f
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                Surface(shape = RoundedCornerShape(16.dp, 16.dp, 6.dp, 16.dp), color = Palette.secondary, modifier = Modifier.widthIn(max = w)) {
-                    SelectionContainer { MarkdownView(m.parts.filterIsInstance<Part.Text>().joinToString("\n") { it.text }, Modifier.padding(horizontal = 14.dp, vertical = 8.dp), keepBreaks = true) }
+private fun Prose(p: Item.Prose, agent: String) {
+    Column {
+        if (p.who) Row(Modifier.padding(bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(18.dp).clip(RoundedCornerShape(6.dp)).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
+                Text(harnessMark(agent), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+            }
+            Spacer(Modifier.width(6.dp))
+            Text(harnessName(agent), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        SelectionContainer { MarkdownView(p.text) }
+    }
+}
+
+// Your text: a bubble on the right, at most ~85% wide.
+@Composable
+private fun UserBubble(text: String) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val w = maxWidth * 0.85f
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            Surface(shape = RoundedCornerShape(20.dp, 20.dp, 6.dp, 20.dp), color = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.widthIn(max = w)) {
+                SelectionContainer { MarkdownView(text, Modifier.padding(horizontal = 16.dp, vertical = 10.dp), keepBreaks = true) }
+            }
+        }
+    }
+}
+
+// A system line (a background job that finished, and so on): a centred chip.
+@Composable
+private fun SystemChip(text: String) {
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Text(text, Modifier.clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(horizontal = 12.dp, vertical = 5.dp),
+            style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+    }
+}
+
+// One run of thinking and tool calls. Closed: the tool counts ("6 bash ·
+// 1 read") and how many failed. Open: one step per tool or thought; a tap
+// on a tool shows its output. No durations: the transcript has no times.
+@Composable
+private fun ActivityCard(a: Item.Activity) {
+    var open by rememberSaveable(a.key) { mutableStateOf(false) }
+    val shape = RoundedCornerShape(16.dp)
+    val tools = a.tools
+    Column(Modifier.fillMaxWidth().clip(shape).background(MaterialTheme.colorScheme.surfaceContainerLowest)
+        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)) {
+        Row(Modifier.fillMaxWidth().clickable { open = !open }.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(if (tools.isEmpty()) "Thinking" else toolCounts(tools), Modifier.weight(1f, fill = false),
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (a.failed > 0) Text("  · ${a.failed} failed", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error, maxLines = 1)
+            Spacer(Modifier.weight(0.0001f))
+            val turn by animateFloatAsState(if (open) 180f else 0f, label = "chev")
+            Icon(Icons.Default.KeyboardArrowDown, if (open) "Fold" else "Unfold", Modifier.size(20.dp).rotate(turn), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (open) {
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Column(Modifier.padding(vertical = 6.dp)) {
+                for (s in a.steps) when (s) {
+                    is Part.Tool -> ToolStep(s)
+                    is Part.Thinking -> Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+                        StepIcon("thinking", false)
+                        Text(s.text, Modifier.padding(start = 8.dp), style = MaterialTheme.typography.bodySmall, fontStyle = FontStyle.Italic,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                    }
+                    else -> {}
                 }
             }
         }
-        "system" -> Text(m.parts.filterIsInstance<Part.Text>().joinToString(" ") { it.text }, Modifier.fillMaxWidth(),
-            style = MaterialTheme.typography.labelSmall, color = Palette.mutedForeground, textAlign = TextAlign.Center)
-        else -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            // Runs of tool calls fold into one card.
-            val blocks = mutableListOf<Any>()
-            for (p in m.parts) {
-                val last = blocks.lastOrNull()
-                if (p is Part.Tool && last is MutableList<*>) @Suppress("UNCHECKED_CAST") (last as MutableList<Part.Tool>).add(p)
-                else if (p is Part.Tool) blocks.add(mutableListOf(p)) else blocks.add(p)
-            }
-            for (b in blocks) when (b) {
-                is MutableList<*> -> @Suppress("UNCHECKED_CAST") ToolGroup(b as List<Part.Tool>)
-                is Part.Ask -> AskCard(b, api, address, live = b === waitingOn)
-                is Part.Thinking -> Thinking(b.text)
-                is Part.Text -> SelectionContainer { MarkdownView(b.text) }
-            }
-        }
     }
 }
 
 @Composable
-private fun Thinking(text: String) {
+private fun ToolStep(t: Part.Tool) {
     var open by remember { mutableStateOf(false) }
-    Column(Modifier.clickable { open = !open }) {
-        Text((if (open) "▾  " else "▸  ") + "Thinking", fontSize = 12.sp, color = Palette.mutedForeground)
-        if (open) Text(text, Modifier.padding(start = 18.dp, top = 4.dp), fontSize = 12.sp, fontStyle = FontStyle.Italic, color = Palette.mutedForeground)
-    }
-}
-
-// web ToolGroup: one collapsed card. Closed: the tool and its summary, or
-// "N tool calls · names", and how many failed. Open: one row per tool; a
-// tap shows its result.
-@Composable
-private fun ToolGroup(tools: List<Part.Tool>) {
-    var open by remember { mutableStateOf(false) }
-    val failed = tools.count { it.result?.error == true }
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Palette.card.copy(alpha = 0.6f)).border(1.dp, Palette.border, RoundedCornerShape(8.dp))) {
-        Row(Modifier.fillMaxWidth().clickable { open = !open }.padding(horizontal = 10.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(if (open) "▾ " else "▸ ", fontSize = 12.sp, color = Palette.mutedForeground)
-            Text("🔧 ", fontSize = 11.sp)
-            val one = tools.singleOrNull()
-            Text(buildAnnotatedString {
-                if (one != null) { withStyle(SpanStyle(fontWeight = FontWeight.Medium, color = Palette.foreground)) { append(one.name) }; append(" "); append(one.summary) }
-                else append("${tools.size} tool calls · " + tools.map { it.name }.distinct().take(3).joinToString(", "))
-            }, Modifier.weight(1f), fontSize = 12.sp, color = Palette.mutedForeground, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (failed > 0) Text("  ⚠ $failed", fontSize = 12.sp, color = Palette.error)
-            if (tools.any { it.result == null }) Text("  running", fontSize = 12.sp, color = Palette.blocked)
-        }
-        if (open) for (t in tools) ToolRow(t)
-    }
-}
-
-@Composable
-private fun ToolRow(t: Part.Tool) {
-    var open by remember { mutableStateOf(false) }
+    val failed = t.result?.error == true
     Column(Modifier.fillMaxWidth()) {
-        HorizontalDivider(color = Palette.border)
-        Row(Modifier.fillMaxWidth().clickable(enabled = t.result != null) { open = !open }.padding(horizontal = 10.dp, vertical = 6.dp)) {
-            Text(t.name, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = if (t.result?.error == true) Palette.error else Palette.foreground)
-            Text("  " + t.summary, Modifier.weight(1f), fontSize = 11.sp, fontFamily = Mono, color = Palette.mutedForeground, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (t.result == null) Text("running", fontSize = 12.sp, color = Palette.blocked)
+        Row(Modifier.fillMaxWidth().clickable(enabled = t.result != null) { open = !open }.padding(horizontal = 12.dp, vertical = 6.dp)) {
+            StepIcon(t.name, failed)
+            Text(buildAnnotatedString {
+                withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, color = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)) { append(t.name) }
+                if (t.summary.isNotBlank()) { append("  "); withStyle(SpanStyle(fontFamily = Mono)) { append(t.summary) } }
+            }, Modifier.weight(1f).padding(start = 8.dp), fontSize = 12.sp, lineHeight = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 3, overflow = TextOverflow.Ellipsis)
         }
         val r = t.result
         if (open && r != null) {
             Text(r.text.ifEmpty { "(no output)" } + if (r.truncated) "\n… (cut)" else "",
-                Modifier.fillMaxWidth().heightIn(max = 300.dp).background(Palette.code).verticalScroll(rememberScrollState()).padding(10.dp),
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp).heightIn(max = 300.dp).clip(RoundedCornerShape(8.dp)).background(Palette.code)
+                    .verticalScroll(rememberScrollState()).padding(10.dp),
                 fontFamily = Mono, fontSize = 11.sp, lineHeight = 14.sp, color = Palette.foreground)
+        }
+    }
+}
+
+// A small icon per kind of step, from the core icon set; a shell is ">_".
+@Composable
+private fun StepIcon(name: String, failed: Boolean) {
+    val tint = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+    val n = name.lowercase()
+    val icon = when {
+        failed -> Icons.Default.Warning
+        n == "thinking" -> Icons.Default.Info
+        n.contains("grep") || n.contains("glob") || n.contains("search") || n.contains("find") -> Icons.Default.Search
+        n.contains("edit") || n.contains("write") || n.contains("patch") -> Icons.Default.Edit
+        n.contains("read") || n.contains("fetch") || n.contains("ls") -> Icons.AutoMirrored.Filled.List
+        n.contains("bash") || n.contains("shell") || n.contains("exec") || n.contains("run") -> null
+        else -> Icons.Default.Build
+    }
+    Box(Modifier.size(18.dp), contentAlignment = Alignment.Center) {
+        if (icon != null) Icon(icon, null, Modifier.size(16.dp), tint = tint)
+        else Text(">_", fontFamily = Mono, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = tint)
+    }
+}
+
+// The live step, last while the agent works: a dot, "Running <tool>" and
+// its command. No timer: there is no start time to count from.
+@Composable
+private fun LiveStep(tool: Part.Tool?) {
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceContainer)
+        .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }.padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Dot(MaterialTheme.colorScheme.primary, 12.dp)
+        Column(Modifier.padding(start = 12.dp)) {
+            Text(if (tool != null) "Running ${tool.name}" else "Working", style = MaterialTheme.typography.titleSmall)
+            if (tool != null && tool.summary.isNotBlank()) Text(tool.summary, fontFamily = Mono, fontSize = 11.5.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -366,18 +535,10 @@ private fun TextTab(api: Api, address: String) {
 // ---- Commits ----
 
 @Composable
-private fun CommitsTab(api: Api, address: String) {
+private fun CommitsTab(api: Api, address: String, data: Commits?, err: String?, refresh: () -> Unit) {
     val scope = rememberCoroutineScope()
-    var data by remember(address) { mutableStateOf<Commits?>(null) }
-    var err by remember(address) { mutableStateOf<String?>(null) }
     var detail by remember(address) { mutableStateOf<CommitDetail?>(null) }
-    val load = { fresh: Boolean ->
-        scope.launch {
-            io { Json.commits(api.get(api.terminalPath(address, "commits") + if (fresh) "?fresh" else "", 30000)) }
-                .onSuccess { data = it; err = null }.onFailure { err = it.message }
-        }
-    }
-    LaunchedEffect(address) { load(false) }
+    val load = { _: Boolean -> refresh() }
     val d = data
     LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp)) {
         item {

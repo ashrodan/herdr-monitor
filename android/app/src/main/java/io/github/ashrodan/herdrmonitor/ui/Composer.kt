@@ -4,7 +4,20 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import io.github.ashrodan.herdrmonitor.harnessName
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -18,17 +31,14 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -83,6 +93,7 @@ fun Composer(
     blocked: Boolean,
     kind: String?,
     working: Boolean,
+    harness: String? = null,
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -131,8 +142,8 @@ fun Composer(
     fun keys(k: String) = scope.launch { runCatching { port.keys(address, listOf(k)) }.onFailure { note = "Not sent: ${it.message}" } }
     fun interrupt() = scope.launch { runCatching { port.interrupt(address) }.onSuccess { note = "Stop key sent." }.onFailure { note = "Not sent: ${it.message}" } }
 
-    Surface(tonalElevation = 3.dp) {
-        Column(Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(8.dp)) {
+    Surface(color = MaterialTheme.colorScheme.surface) {
+        Column(Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 10.dp)) {
             val info = when {
                 !online -> "Offline. Replies wait in the outbox."
                 blocked -> "Waiting at a ${kind ?: "dialog"}. Tap an answer in Chat, press keys, or type here."
@@ -150,16 +161,45 @@ fun Composer(
             if (notUploaded.isNotEmpty()) Text("${notUploaded.size} image${if (notUploaded.size == 1) "" else "s"} not uploaded · tap to try again",
                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error,
                 modifier = Modifier.clickable(enabled = !uploading) { notUploaded.toList().forEach(::upload) }.padding(4.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, enabled = !uploading) {
-                    Icon(Icons.Default.Add, "Attach an image")
+            // One field (Attach inside, on the left) and one button. Field
+            // empty while the agent runs: a red square Stop. Text in the
+            // field: a round Send. Agent idle and field empty: Send, off.
+            val hasText = text.isNotBlank() || images.isNotEmpty()
+            val showStop = !hasText && online && (working || blocked)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.weight(1f).heightIn(min = 52.dp).clip(RoundedCornerShape(26.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh).padding(start = 4.dp, end = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, enabled = !uploading) {
+                        Icon(Icons.Default.Add, "Attach an image")
+                    }
+                    Box(Modifier.weight(1f).padding(vertical = 14.dp)) {
+                        if (text.isEmpty()) Text("Steer ${harnessName(harness)}…", style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                        BasicTextField(text, { text = it }, Modifier.fillMaxWidth().testTag("composer-field"),
+                            textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary), maxLines = 6)
+                    }
                 }
-                OutlinedTextField(text, { text = it }, Modifier.weight(1f).testTag("composer-field"),
-                    placeholder = { Text(if (blocked) "Answer…" else "Reply…") }, maxLines = 6)
-                if (online && (working || blocked)) TextButton(onClick = { interrupt() }) { Text("Stop") }
-                IconButton(onClick = { send() }, Modifier.testTag("composer-send"),
-                    enabled = !sending && !uploading && (text.isNotBlank() || images.isNotEmpty())) {
-                    Icon(Icons.AutoMirrored.Filled.Send, "Send")
+                val corner by animateDpAsState(if (showStop) 16.dp else 26.dp, label = "corner")
+                val bg by animateColorAsState(when {
+                    showStop -> MaterialTheme.colorScheme.errorContainer
+                    hasText && !sending && !uploading -> MaterialTheme.colorScheme.primary
+                    else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+                }, label = "bg")
+                val fg = when {
+                    showStop -> MaterialTheme.colorScheme.onErrorContainer
+                    hasText && !sending && !uploading -> MaterialTheme.colorScheme.onPrimary
+                    else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                }
+                val enabled = if (showStop) true else hasText && !sending && !uploading
+                Box(Modifier.size(52.dp).clip(RoundedCornerShape(corner)).background(bg)
+                    .clickable(enabled = enabled, role = Role.Button) { if (showStop) interrupt() else send() }
+                    .testTag(if (showStop) "composer-stop" else "composer-send")
+                    .semantics { contentDescription = if (showStop) "Stop the agent" else "Send" },
+                    contentAlignment = Alignment.Center) {
+                    if (showStop) Box(Modifier.size(14.dp).clip(RoundedCornerShape(3.dp)).background(fg))
+                    else Icon(Icons.Default.KeyboardArrowUp, null, tint = fg, modifier = Modifier.size(28.dp))
                 }
             }
         }
