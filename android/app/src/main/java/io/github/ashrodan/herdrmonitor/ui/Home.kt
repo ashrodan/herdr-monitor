@@ -221,6 +221,14 @@ fun HomeScreen(live: Live, go: (Route) -> Unit) {
                             StatusFilterRow(counts, filter) { filter = it }
                             Spacer(Modifier.height(4.dp))
                             val shown = remember(sessions, query) { sessions.filter { matches(it, query) } }
+                            // A list keeps its first visible item in place, so a
+                            // section that arrives above it (Needs you, after the
+                            // transcripts load) would sit off screen. At the top,
+                            // stay at the top.
+                            val firstKey = shown.firstOrNull { filter == null || it.bucket == filter }?.address
+                            LaunchedEffect(firstKey, filter) {
+                                if (list.firstVisibleItemIndex <= 3) list.scrollToItem(0)
+                            }
                             LazyColumn(Modifier.fillMaxSize().nestedScroll(collapse), state = list,
                                 contentPadding = PaddingValues(bottom = 96.dp)) {
                                 sessionsList(shown, filter, now, live,
