@@ -113,5 +113,9 @@ class Api(val base: String) {
 
     fun read(addr: String, lines: Int) = Json.readText(get(terminalPath(addr, "read") + "?lines=$lines"))
 
+    // Start one agent in a space (POST /api/sessions). Returns its address.
+    fun startSession(space: String, harness: String, prompt: String): String =
+        Json.started(post("/api/sessions", Json.obj("space" to space, "harness" to harness, "prompt" to prompt)))
+
     fun upload(addr: String, bytes: ByteArray, type: String) = Json.uploadPath(postBytes(terminalPath(addr, "upload"), bytes, type))
 }

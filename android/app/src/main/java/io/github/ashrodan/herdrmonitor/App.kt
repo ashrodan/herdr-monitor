@@ -28,6 +28,16 @@ class App : Application() {
     // Agent states the alert service last heard (address -> state). The app's
     // own Store is stale while no screen is open.
     val serviceStates = ConcurrentHashMap<String, String>()
+    // What Home read from each agent's transcript, and answers sent from a
+    // card (shown as "Sent: X" until the agent's next output).
+    val digests = MutableStateFlow<Map<String, Digest>>(emptyMap())
+    val sent = MutableStateFlow<Map<String, SentMark>>(emptyMap())
+    val pins = MutableStateFlow<Set<String>>(emptySet())
+
+    fun togglePin(address: String) {
+        val next = if (address in pins.value) pins.value - address else pins.value + address
+        pins.value = next; prefs.pinned = next
+    }
     // The theme the screens draw with; Settings changes it.
     val look = MutableStateFlow(Look(ThemePref.Dark, false))
 
@@ -57,6 +67,7 @@ class App : Application() {
         store = Store { prefs.server }
         Notifier.channels(this)
         outbox = Outbox(prefs.outboxStorage)
+        pins.value = prefs.pinned
         // Flush when the app's link comes up, and every 15 s while replies wait.
         scope.launch { store.live.map { it.link }.distinctUntilChanged().collect { if (it == Link.Online) flushOutbox() } }
         scope.launch {

@@ -94,46 +94,6 @@ fun rememberNow(): Long {
 
 fun openUrl(c: Context, url: String) = runCatching { c.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
 
-private val SECTIONS = listOf("Spaces", "Agents", "Overview")
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun HomeScreen(live: Live, go: (Route) -> Unit) {
-    val ctx = LocalContext.current
-    val now = rememberNow()
-    var section by rememberSaveable { mutableStateOf("Spaces") }
-    var picking by remember { mutableStateOf(false) }
-    val server = ctx.app.prefs.server
-
-    Scaffold(containerColor = Palette.background, topBar = {
-        TopAppBar(colors = TopAppBarDefaults.topAppBarColors(containerColor = Palette.background),
-            title = { ServerChip(server, live.link) { picking = true } },
-            actions = { IconButton(onClick = { go(Route.Settings) }) { Icon(Icons.Default.Settings, "Settings") } })
-    }) { pad ->
-        // Only the top inset pads the screen; the list scrolls under the
-        // navigation bar and ends clear of it.
-        Column(Modifier.fillMaxSize().padding(top = pad.calculateTopPadding())) {
-            ConnectionLine(live)
-            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
-                SECTIONS.forEachIndexed { i, s ->
-                    SegmentedButton(selected = section == s, onClick = { section = s }, shape = SegmentedButtonDefaults.itemShape(i, SECTIONS.size),
-                        colors = SegmentedButtonDefaults.colors(activeContainerColor = Palette.accent, activeContentColor = Palette.foreground,
-                            inactiveContainerColor = Palette.background, inactiveContentColor = Palette.mutedForeground, activeBorderColor = Palette.border, inactiveBorderColor = Palette.border),
-                        icon = {}) { Text(s) }
-                }
-            }
-            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 6.dp, end = 6.dp, bottom = pad.calculateBottomPadding() + 24.dp)) {
-                when (section) {
-                    "Spaces" -> spacesList(ctx, live, go)
-                    "Agents" -> agentsList(ctx, live, now, go)
-                    else -> overview(ctx, live, now, go)
-                }
-            }
-        }
-    }
-    if (picking) ServerSheet { picking = false }
-}
-
 @Composable
 private fun SectionTitle(text: String, count: Int? = null) {
     Row(Modifier.padding(start = 12.dp, top = 14.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -145,7 +105,7 @@ private fun SectionTitle(text: String, count: Int? = null) {
 // web Sidebar.tsx SpacesList: avatar (a branch mark for a worktree, indented
 // under its repo), name, status dot, branch, ↓behind. A virtual space is not
 // a button.
-private fun LazyListScope.spacesList(ctx: Context, live: Live, go: (Route) -> Unit) {
+fun LazyListScope.spacesList(ctx: Context, live: Live, go: (Route) -> Unit) {
     val seen = ctx.app.prefs.localSeen
     if (live.spaces.isEmpty()) { item { Empty(if (live.link == Link.Online) "No spaces." else "Connecting to Herdr…") }; return }
     items(live.spaces, key = { "s-${it.id}" }) { s -> SpaceRow(s, spaceState(s, live.terminals, seen)) { go(Route.SpaceR(s.id)) } }
@@ -168,55 +128,6 @@ private fun SpaceRow(s: Space, state: String?, onClick: () -> Unit) {
         if (state != null) StatusMark(state, 8.dp)
         s.branch?.let { Text(it, Modifier.widthIn(max = 140.dp), fontSize = 12.sp, color = Palette.mutedForeground, maxLines = 1, overflow = TextOverflow.Ellipsis) }
         if (s.behind > 0) Text("↓${s.behind}", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = Palette.error)
-    }
-}
-
-// web AgentsList (by state).
-private fun LazyListScope.agentsList(ctx: Context, live: Live, now: Long, go: (Route) -> Unit) {
-    val seen = ctx.app.prefs.localSeen
-    val groups = groupAgents(live.terminals.values, seen)
-    if (groups.isEmpty()) { item { Empty(if (live.link == Link.Online) "No agents running." else "Connecting to Herdr…") }; return }
-    for (g in groups) {
-        item(key = "h-${g.state}") { SectionTitle(g.label, g.rows.size) }
-        items(g.rows, key = { "a-${it.address}" }) { t ->
-            TerminalRow(t, displayName(t, live.spaces), t.msg?.takeIf { it.isNotBlank() } ?: t.title, t.stateOf(seen), now) { go(Route.Agent(t.address)) }
-        }
-    }
-}
-
-// The Overview: the counts, then what needs you, then open PRs and apps.
-private fun LazyListScope.overview(ctx: Context, live: Live, now: Long, go: (Route) -> Unit) {
-    val seen = ctx.app.prefs.localSeen
-    val groups = groupAgents(live.terminals.values, seen).associateBy { it.state }
-    val waiting = (groups["blocked"]?.rows.orEmpty() + groups["error"]?.rows.orEmpty())
-    val done = groups["done"]?.rows.orEmpty()
-    item {
-        Row(Modifier.fillMaxWidth().padding(6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Tile("Waiting", waiting.size, "blocked", Modifier.weight(1f))
-            Tile("Done", done.size, "done", Modifier.weight(1f))
-            Tile("Working", groups["working"]?.rows?.size ?: 0, "working", Modifier.weight(1f))
-            Tile("PRs", live.prs.size, "pr", Modifier.weight(1f))
-        }
-    }
-    if (waiting.isNotEmpty()) {
-        item { SectionTitle("Waiting", waiting.size) }
-        items(waiting, key = { "w-${it.address}" }) { t -> TerminalRow(t, displayName(t, live.spaces), t.msg ?: t.title, t.stateOf(seen), now) { go(Route.Agent(t.address)) } }
-    }
-    if (done.isNotEmpty()) {
-        item { SectionTitle("Done", done.size) }
-        items(done, key = { "d-${it.address}" }) { t -> TerminalRow(t, displayName(t, live.spaces), t.msg ?: t.title, "done", now) { go(Route.Agent(t.address)) } }
-    }
-    if (live.prs.isNotEmpty()) {
-        item { SectionTitle("Open PRs", live.prs.size) }
-        items(live.prs, key = { "p-${it.pr.url}" }) { p -> PrRow(p) { openUrl(ctx, p.pr.url) } }
-    }
-}
-
-@Composable
-fun Tile(label: String, n: Int, state: String, modifier: Modifier) {
-    Column(modifier.clip(RoundedCornerShape(10.dp)).background(Palette.card).border(1.dp, Palette.border, RoundedCornerShape(10.dp)).padding(10.dp)) {
-        Text("$n", fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = if (n > 0 && state != "pr") stateColor(state) else Palette.foreground)
-        Text(label, fontSize = 11.sp, color = Palette.mutedForeground)
     }
 }
 

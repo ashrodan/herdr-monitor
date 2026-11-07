@@ -24,6 +24,8 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
+import androidx.navigation.navArgument
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -38,7 +40,7 @@ sealed interface Route {
     data object Home : Route
     data object Settings : Route
     data class SpaceR(val id: String) : Route
-    data class Agent(val address: String) : Route
+    data class Agent(val address: String, val tab: Int = 0) : Route
 }
 
 // Navigation Compose routes. Addresses and space ids hold "/", so they are
@@ -47,12 +49,12 @@ object Nav {
     const val HOME = "home"
     const val SETTINGS = "settings"
     const val SPACE = "space/{id}"
-    const val AGENT = "agent/{address}"
+    const val AGENT = "agent/{address}?tab={tab}"
     fun path(r: Route): String = when (r) {
         Route.Home -> HOME
         Route.Settings -> SETTINGS
         is Route.SpaceR -> "space/${Uri.encode(r.id)}"
-        is Route.Agent -> "agent/${Uri.encode(r.address)}"
+        is Route.Agent -> "agent/${Uri.encode(r.address)}?tab=${r.tab}"
     }
 }
 
@@ -114,7 +116,9 @@ class MainActivity : ComponentActivity() {
             composable(Nav.HOME) { HomeScreen(live(), go) }
             composable(Nav.SETTINGS) { SettingsScreen(back) }
             composable(Nav.SPACE) { e -> SpaceScreen(live(), e.arguments?.getString("id").orEmpty(), go, back) }
-            composable(Nav.AGENT) { e -> AgentScreen(live(), e.arguments?.getString("address").orEmpty(), back) }
+            composable(Nav.AGENT, arguments = listOf(navArgument("tab") { type = NavType.IntType; defaultValue = 0 })) { e ->
+                AgentScreen(live(), e.arguments?.getString("address").orEmpty(), back, initialTab = e.arguments?.getInt("tab") ?: 0)
+            }
         }
     }
 

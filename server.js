@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { HcConnection, defaultSocket, summarize } from './lib/hc.js';
 import { repoCommits, commitDetail } from './lib/git.js';
 import { buildLayout, repoInfo, terminalsIn } from './lib/sidebar.js';
+import { sessionRequest } from './lib/sessions.js';
 import { prStatus } from './lib/pr.js';
 import { chatFor } from './lib/transcript.js';
 import { loadVapid, Subscriptions, sendPush } from './lib/push.js';
@@ -591,6 +592,15 @@ const routes = [
   ['POST', /^\/api\/push\/test$/, async (req, res) => {
     const results = await notifyAll({ title: 'Herdr Monitor', body: 'Notifications work.', tag: 'test', url: '/' });
     send(res, 200, { sent: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).map((r) => r.status || r.error?.message) });
+  }],
+  // Start one coding agent (claude or omp) in a space's folder, with the
+  // prompt as its task. The space must be in the layout; the client never
+  // sends a path or an argv (lib/sessions.js).
+  ['POST', /^\/api\/sessions$/, async (req, res) => {
+    const r = sessionRequest(await readJson(req), layout);
+    if (!r.ok) return send(res, r.status, { error: r.error });
+    const t = await rpc.call('terminal.run', r.params);
+    send(res, 200, { address: t.address, name: t.name ?? r.params.name });
   }],
   ['POST', /^\/api\/terminals\/([^/]+)\/send$/, async (req, res, [addr]) => {
     if (!terminalOr404(res, addr)) return;

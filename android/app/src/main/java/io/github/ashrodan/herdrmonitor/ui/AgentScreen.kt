@@ -105,7 +105,7 @@ private suspend fun <T> io(block: () -> T): Result<T> = withContext(Dispatchers.
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AgentScreen(live: Live, address: String, back: () -> Unit) {
+fun AgentScreen(live: Live, address: String, back: () -> Unit, initialTab: Int = 0) {
     val ctx = LocalContext.current
     val api = remember(live) { ctx.app.store.api }
     val port = remember(api) { ApiPort(api) }
@@ -113,13 +113,14 @@ fun AgentScreen(live: Live, address: String, back: () -> Unit) {
     val queued = outboxAll.filter { it.address == address }
     val t = live.terminals[address]
     val now = rememberNow()
-    var tab by remember { mutableIntStateOf(0) }
+    var tab by remember { mutableIntStateOf(initialTab) }
 
     // Opening a finished agent counts as seeing it (as in the web UI), and
     // its alert goes.
     LaunchedEffect(address, t?.status) {
         if (t?.status == "done") ctx.app.prefs.markSeen(address)
         Notifier.cancelAgent(ctx, address)
+        ctx.app.prefs.markOpened(address)
     }
 
     val blocked = t?.status == "blocked"

@@ -115,6 +115,8 @@ object Json {
         ServerInfo(it.getString("url"), it.optString("name"), it.optStringOrNull("os"), it.optBoolean("self"), herdr(it.optJSONObject("herdr")), it.optBoolean("older"))
     }
 
+    fun started(text: String): String = JSONObject(text).getString("address")
+
     fun readText(text: String): String = Glyphs.mono(JSONObject(text).optString("text"))
     fun uploadPath(text: String): String = JSONObject(text).optString("path")
 
