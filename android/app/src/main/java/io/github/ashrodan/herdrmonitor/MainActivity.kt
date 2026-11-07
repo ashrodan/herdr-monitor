@@ -17,7 +17,11 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -92,21 +96,30 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun Screens() {
         val nav = rememberNavController()
-        val live by app.store.live.collectAsStateWithLifecycle()
-        val go: (Route) -> Unit = { nav.navigate(Nav.path(it)) { launchSingleTop = true } }
-        val back: () -> Unit = { if (!nav.popBackStack()) finish() }
-        LaunchedEffect(pending) {
-            val addr = pending ?: return@LaunchedEffect
-            openAgent(nav, addr)
-            pending = null
+        // The NavHost builder must not capture values that change (like the
+        // live state): a new builder makes a new graph, and NavHost then
+        // resets the back stack to Home. Each screen reads the live state.
+        val go: (Route) -> Unit = remember(nav) { { r -> nav.navigate(Nav.path(r)) { launchSingleTop = true } } }
+        val back: () -> Unit = remember(nav) { { if (!nav.popBackStack()) finish() } }
+        // On a cold start, wait until NavHost has put Home on the back stack;
+        // a navigate before that is lost when NavHost starts its graph.
+        LaunchedEffect(nav) {
+            nav.currentBackStackEntryFlow.first()
+            snapshotFlow { pending }.filterNotNull().collect { addr ->
+                openAgent(nav, addr)
+                pending = null
+            }
         }
         NavHost(nav, startDestination = Nav.HOME) {
-            composable(Nav.HOME) { HomeScreen(live, go) }
+            composable(Nav.HOME) { HomeScreen(live(), go) }
             composable(Nav.SETTINGS) { SettingsScreen(back) }
-            composable(Nav.SPACE) { e -> SpaceScreen(live, e.arguments?.getString("id").orEmpty(), go, back) }
-            composable(Nav.AGENT) { e -> AgentScreen(live, e.arguments?.getString("address").orEmpty(), back) }
+            composable(Nav.SPACE) { e -> SpaceScreen(live(), e.arguments?.getString("id").orEmpty(), go, back) }
+            composable(Nav.AGENT) { e -> AgentScreen(live(), e.arguments?.getString("address").orEmpty(), back) }
         }
     }
+
+    @Composable
+    private fun live(): Live = app.store.live.collectAsStateWithLifecycle().value
 
     // Home, then that agent: back from the agent returns to Home.
     private fun openAgent(nav: NavHostController, address: String) {

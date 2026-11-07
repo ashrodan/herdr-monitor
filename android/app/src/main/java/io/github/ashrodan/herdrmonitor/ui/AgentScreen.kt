@@ -139,11 +139,19 @@ fun AgentScreen(live: Live, address: String, back: () -> Unit) {
             navigationIcon = { IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
         )
     }, bottomBar = {
-        if (t != null && !t.finished) Composer(port, ctx.app.outbox, address, online = live.link == Link.Online, blocked, t.kind, working = t.status == "working")
+        // Offline, an agent the app has not heard of yet (a cold start) still
+        // takes replies: they wait in the outbox.
+        val offline = live.link != Link.Online
+        if (t != null && !t.finished) Composer(port, ctx.app.outbox, address, online = !offline, blocked, t.kind, working = t.status == "working")
+        else if (t == null && offline) Composer(port, ctx.app.outbox, address, online = false, blocked = false, kind = null, working = false)
     }) { pad ->
         Column(Modifier.fillMaxSize().padding(pad)) {
             ConnectionLine(live)
-            if (t == null) { Text("This terminal is gone.", Modifier.padding(16.dp)); return@Column }
+            if (t == null) {
+                if (live.link != Link.Online) NoChat("No link to the server. The chat loads when the link is back.", queued)
+                else Text("This terminal is gone.", Modifier.padding(16.dp))
+                return@Column
+            }
             TabRow(selectedTabIndex = tab) {
                 listOf("Chat", "Text", "Commits", "Status").forEachIndexed { i, s -> Tab(selected = tab == i, onClick = { tab = i }, text = { Text(s) }) }
             }
