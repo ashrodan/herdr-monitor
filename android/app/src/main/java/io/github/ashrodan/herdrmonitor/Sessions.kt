@@ -9,10 +9,10 @@ import androidx.compose.runtime.Immutable
 // Global, one constant (design review answer 5).
 const val STALE_MS = 30 * 60 * 1000L
 
-enum class Bucket { NeedsYou, Working, Ready, Idle }
+enum class Bucket { NeedsYou, Working, Done, Ready, Idle }
 
 // One status, one colour, one shape, everywhere.
-enum class Status { Waiting, Failed, Working, Ready, Idle }
+enum class Status { Waiting, Failed, Working, Done, Ready, Idle }
 
 // What the app read from one agent's transcript, for its card.
 @Immutable
@@ -50,14 +50,22 @@ data class Session(
     val agent: String,
 )
 
-data class Counts(val all: Int, val needsYou: Int, val working: Int, val ready: Int, val idle: Int) {
-    fun of(b: Bucket?) = when (b) { null -> all; Bucket.NeedsYou -> needsYou; Bucket.Working -> working; Bucket.Ready -> ready; Bucket.Idle -> idle }
+data class Counts(val all: Int, val needsYou: Int, val working: Int, val done: Int, val ready: Int, val idle: Int) {
+    fun of(b: Bucket?) = when (b) {
+        null -> all
+        Bucket.NeedsYou -> needsYou
+        Bucket.Working -> working
+        Bucket.Done -> done
+        Bucket.Ready -> ready
+        Bucket.Idle -> idle
+    }
 }
 
 fun counts(sessions: List<Session>) = Counts(
     sessions.size,
     sessions.count { it.bucket == Bucket.NeedsYou },
     sessions.count { it.bucket == Bucket.Working },
+    sessions.count { it.bucket == Bucket.Done },
     sessions.count { it.bucket == Bucket.Ready },
     sessions.count { it.bucket == Bucket.Idle },
 )
@@ -126,7 +134,7 @@ fun buildSessions(
             state == "blocked" -> Bucket.NeedsYou to Status.Waiting
             state == "error" -> Bucket.NeedsYou to Status.Failed
             state == "working" -> Bucket.Working to Status.Working
-            state == "done" -> Bucket.Ready to Status.Ready
+            state == "done" -> Bucket.Done to Status.Done
             pr != null && !pr.pr.isDraft -> Bucket.Ready to Status.Ready
             else -> Bucket.Idle to Status.Idle
         }

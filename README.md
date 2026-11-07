@@ -60,9 +60,9 @@ talks to this server over its HTTP API. It does not show the web UI in a
 WebView.
 
 - **Home**: an inbox of sessions (agents), in sections: **Needs you**
-  (waiting at a question, or failed), **Working**, **Ready to review**, and
-  one collapsed **Idle** row. Filter chips above the list show the count of
-  each section. A waiting card shows the question and up to three answer
+  (waiting at a question, or failed), **Working**, **Done**, **Ready to
+  review**, and one collapsed **Idle** row. Filter chips above the list show
+  the count of each section. A waiting card shows the question and up to three answer
   buttons. Each card shows the space colour, the status, the name, the task
   and the agent's last sentences. A session with no output for 30 minutes
   shows how long it has been quiet. **Ask Herdr** filters the list on the

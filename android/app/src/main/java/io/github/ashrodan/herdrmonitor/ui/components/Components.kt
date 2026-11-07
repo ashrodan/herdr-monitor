@@ -106,7 +106,7 @@ fun tick(view: android.view.View) {
 // ---- Status ----
 
 fun statusWord(s: Status) = when (s) {
-    Status.Waiting -> "Needs you"; Status.Failed -> "Failed"; Status.Working -> "Working"; Status.Ready -> "Ready"; Status.Idle -> "Idle"
+    Status.Waiting -> "Needs you"; Status.Failed -> "Failed"; Status.Working -> "Working"; Status.Done -> "Done"; Status.Ready -> "Ready"; Status.Idle -> "Idle"
 }
 
 // One badge per status: shape, colour and icon, and a content description.
@@ -131,7 +131,7 @@ fun StatusBadge(status: Status, size: Dp = 20.dp, ring: Color = Color.Transparen
         Status.Failed -> Box(mod.clip(RoundedCornerShape(6.dp)).background(c.failed).border(2.dp, ring, RoundedCornerShape(6.dp)), contentAlignment = Alignment.Center) {
             Text("!", color = c.onFailed, fontSize = (size.value * 0.62f).sp, fontWeight = FontWeight.Black)
         }
-        Status.Ready -> Box(mod.clip(CircleShape).background(c.ready).border(2.dp, ring, CircleShape), contentAlignment = Alignment.Center) {
+        Status.Done, Status.Ready -> Box(mod.clip(CircleShape).background(c.ready).border(2.dp, ring, CircleShape), contentAlignment = Alignment.Center) {
             Icon(Icons.Default.Check, null, Modifier.size(size * 0.7f), tint = c.onReady)
         }
     }
@@ -162,13 +162,14 @@ fun SectionHeader(title: String, count: Int, waiting: Boolean = false) {
     }
 }
 
-// All, Needs you, Working, Ready, Idle. A chip with a count of 0 is
+// All, Needs you, Working, Done, Ready, Idle. A chip with a count of 0 is
 // hidden, except All. Only the Needs you count is coloured.
 @Composable
 fun StatusFilterRow(counts: Counts, selected: Bucket?, onSelect: (Bucket?) -> Unit) {
     val view = LocalView.current
     val c = LocalStatusColors.current
-    val chips = listOf<Pair<Bucket?, String>>(null to "All", Bucket.NeedsYou to "Needs you", Bucket.Working to "Working", Bucket.Ready to "Ready", Bucket.Idle to "Idle")
+    val chips = listOf<Pair<Bucket?, String>>(null to "All", Bucket.NeedsYou to "Needs you", Bucket.Working to "Working",
+        Bucket.Done to "Done", Bucket.Ready to "Ready", Bucket.Idle to "Idle")
         .filter { (b, _) -> b == null || counts.of(b) > 0 }
     // A FlowRow, not a scrolling row: at a large font size the chips wrap
     // to a second line instead of going off screen.

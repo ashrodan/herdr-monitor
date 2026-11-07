@@ -57,6 +57,8 @@ import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffo
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -71,12 +73,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
@@ -120,9 +126,9 @@ import kotlinx.coroutines.withContext
 enum class HomeTab { Sessions, Prs, Spaces }
 
 // Home: an inbox of agents (design brief, Home). Filter chips, then Needs
-// you, Working and Ready to review as segmented card groups, then one Idle
-// row. A drawer with the host, views and spaces; a bottom bar (a rail on
-// wider screens) with Sessions, PRs and Spaces.
+// you, Working, Done and Ready to review as segmented card groups, then one
+// Idle row. A drawer with the host, views and spaces; a bottom bar (a rail
+// on wider screens) with Sessions, PRs and Spaces.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(live: Live, go: (Route) -> Unit, selected: String? = null) {
@@ -138,6 +144,16 @@ fun HomeScreen(live: Live, go: (Route) -> Unit, selected: String? = null) {
         asked?.let { tab = HomeTab.Sessions; filter = it; app.homeFilter.value = null }
     }
     var query by rememberSaveable { mutableStateOf("") }
+    var searchActive by remember { mutableStateOf(false) }
+    val focus = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    fun closeSearch() {
+        searchActive = false
+        focus.clearFocus(force = true)
+        keyboard?.hide()
+    }
+    LifecycleEventEffect(Lifecycle.Event.ON_PAUSE) { closeSearch() }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { closeSearch() }
     var picking by remember { mutableStateOf(false) }
     var newSession by remember { mutableStateOf(false) }
     var menuFor by remember { mutableStateOf<Session?>(null) }
@@ -210,8 +226,9 @@ fun HomeScreen(live: Live, go: (Route) -> Unit, selected: String? = null) {
             Scaffold(
                 contentWindowInsets = WindowInsets(0),
                 topBar = {
-                    HomeTopBar(query, { query = it }, onMenu = { scope.launch { drawer.open() } },
-                        host = shortHost(app.prefs.server), online = online, onHost = { picking = true })
+                    HomeTopBar(query, { query = it }, searchActive, { searchActive = true },
+                        onMenu = { scope.launch { drawer.open() } }, host = shortHost(app.prefs.server),
+                        online = online, onHost = { picking = true })
                 },
                 snackbarHost = { SnackbarHost(snack) },
                 floatingActionButton = {
@@ -285,16 +302,35 @@ private fun NavIcon(icon: @Composable () -> Unit, count: Int, waiting: Boolean) 
 
 // Menu, the Ask Herdr pill (a filter on this phone), the host avatar.
 @Composable
-private fun HomeTopBar(query: String, onQuery: (String) -> Unit, onMenu: () -> Unit, host: String, online: Boolean, onHost: () -> Unit) {
+private fun HomeTopBar(
+    query: String,
+    onQuery: (String) -> Unit,
+    searchActive: Boolean,
+    onSearch: () -> Unit,
+    onMenu: () -> Unit,
+    host: String,
+    online: Boolean,
+    onHost: () -> Unit,
+) {
+    val focusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(searchActive) {
+        if (searchActive) {
+            focusRequester.requestFocus()
+            keyboard?.show()
+        }
+    }
     Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onMenu) { Icon(Icons.Default.Menu, "Open navigation") }
+        val searchModifier = if (searchActive) Modifier else Modifier.clickable(onClick = onSearch)
         Row(Modifier.weight(1f).height(52.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceContainerHigh)
-            .padding(start = 20.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            .then(searchModifier).padding(start = 20.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.weight(1f)) {
                 if (query.isEmpty()) Text("Ask Herdr", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyLarge)
-                BasicTextField(query, onQuery, Modifier.fillMaxWidth(), singleLine = true,
+                if (searchActive) BasicTextField(query, onQuery, Modifier.fillMaxWidth().focusRequester(focusRequester), singleLine = true,
                     textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary))
+                else if (query.isNotEmpty()) Text(query, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyLarge)
             }
             if (query.isEmpty()) Icon(SparkleIcon, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             else IconButton(onClick = { onQuery("") }) { Icon(Icons.Default.Clear, "Clear the filter") }
@@ -337,6 +373,7 @@ private fun LazyListScope.sessionsList(
         null -> {
             group("Needs you", Bucket.NeedsYou)
             group("Working", Bucket.Working)
+            group("Done", Bucket.Done)
             group("Ready to review", Bucket.Ready)
             val idle = all.count { it.bucket == Bucket.Idle }
             if (idle > 0) item(key = "idle-row", contentType = "idle") { IdleRow(idle, showIdle) }
@@ -344,6 +381,7 @@ private fun LazyListScope.sessionsList(
         Bucket.NeedsYou -> if (all.none { it.bucket == Bucket.NeedsYou }) item(key = "penned") { SceneState(HerdrScene.AllPenned, "Nobody needs you.") }
             else group("Needs you", Bucket.NeedsYou)
         Bucket.Working -> group("Working", Bucket.Working)
+        Bucket.Done -> group("Done", Bucket.Done)
         Bucket.Ready -> group("Ready to review", Bucket.Ready)
         Bucket.Idle -> group("Idle", Bucket.Idle)
     }
@@ -408,6 +446,7 @@ private fun HerdrDrawer(
             DrawerRow("All sessions", total) { onView(null, HomeTab.Sessions) }
             DrawerRow("Needs you", counts.needsYou, waiting = true) { onView(Bucket.NeedsYou, HomeTab.Sessions) }
             DrawerRow("Working", counts.working) { onView(Bucket.Working, HomeTab.Sessions) }
+            DrawerRow("Done", counts.done) { onView(Bucket.Done, HomeTab.Sessions) }
             DrawerRow("Ready to review", counts.ready) { onView(Bucket.Ready, HomeTab.Sessions) }
             DrawerRow("Pull requests", live.prs.size) { onView(null, HomeTab.Prs) }
             DrawerRow("Idle", counts.idle) { onView(Bucket.Idle, HomeTab.Sessions) }

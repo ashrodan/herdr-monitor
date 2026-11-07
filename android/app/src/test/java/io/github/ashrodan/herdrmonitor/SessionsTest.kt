@@ -21,13 +21,14 @@ class SessionsTest {
 
     @Test fun bucketsAndOrder() {
         val s = build(listOf(t("t1", "working"), t("t2", "blocked"), t("t3", "error"), t("t4", "done"), t("t5", "idle"), t("t6", null)))
-        assertEquals(listOf(Bucket.NeedsYou, Bucket.NeedsYou, Bucket.Working, Bucket.Ready, Bucket.Idle), s.map { it.bucket })
+        assertEquals(listOf(Bucket.NeedsYou, Bucket.NeedsYou, Bucket.Working, Bucket.Done, Bucket.Idle), s.map { it.bucket })
         assertEquals(Status.Waiting, s.first { it.address == "t2" }.status)
         assertEquals(Status.Failed, s.first { it.address == "t3" }.status)
+        assertEquals(Status.Done, s.first { it.address == "t4" }.status)
         // A terminal with no status is a shell: not a session.
         assertTrue(s.none { it.address == "t6" })
         val c = counts(s)
-        assertEquals(Counts(5, 2, 1, 1, 1), c)
+        assertEquals(Counts(5, 2, 1, 1, 0, 1), c)
     }
 
     @Test fun idleWithAnOpenPrIsReadyToReview() {
