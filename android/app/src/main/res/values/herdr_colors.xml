@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Herdr border collie palette (from the brand pack), cut to the colours the copied vectors use. -->
+<resources>
+    <color name="herdr_coat">#FF17191A</color>
+    <color name="herdr_coat_hi">#FF2C3032</color>
+    <color name="herdr_white">#FFF6F2EA</color>
+    <color name="herdr_eye">#FFB9772F</color>
+    <color name="herdr_tongue">#FFE8918A</color>
+    <color name="herdr_mist">#FFF3E6CC</color>
+    <color name="herdr_wheat_hi">#FFEBD0A0</color>
+    <color name="herdr_wheat">#FFD9B57B</color>
+    <color name="herdr_bark_hi">#FF8C735C</color>
+    <color name="herdr_night">#FF12201D</color>
+    <color name="herdr_night_deep">#FF0F1A18</color>
+    <color name="herdr_pine">#FF1C2B27</color>
+    <color name="herdr_ground">#FF152723</color>
+    <color name="herdr_cloud">#FF22362F</color>
+    <color name="herdr_wool">#FFEFE9DC</color>
+    <color name="herdr_face">#FF1B1D1E</color>
+    <color name="herdr_wood">#FF8F846F</color>
+    <color name="herdr_wood_dim">#FF6F6656</color>
+    <color name="herdr_grey">#FF899390</color>
+    <color name="herdr_collar">#FF82D5C8</color>
+    <color name="herdr_status_ok">#FF94D68E</color>
+    <color name="herdr_splash_bg">@color/herdr_wheat_hi</color>
+    <color name="herdr_notification_accent">@color/herdr_collar</color>
+</resources>

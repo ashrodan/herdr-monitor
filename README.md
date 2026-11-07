@@ -53,6 +53,120 @@ button. On iPhone, follow the steps in the menu (Share → Add to Home Screen),
 then open the app from the Home Screen. iOS sends Web Push only to a
 home-screen app.
 
+## Android app
+
+A native Android app (Kotlin, Jetpack Compose) in [`android/`](android/). It
+talks to this server over its HTTP API. It does not show the web UI in a
+WebView.
+
+- **Home**: an inbox of sessions (agents), in sections: **Needs you**
+  (waiting at a question, or failed), **Working**, **Ready to review**, and
+  one collapsed **Idle** row. Filter chips above the list show the count of
+  each section. A waiting card shows the question and up to three answer
+  buttons. Each card shows the space colour, the status, the name, the task
+  and the agent's last sentences. A session with no output for 30 minutes
+  shows how long it has been quiet. **Ask Herdr** filters the list on the
+  phone; it sends nothing. Long-press a card to pin it, stop it, open its
+  terminal text or copy its branch. The bottom bar has **Sessions**, **PRs**
+  and **Spaces**. The avatar at the top right shows the server and its link
+  state.
+- **New session**: the button on Home. Pick a space and a harness (Claude
+  Code or omp) and type the task. The server starts the agent in that
+  space's folder (`POST /api/sessions`) and the app opens it.
+- **Agent**: Chat, Text, Commits and Status, and a box to reply, attach an
+  image, press dialog keys or stop the agent.
+- **Fast start**: the app keeps the last sessions, PRs and last words it
+  read from each server (in its cache folder, at most a day old). A cold
+  start shows them at once, dimmed, with "Showing sessions from 9:31" until
+  the live list is in. With nothing cached, Home shows placeholder cards.
+  The last eight transcripts stay in memory, so an agent you opened before
+  shows at once.
+- **Offline replies**: a reply that you send with no link to the server goes
+  into a queue on the phone. It shows in Chat as "queued". The app sends it
+  when the link comes back, in order, per agent. You can delete a queued
+  reply before it goes.
+- **Look**: Material 3 Expressive, dark by default. Settings has Dark, Light
+  or System, and an option for wallpaper colours.
+- **Brand**: a border collie (the orchestrator) and sheep (the agents). The
+  launcher icon is an adaptive icon with a monochrome layer (themed icons).
+  The splash shows the collie on wheat, or on pine in dark mode. The
+  notification and tile icons are the white collie head. Sessions and Spaces
+  have sheep and paddock glyphs, and empty and offline Home show a scene.
+- **Notifications**, on three channels, grouped by server:
+  - **Needs you** (high): an agent asks a question or stopped with an
+    error. Up to three answer buttons, or Reply.
+  - **Running** (low, silent): for a pinned session while it works (at most
+    three; pin a session from its long-press menu), with its current step
+    and a **Stop** button. A four-stage bar (Plan, Edit, Verify, PR); the
+    app guesses the stage from the agent's tool calls, because the server
+    does not report one.
+  - **Finished**: the result line, **Open PR** (when the space has one),
+    **View session** and Reply.
+  An alert goes away when the agent moves on, for example when you answer
+  it on the Mac. An answer from a notification shows as "Sent" on the Home
+  card.
+- **Quick settings tiles**: **Herdr** shows "2 need you" (or "4 working");
+  a tap opens Sessions filtered to Needs you. **Quiet agents**: when on,
+  only the Needs you channel alerts.
+- **Widget** (4x2): the server name, three counts (Needs you, Working,
+  PRs) and the top Needs you session with its first answer button. It
+  changes when the server sends a change, not on a timer.
+- **Settings**: the server URL, **Find on tailnet** (lists the herdr-monitor
+  servers on your tailnet, with each one's Herdr app, Herdr TUI and hc
+  versions), the background-alerts switch, Quiet agents and the look.
+
+The phone must be on Tailscale, on the same tailnet as the Mac. No Google
+account, Firebase or push service is used: while alerts are on, the app keeps
+one link to the server (`GET /api/agents/stream`) and shows a quiet "Herdr
+monitor connected" notification.
+
+### Build and install
+
+The app needs Android 12 or later. To build it, you need the Android SDK
+(`ANDROID_HOME`) and JDK 17 or later. Android Studio is not needed.
+
+    cd android
+    ./gradlew assembleDebug         # app/build/outputs/apk/debug/app-debug.apk
+    ./gradlew test lint             # unit tests and lint
+    ./gradlew connectedDebugAndroidTest   # UI tests (an emulator or a phone)
+    ./gradlew installPerf           # release code (R8), debug key: to measure speed
+
+Install it with a USB cable (USB debugging on):
+
+    adb install -r app/build/outputs/apk/debug/app-debug.apk
+
+Or send the APK to the phone (for example with Google Drive or a chat app),
+open it, and allow the install. The debug build is signed with the debug
+key. Release signing is not set up yet. The release build is shrunk with
+R8 (about 4 MB instead of 60 MB for debug). A debug build draws several times
+slower, so measure start-up and frames on the `perf` build.
+
+### Set it up
+
+1. Open the app and allow notifications.
+2. In Settings (the gear), type the server URL, for example
+   `https://<machine>.<tailnet>.ts.net:7400`, or tap **Find on tailnet** and
+   pick a server. The app finds servers through a server it can reach,
+   because an Android app cannot read Tailscale's list of machines.
+3. For alerts on time when the phone sleeps, tap **Run unrestricted**.
+
+### Notification actions
+
+Android shows at most three buttons on a notification.
+
+| Agent | Buttons |
+| --- | --- |
+| Waits at one single-choice question | Its first three options (then Reply). A tap answers the question, like a tap in Chat (`POST /api/terminals/:t/answer`). |
+| Waits at another dialog | **Reply** (types into the dialog with `force`), **Interrupt** (`POST …/interrupt`), **Open** |
+| Error | **Reply** (`POST …/send`), **View session** |
+| Done | **Open PR** (when there is one), **View session**, **Reply** |
+| Working | **Stop** (`POST …/interrupt`) |
+
+A tap on the notification opens that agent in the app. Every button that
+types or presses keys asks you to unlock the phone first. The app sends an
+`Origin` header equal to the server URL, so the server's same-origin check
+applies to it unchanged.
+
 ## What it shows
 
 - **Agents.** Grouped like Herdr's sidebar: Blocked, Error, Done, Working,
@@ -94,6 +208,10 @@ not from this repo.
   the dialog with `force`. Otherwise `terminal.send` is called
   without `force`, so hc refuses to type into an agent that just became
   blocked.
+- `POST /api/sessions` (New session) starts only `claude` or `omp`, in the
+  folder of a space that already exists. The client sends a space id, a
+  harness name and the task text. It cannot send a path or a command. The
+  task text goes to the agent as one argument, with no shell.
 
 ## How it works
 
@@ -108,12 +226,16 @@ not from this repo.
 
     web/ (React) ── vite build ──> dist/ (served by server.js)
 
+    Android app ── SSE /api/events (screens), /api/agents/stream (alerts)
+                ── /api/info, /api/discover ── lib/herdr.js, lib/agents.js
+
 `hc schema` prints the full `hc` API.
 
 ## Test
 
     npm test           # server and library tests (node:test)
     npm run typecheck  # the UI
+    cd android && ./gradlew test lint   # the Android app
 
 ## License
 

@@ -11,10 +11,14 @@ import { fileURLToPath } from 'node:url';
 import { HcConnection, defaultSocket, summarize } from './lib/hc.js';
 import { repoCommits, commitDetail } from './lib/git.js';
 import { buildLayout, repoInfo, terminalsIn } from './lib/sidebar.js';
+import { sessionRequest } from './lib/sessions.js';
 import { prStatus } from './lib/pr.js';
 import { chatFor } from './lib/transcript.js';
 import { loadVapid, Subscriptions, sendPush } from './lib/push.js';
 import { answerKeys, currentQuestion } from './lib/answer.js';
+import { AgentFeed, sseFrame } from './lib/agents.js';
+import { herdrInfo, discover, tailnetPeers } from './lib/herdr.js';
+import { listenOf, machineHost, portFromText } from './lib/apps.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOST = process.env.HOST || '127.0.0.1';
@@ -35,8 +39,29 @@ const seedChanged = new Map(); // address -> ms, from Herdr's agent store
 const herdrSeen = new Map();   // address -> ms when Herdr turned its "done" into idle
 
 function broadcast(event, data) {
-  const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  const frame = sseFrame(event, data);
   for (const res of clients) res.write(frame);
+  if (event === 'connection') for (const res of agentClients) res.write(frame);
+  if (AGENT_TRIGGERS.has(event)) scheduleAgents();
+}
+
+// ---- Agent stream (the Android app) ----
+// One small feed: an agent's state, name or status changed. See lib/agents.js.
+const agentClients = new Set();
+const agentFeed = new AgentFeed();
+const AGENT_TRIGGERS = new Set(['terminal', 'removed', 'snapshot', 'layout']);
+let agentsQueued = false;
+function scheduleAgents() {
+  if (agentsQueued || !agentClients.size) return;
+  agentsQueued = true;
+  queueMicrotask(syncAgents);
+}
+function syncAgents() {
+  agentsQueued = false;
+  for (const [event, data] of agentFeed.diff(terminals.values(), nameOf)) {
+    const frame = sseFrame(event, data);
+    for (const res of agentClients) res.write(frame);
+  }
 }
 
 function snapshot() {
@@ -74,7 +99,35 @@ async function loadSeed() {
 function remember(s) {
   if (s.changed_ms == null) s.changed_ms = seedChanged.get(s.address) ?? null;
   s.seen_ms = herdrSeen.get(s.address) ?? null;
+  if (!s.listen && screenListen.has(s.address)) s.listen = screenListen.get(s.address);
+  if (s.listen) s.listen = { ...s.listen, host: machineHost(s.address, machines, peers) };
   return s;
+}
+
+// ---- Running apps (lib/apps.js) ----
+// A shell's dev server often prints its URL but has no --port: read the
+// first screen lines of live terminals without a status, at most 6 every
+// 30 s, each again after 2 minutes.
+const screenListen = new Map(); // address -> {scheme, port}
+const screenRead = new Map();   // address -> ms
+let machines = [], peers = [];
+async function scanApps() {
+  if (!rpc) return;
+  const due = [...terminals.values()].filter((t) => t.state === 'live' && !t.status && !t.listen && Date.now() - (screenRead.get(t.address) || 0) > 120000).slice(0, 6);
+  for (const t of due) {
+    screenRead.set(t.address, Date.now());
+    try {
+      const r = await rpc.call('terminal.read', { terminal: t.address, lines: 60 });
+      const l = listenOf({ screen: String(r?.text ?? '') });
+      if (l) { screenListen.set(t.address, l); remember(t); broadcast('terminal', t); }
+    } catch { /* gone */ }
+  }
+}
+// hc machines and tailnet names, for apps on other machines (dai/t1).
+async function loadMachines() {
+  const out = await new Promise((resolve) => execFile(HC_BIN, ['machine', 'ls', '--json'], { timeout: 5000 }, (err, o) => resolve(err ? null : o)));
+  try { machines = JSON.parse(out).machines || []; } catch { machines = []; }
+  peers = tailnetPeers(await tailscaleStatus());
 }
 
 let layoutTimer = null;
@@ -118,6 +171,7 @@ async function refreshOne(address) {
     const prev = terminals.get(address);
     if (prev?.title && !s.title) s.title = prev.title;
     if (prev?.changed_ms && !s.changed_ms) s.changed_ms = prev.changed_ms;
+    if (prev?.listen && !s.listen) s.listen = prev.listen;
     terminals.set(address, s);
     broadcast('terminal', s);
   } catch (err) {
@@ -136,6 +190,7 @@ function onEvent(ev) {
   if (ev.type === 'missed') { resync(); return; }
   if (ev.type === 'title' && t) {
     t.title = ev.data?.title ?? null;
+    if (!t.listen) { const l = portFromText(t.title); if (l) { t.listen = l; remember(t); } }
     broadcast('terminal', t);
   } else if (ev.type === 'status' && t) {
     const before = t.status?.state ?? null;
@@ -436,6 +491,26 @@ async function icons() {
   return iconIndex;
 }
 
+// What runs here (Herdr app, TUI, hc) and the herdr-monitor servers on the
+// tailnet, for the Android app's server picker. Each cached 60 s.
+let infoCache = null, discoverCache = null;
+async function info() {
+  if (!infoCache || Date.now() - infoCache.at > 60000) infoCache = { at: Date.now(), value: { app: 'herdr-monitor', host: tailnetName, herdr: await herdrInfo({ hcBin: HC_BIN }) } };
+  return infoCache.value;
+}
+function tailscaleStatus() {
+  return new Promise((resolve) => execFile('tailscale', ['status', '--json'], { timeout: 5000, maxBuffer: 8 * 1024 * 1024 }, (err, out) => {
+    try { resolve(err ? null : JSON.parse(out)); } catch { resolve(null); }
+  }));
+}
+async function discovered(ports = []) {
+  const key = ports.slice().sort().join(',');
+  if (!discoverCache || discoverCache.key !== key || Date.now() - discoverCache.at > 60000) {
+    discoverCache = { at: Date.now(), key, value: await discover({ status: await tailscaleStatus(), port: HTTPS_PORT, ports, self: await info() }) };
+  }
+  return discoverCache.value;
+}
+
 export const isDialogKey = (k) => typeof k === 'string' && /^(up|down|left|right|tab|shift\+tab|space|enter|esc|backspace|[a-z0-9])$/.test(k);
 
 const routes = [
@@ -453,6 +528,11 @@ const routes = [
   }],
   ['GET', /^\/api\/sidebar$/, (req, res) => send(res, 200, { spaces: layout })],
   ['GET', /^\/api\/overview$/, async (req, res, m, url) => send(res, 200, await overview({ fresh: url.searchParams.has('fresh') }))],
+  ['GET', /^\/api\/info$/, async (req, res) => send(res, 200, await info())],
+  ['GET', /^\/api\/discover$/, async (req, res, m, url) => {
+    const ports = (url.searchParams.get('ports') || '').split(',').map(Number).filter((n) => Number.isInteger(n) && n > 0 && n < 65536).slice(0, 3);
+    send(res, 200, await discovered(ports));
+  }],
   ['GET', /^\/api\/health$/, (req, res) => send(res, 200, { ok: true, connected, socket: SOCKET, terminals: terminals.size })],
   ['GET', /^\/api\/terminals$/, (req, res) => send(res, 200, snapshot())],
   ['GET', /^\/api\/events$/, (req, res) => {
@@ -461,6 +541,14 @@ const routes = [
     clients.add(res);
     const ping = setInterval(() => res.write(': ping\n\n'), 25000);
     req.on('close', () => { clearInterval(ping); clients.delete(res); });
+  }],
+  ['GET', /^\/api\/agents\/stream$/, (req, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
+    syncAgents(); // the clients already here get any pending change first
+    res.write(sseFrame('snapshot', { connected, agents: AgentFeed.snapshot(terminals.values(), nameOf) }));
+    agentClients.add(res);
+    const ping = setInterval(() => res.write(': ping\n\n'), 25000);
+    req.on('close', () => { clearInterval(ping); agentClients.delete(res); });
   }],
   ['GET', /^\/api\/terminals\/([^/]+)\/attach$/, (req, res, [addr]) => {
     const t = terminalOr404(res, addr); if (!t) return;
@@ -504,6 +592,15 @@ const routes = [
   ['POST', /^\/api\/push\/test$/, async (req, res) => {
     const results = await notifyAll({ title: 'Herdr Monitor', body: 'Notifications work.', tag: 'test', url: '/' });
     send(res, 200, { sent: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).map((r) => r.status || r.error?.message) });
+  }],
+  // Start one coding agent (claude or omp) in a space's folder, with the
+  // prompt as its task. The space must be in the layout; the client never
+  // sends a path or an argv (lib/sessions.js).
+  ['POST', /^\/api\/sessions$/, async (req, res) => {
+    const r = sessionRequest(await readJson(req), layout);
+    if (!r.ok) return send(res, r.status, { error: r.error });
+    const t = await rpc.call('terminal.run', r.params);
+    send(res, 200, { address: t.address, name: t.name ?? r.params.name });
   }],
   ['POST', /^\/api\/terminals\/([^/]+)\/send$/, async (req, res, [addr]) => {
     if (!terminalOr404(res, addr)) return;
@@ -597,4 +694,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   server.listen(PORT, HOST, () => console.log(`herdr-monitor on http://${HOST}:${PORT}`));
   start();
   setInterval(() => { if (connected) refreshLayout(); }, 60000); // cwd and branch drift
+  loadMachines(); setInterval(loadMachines, 300000);
+  setInterval(() => { if (connected) scanApps(); }, 30000);
 }

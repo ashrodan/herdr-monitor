@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="360dp"
+    android:height="260dp"
+    android:viewportWidth="360"
+    android:viewportHeight="260">
+    <path
+        android:pathData="M0,0 H360 V260 H0 Z"
+        android:fillColor="@color/herdr_night_deep" />
+    <path
+        android:pathData="M0,198 H360 V260 H0 Z"
+        android:fillColor="@color/herdr_ground" />
+    <path
+        android:pathData="M214,52 a18,18 0 1,0 36,0 a18,18 0 1,0 -36,0 Z"
+        android:fillColor="@color/herdr_wool"
+        android:fillAlpha="0.45" />
+    <path
+        android:pathData="M210,62 A40,14 0 1,0 290,62 A40,14 0 1,0 210,62 Z"
+        android:fillColor="@color/herdr_cloud" />
+    <path
+        android:pathData="M204,54 A22,14 0 1,0 248,54 A22,14 0 1,0 204,54 Z"
+        android:fillColor="@color/herdr_cloud" />
+    <path
+        android:pathData="M242,48 A20,13 0 1,0 282,48 A20,13 0 1,0 242,48 Z"
+        android:fillColor="@color/herdr_cloud" />
+    <path
+        android:pathData="M80,40 A30,9 0 1,0 140,40 A30,9 0 1,0 80,40 Z"
+        android:fillColor="@color/herdr_cloud" />
+    <path
+        android:pathData="M80,34 A16,9 0 1,0 112,34 A16,9 0 1,0 80,34 Z"
+        android:fillColor="@color/herdr_cloud" />
+    <path
+        android:pathData="M14 138 H208 M14 162 H208 M294 138 H346 M294 162 H346"
+        android:strokeColor="@color/herdr_wood_dim"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:pathData="M14,126 H16 A2,2 0 0,1 18,128 V204 A2,2 0 0,1 16,206 H14 A2,2 0 0,1 12,204 V128 A2,2 0 0,1 14,126 Z"
+        android:fillColor="@color/herdr_wood_dim" />
+    <path
+        android:pathData="M106,126 H108 A2,2 0 0,1 110,128 V204 A2,2 0 0,1 108,206 H106 A2,2 0 0,1 104,204 V128 A2,2 0 0,1 106,126 Z"
+        android:fillColor="@color/herdr_wood_dim" />
+    <path
+        android:pathData="M344,126 H346 A2,2 0 0,1 348,128 V204 A2,2 0 0,1 346,206 H344 A2,2 0 0,1 342,204 V128 A2,2 0 0,1 344,126 Z"
+        android:fillColor="@color/herdr_wood_dim" />
+    <path
+        android:pathData="M215 142 H285 M215 158 H285 M215 174 H285 M217 174 L283 142"
+        android:strokeColor="@color/herdr_wood"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:pathData="M209,120 H213 A2,2 0 0,1 215,122 V204 A2,2 0 0,1 213,206 H209 A2,2 0 0,1 207,204 V122 A2,2 0 0,1 209,120 Z"
+        android:fillColor="@color/herdr_wood_dim" />
+    <path
+        android:pathData="M289,120 H293 A2,2 0 0,1 295,122 V204 A2,2 0 0,1 293,206 H289 A2,2 0 0,1 287,204 V122 A2,2 0 0,1 289,120 Z"
+        android:fillColor="@color/herdr_wood_dim" />
+    <group android:translateX="58" android:translateY="168">
+        <path
+            android:pathData="M22 37 C11 35 9 27 17 25 C19 31 25 33 30 33 Z"
+            android:fillColor="@color/herdr_coat" />
+        <path
+            android:pathData="M21,35 A34,11 0 1,0 89,35 A34,11 0 1,0 21,35 Z"
+            android:fillColor="@color/herdr_coat" />
+        <path
+            android:pathData="M78,44 A15,4 0 1,0 108,44 A15,4 0 1,0 78,44 Z"
+            android:fillColor="@color/herdr_white" />
+        <path
+            android:pathData="M84 15 L88 6 L94 15 Z"
+            android:fillColor="@color/herdr_coat" />
+        <path
+            android:pathData="M80,26 a11,11 0 1,0 22,0 a11,11 0 1,0 -22,0 Z"
+            android:fillColor="@color/herdr_coat" />
+        <path
+            android:pathData="M93.5,31 A8.5,5 0 1,0 110.5,31 A8.5,5 0 1,0 93.5,31 Z"
+            android:fillColor="@color/herdr_white" />
+        <path
+            android:pathData="M106.8,30 a2.2,2.2 0 1,0 4.4,0 a2.2,2.2 0 1,0 -4.4,0 Z"
+            android:fillColor="@color/herdr_coat" />
+        <path
+            android:pathData="M86 24 q2.4 2.2 4.8 0"
+            android:strokeColor="@color/herdr_white"
+            android:strokeWidth="1.5"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+    </group>
+    <path
+        android:pathData="M150 98 a14 14 0 0 1 20 0 M144 91 a22 22 0 0 1 32 0 M142 106 L178 84"
+        android:strokeColor="@color/herdr_grey"
+        android:strokeWidth="2.4"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:pathData="M157.4,105 a2.6,2.6 0 1,0 5.2,0 a2.6,2.6 0 1,0 -5.2,0 Z"
+        android:fillColor="@color/herdr_grey" />
+</vector>
