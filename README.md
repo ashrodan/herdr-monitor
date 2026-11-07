@@ -59,10 +59,28 @@ A native Android app (Kotlin, Jetpack Compose) in [`android/`](android/). It
 talks to this server over its HTTP API. It does not show the web UI in a
 WebView.
 
-- **Screens**: Home (Waiting, Done, Working and PR counts; agents by state;
-  spaces; open PRs), a space (its tabs and terminals), and an agent (Chat,
-  Text, Commits, Status, and a box to reply, attach an image, press dialog
-  keys or stop the agent).
+- **Home**: an inbox of sessions (agents), in sections: **Needs you**
+  (waiting at a question, or failed), **Working**, **Ready to review**, and
+  one collapsed **Idle** row. Filter chips above the list show the count of
+  each section. A waiting card shows the question and up to three answer
+  buttons. Each card shows the space colour, the status, the name, the task
+  and the agent's last sentences. A session with no output for 30 minutes
+  shows how long it has been quiet. **Ask Herdr** filters the list on the
+  phone; it sends nothing. Long-press a card to pin it, stop it, open its
+  terminal text or copy its branch. The bottom bar has **Sessions**, **PRs**
+  and **Spaces**. The avatar at the top right shows the server and its link
+  state.
+- **New session**: the button on Home. Pick a space and a harness (Claude
+  Code or omp) and type the task. The server starts the agent in that
+  space's folder (`POST /api/sessions`) and the app opens it.
+- **Agent**: Chat, Text, Commits and Status, and a box to reply, attach an
+  image, press dialog keys or stop the agent.
+- **Offline replies**: a reply that you send with no link to the server goes
+  into a queue on the phone. It shows in Chat as "queued". The app sends it
+  when the link comes back, in order, per agent. You can delete a queued
+  reply before it goes.
+- **Look**: Material 3 Expressive, dark by default. Settings has Dark, Light
+  or System, and an option for wallpaper colours.
 - **Alerts**: a notification when an agent needs you, is done, or hits an
   error. It goes away when the agent moves on, for example when you answer
   it on the Mac. There is one notification per agent.
@@ -71,7 +89,7 @@ WebView.
   row to open that agent (or the PR). Tap anywhere else to open the app.
 - **Settings**: the server URL, **Find on tailnet** (lists the herdr-monitor
   servers on your tailnet, with each one's Herdr app, Herdr TUI and hc
-  versions), and the background-alerts switch.
+  versions), the background-alerts switch and the look.
 
 The phone must be on Tailscale, on the same tailnet as the Mac. No Google
 account, Firebase or push service is used: while alerts are on, the app keeps
@@ -80,12 +98,13 @@ monitor connected" notification.
 
 ### Build and install
 
-You need the Android SDK (`ANDROID_HOME`) and JDK 17 or later. Android
-Studio is not needed.
+The app needs Android 12 or later. To build it, you need the Android SDK
+(`ANDROID_HOME`) and JDK 17 or later. Android Studio is not needed.
 
     cd android
     ./gradlew assembleDebug         # app/build/outputs/apk/debug/app-debug.apk
     ./gradlew test lint             # unit tests and lint
+    ./gradlew connectedDebugAndroidTest   # UI tests (an emulator or a phone)
 
 Install it with a USB cable (USB debugging on):
 
@@ -160,6 +179,10 @@ not from this repo.
   the dialog with `force`. Otherwise `terminal.send` is called
   without `force`, so hc refuses to type into an agent that just became
   blocked.
+- `POST /api/sessions` (New session) starts only `claude` or `omp`, in the
+  folder of a space that already exists. The client sends a space id, a
+  harness name and the task text. It cannot send a path or a command. The
+  task text goes to the agent as one argument, with no shell.
 
 ## How it works
 
