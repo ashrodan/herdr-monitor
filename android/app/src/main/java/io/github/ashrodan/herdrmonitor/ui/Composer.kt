@@ -98,6 +98,7 @@ fun Composer(
     kind: String?,
     working: Boolean,
     harness: String? = null,
+    contextActions: @Composable () -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val view = LocalView.current
@@ -169,6 +170,7 @@ fun Composer(
             if (notUploaded.isNotEmpty()) Text("${notUploaded.size} image${if (notUploaded.size == 1) "" else "s"} not uploaded · tap to try again",
                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error,
                 modifier = Modifier.clickable(enabled = !uploading) { notUploaded.toList().forEach(::upload) }.padding(4.dp))
+            contextActions()
             // One field (Attach inside, on the left) and one button. Field
             // empty while the agent runs: a red square Stop. Text in the
             // field: a round Send. Agent idle and field empty: Send, off.

@@ -143,6 +143,16 @@ fun spaceState(s: Space, terminals: Map<String, Terminal>, localSeen: Map<String
 
 private val SHELLS = setOf("zsh", "bash", "fish", "sh", "nu", "pwsh")
 fun Terminal.isAgent() = reported || agent !in SHELLS
+// Swipe pages are agent sessions only. App servers become launch actions
+// and raw shells stay in the session options menu.
+fun Space.agentAddresses(terminals: Map<String, Terminal>): List<String> = buildList {
+    val seen = HashSet<String>()
+    for (tab in tabs) for (address in tab.terminals) {
+        val terminal = terminals[address] ?: continue
+        if (seen.add(address) && terminal.isAgent() && !terminal.isApp()) add(address)
+    }
+}
+
 
 fun age(ms: Long?, now: Long = System.currentTimeMillis()): String {
     if (ms == null || ms == 0L) return ""

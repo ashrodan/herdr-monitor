@@ -76,6 +76,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
@@ -98,6 +99,7 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -131,13 +133,17 @@ import io.github.ashrodan.herdrmonitor.CommitDetail
 import io.github.ashrodan.herdrmonitor.Commits
 import io.github.ashrodan.herdrmonitor.Json
 import io.github.ashrodan.herdrmonitor.Live
+import io.github.ashrodan.herdrmonitor.Terminal
 import io.github.ashrodan.herdrmonitor.Message
 import io.github.ashrodan.herdrmonitor.Notifier
 import io.github.ashrodan.herdrmonitor.Part
 import io.github.ashrodan.herdrmonitor.PrStatus
 import io.github.ashrodan.herdrmonitor.age
 import io.github.ashrodan.herdrmonitor.app
+import io.github.ashrodan.herdrmonitor.appUrl
 import io.github.ashrodan.herdrmonitor.displayName
+import io.github.ashrodan.herdrmonitor.isAgent
+import io.github.ashrodan.herdrmonitor.isApp
 import io.github.ashrodan.herdrmonitor.lastUnansweredAsk
 import io.github.ashrodan.herdrmonitor.shape
 import io.github.ashrodan.herdrmonitor.shortPath
@@ -147,24 +153,45 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private suspend fun <T> io(block: () -> T): Result<T> = withContext(Dispatchers.IO) { runCatching(block) }
+private val STATE_WORD = mapOf(
+    "blocked" to "Needs you",
+    "error" to "Failed",
+    "done" to "Done",
+    "working" to "Working",
+    "idle" to "Idle",
+    "finished" to "Finished",
+)
+
+
+private enum class SessionPanel { Terminal, Commits, Status }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AgentScreen(live: Live, address: String, back: () -> Unit, initialTab: Int = 0, showBack: Boolean = true) {
+fun AgentScreen(
+    live: Live,
+    address: String,
+    back: () -> Unit,
+    showBack: Boolean = true,
+    showTerminalOnOpen: Boolean = false,
+    pageIndex: Int? = null,
+    pageCount: Int = 1,
+    active: Boolean = true,
+) {
     val ctx = LocalContext.current
     val api = remember(live) { ctx.app.store.api }
     val port = remember(api) { ApiPort(api) }
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboard.current
     val outboxAll by ctx.app.outbox.items.collectAsStateWithLifecycle()
-    val queued = outboxAll.filter { it.address == address }
+    val queued = remember(outboxAll, address) { outboxAll.filter { it.address == address } }
     val t = live.terminals[address]
     val now = rememberNow()
-    var tab by remember { mutableIntStateOf(initialTab) }
     var menu by remember { mutableStateOf(false) }
+    var panel by rememberSaveable(address, showTerminalOnOpen) {
+        mutableStateOf(if (showTerminalOnOpen) SessionPanel.Terminal else null)
+    }
+    var rawAddress by rememberSaveable(address) { mutableStateOf(address) }
 
-    // Commits load once here: the Changes tab shows them, and its pill
-    // shows the changed-file count.
     var commits by remember(address) { mutableStateOf<Commits?>(null) }
     var commitsErr by remember(address) { mutableStateOf<String?>(null) }
     val loadCommits = { fresh: Boolean ->
@@ -173,11 +200,12 @@ fun AgentScreen(live: Live, address: String, back: () -> Unit, initialTab: Int =
                 .onSuccess { commits = it; commitsErr = null }.onFailure { commitsErr = it.message }
         }
     }
-    LaunchedEffect(address, api.base) { loadCommits(false) }
+    LaunchedEffect(address, api.base, active, live.link) { if (active && live.link == Link.Online) loadCommits(false) }
 
-    // Opening a finished agent counts as seeing it (as in the web UI), and
-    // its alert goes.
-    LaunchedEffect(address, t?.status) {
+    // Pager prefetch must not clear a notification for a session that the
+    // user has not swiped to.
+    LaunchedEffect(address, t?.status, active) {
+        if (!active) return@LaunchedEffect
         if (t?.status == "done") ctx.app.prefs.markSeen(address)
         Notifier.cancelAgent(ctx, address)
         ctx.app.prefs.markOpened(address)
@@ -190,6 +218,31 @@ fun AgentScreen(live: Live, address: String, back: () -> Unit, initialTab: Int =
     val name = t?.let { dedupName(displayName(it, live.spaces)) } ?: address
     val branch = where?.space?.branch ?: commits?.branch
     val pr = where?.space?.let { s -> live.prs.firstOrNull { it.space == s.id } }?.pr ?: commits?.pr
+    val companions = remember(address, live.terminals, live.spaces) {
+        val space = live.terminals[address]?.let { whereOf(it, live.spaces).space }
+        space?.tabs?.flatMap { it.terminals }?.distinct()?.mapNotNull(live.terminals::get).orEmpty()
+    }
+    val apps = remember(companions) { companions.filter { it.isApp() && !it.finished } }
+    val shells = remember(companions, address) {
+        companions.filter { it.address != address && !it.isApp() && !it.isAgent() && !it.finished }
+    }
+    val contextActions: @Composable () -> Unit = {
+        SessionPills(
+            sessionAddress = address,
+            commits = commits,
+            prNumber = pr?.number,
+            onPr = pr?.url?.let { url -> { openUrl(ctx, url); Unit } },
+            apps = apps,
+            serverUrl = ctx.app.prefs.server,
+            onCommits = { panel = SessionPanel.Commits },
+            onStatus = { panel = SessionPanel.Status },
+        )
+    }
+    val share = {
+        val body = listOfNotNull(name, branch, pr?.url).joinToString("\n")
+        ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, body), null))
+    }
+
     Scaffold(contentWindowInsets = WindowInsets(0), topBar = {
         Column(Modifier.statusBarsPadding()) {
             Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -197,8 +250,6 @@ fun AgentScreen(live: Live, address: String, back: () -> Unit, initialTab: Int =
                 else Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f).padding(start = 4.dp)) {
                     Text(name, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    // "Working · MNT-1 · omp · 8:06": the time is how long the
-                    // agent has been in this state.
                     val bits = listOfNotNull(
                         STATE_WORD[rawState] ?: rawState,
                         ticketOf(name) ?: where?.space?.name?.let { ticketOf(it) ?: it }
@@ -212,36 +263,52 @@ fun AgentScreen(live: Live, address: String, back: () -> Unit, initialTab: Int =
                             color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
-                IconButton(onClick = {
-                    val body = listOfNotNull(name, branch, pr?.url).joinToString("\n")
-                    ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, body), null))
-                }) { Icon(Icons.Default.Share, "Share") }
                 Box {
-                    IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "More") }
+                    IconButton(onClick = { menu = true }, modifier = Modifier.testTag("session-options-$address")) {
+                        Icon(Icons.Default.MoreVert, "Session options")
+                    }
                     DropdownMenu(menu, { menu = false }) {
                         if (t != null && (working || blocked) && live.link == Link.Online) DropdownMenuItem({ Text("Stop") }, {
                             menu = false
                             scope.launch { io { api.interrupt(address) } }
                         })
-                        DropdownMenuItem({ Text("Open terminal") }, { menu = false; tab = 1 })
+                        DropdownMenuItem({ Text("Raw terminal") }, {
+                            menu = false
+                            rawAddress = address
+                            panel = SessionPanel.Terminal
+                        })
+                        shells.forEach { shell ->
+                            DropdownMenuItem({ Text("Shell · ${shell.name ?: shell.agent}") }, {
+                                menu = false
+                                rawAddress = shell.address
+                                panel = SessionPanel.Terminal
+                            })
+                        }
                         branch?.let { b ->
                             DropdownMenuItem({ Text("Copy branch") }, {
                                 menu = false
                                 scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("branch", b))) }
                             })
                         }
+                        DropdownMenuItem({ Text("Share") }, { menu = false; share() })
                     }
                 }
             }
-            if (t != null) PillTabs(tab, { tab = it }, changes = commits?.dirty ?: 0)
+            if (pageIndex != null && pageCount > 1) {
+                Text("Swipe sessions · ${pageIndex + 1} of $pageCount", Modifier.fillMaxWidth().padding(bottom = 6.dp)
+                    .testTag("space-page-indicator"), textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         }
     }, bottomBar = {
-        // Offline, an agent the app has not heard of yet (a cold start) still
-        // takes replies: they wait in the outbox.
         val offline = live.link != Link.Online
-        if (t != null && !t.finished) Composer(port, ctx.app.outbox, address, online = !offline, blocked, t.kind, working = working, harness = t.agent)
-        else if (t == null && offline) Composer(port, ctx.app.outbox, address, online = false, blocked = false, kind = null, working = false)
+        when {
+            t != null && !t.finished -> Composer(port, ctx.app.outbox, address, online = !offline, blocked, t.kind,
+                working = working, harness = t.agent, contextActions = contextActions)
+            t == null && offline -> Composer(port, ctx.app.outbox, address, online = false, blocked = false, kind = null, working = false)
+            t != null -> SessionActionsBar(contextActions)
+        }
     }) { pad ->
         Column(Modifier.fillMaxSize().padding(pad)) {
             ConnectionLine(live)
@@ -250,39 +317,66 @@ fun AgentScreen(live: Live, address: String, back: () -> Unit, initialTab: Int =
                 else Text("This terminal is gone.", Modifier.padding(16.dp))
                 return@Column
             }
-            when (tab) {
-                0 -> ChatTab(api, address, blocked, working, t.agent, queued)
-                1 -> TextTab(api, address)
-                2 -> CommitsTab(api, address, commits, commitsErr) { loadCommits(true) }
-                else -> StatusTab(api, address)
+            ChatTab(api, address, blocked, working, t.agent, queued, active && live.link == Link.Online)
+        }
+    }
+
+    panel?.let { selected ->
+        ModalBottomSheet(onDismissRequest = { panel = null }) {
+            Column(Modifier.fillMaxWidth().fillMaxHeight(0.86f)) {
+                Text(when (selected) {
+                    SessionPanel.Terminal -> "Raw terminal"
+                    SessionPanel.Commits -> "Commits"
+                    SessionPanel.Status -> "Status"
+                }, Modifier.padding(horizontal = 24.dp, vertical = 12.dp), style = MaterialTheme.typography.titleMedium)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Box(Modifier.fillMaxWidth().weight(1f)) {
+                    when (selected) {
+                        SessionPanel.Terminal -> TextTab(api, rawAddress)
+                        SessionPanel.Commits -> CommitsTab(api, address, commits, commitsErr) { loadCommits(true) }
+                        SessionPanel.Status -> StatusTab(api, address)
+                    }
+                }
             }
         }
     }
 }
 
-private val STATE_WORD = mapOf("blocked" to "Needs you", "error" to "Failed", "done" to "Ready", "working" to "Working", "idle" to "Idle", "finished" to "Finished")
-private val TABS = listOf("Chat", "Terminal", "Changes", "Status")
-
-// Pill tabs: the selected one on secondaryContainer. Changes shows the
-// changed-file count when there is one.
 @Composable
-private fun PillTabs(selected: Int, onSelect: (Int) -> Unit, changes: Int) {
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 10.dp)
-        .selectableGroup(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        TABS.forEachIndexed { i, label ->
-            val on = i == selected
-            // 32dp pill, 48dp touch target.
-            Row(Modifier.selectable(on, role = Role.Tab) { onSelect(i) }.minimumInteractiveComponentSize().heightIn(min = 32.dp).clip(RoundedCornerShape(16.dp))
-                .background(if (on) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent).padding(horizontal = 14.dp),
-                verticalAlignment = Alignment.CenterVertically) {
-                Text(label, style = MaterialTheme.typography.labelLarge,
-                    color = if (on) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
-                if (i == 2 && changes > 0) {
-                    Spacer(Modifier.width(6.dp))
-                    Text("$changes", Modifier.clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest)
-                        .padding(horizontal = 6.dp, vertical = 1.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurface)
-                }
-            }
+private fun SessionPills(
+    sessionAddress: String,
+    commits: Commits?,
+    prNumber: Int?,
+    onPr: (() -> Unit)?,
+    apps: List<Terminal>,
+    serverUrl: String,
+    onCommits: () -> Unit,
+    onStatus: () -> Unit,
+) {
+    val ctx = LocalContext.current
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (prNumber != null && onPr != null) AssistChip(onClick = onPr,
+            label = { Text("PR #$prNumber") }, modifier = Modifier.testTag("session-pill-pr-$sessionAddress"))
+        val commitCount = commits?.commits?.size
+        AssistChip(onClick = onCommits, label = { Text(if (commitCount == null) "Commits" else "Commits $commitCount") },
+            modifier = Modifier.testTag("session-pill-commits-$sessionAddress"))
+        AssistChip(onClick = onStatus, label = { Text("Status") }, modifier = Modifier.testTag("session-pill-status-$sessionAddress"))
+        apps.forEach { app ->
+            val url = appUrl(app, serverUrl)
+            val label = app.name?.takeIf(String::isNotBlank) ?: "Server"
+            AssistChip(onClick = { if (url != null) openUrl(ctx, url) }, enabled = url != null,
+                label = { Text("$label :${app.listen?.port}") },
+                modifier = Modifier.testTag("session-pill-server-$sessionAddress-${app.address}"))
+        }
+    }
+}
+
+@Composable
+private fun SessionActionsBar(actions: @Composable () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.surface) {
+        Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 4.dp)) {
+            actions()
         }
     }
 }
@@ -290,13 +384,14 @@ private fun PillTabs(selected: Int, onSelect: (Int) -> Unit, changes: Int) {
 // ---- Chat: prose first, activity folded ----
 
 @Composable
-private fun ChatTab(api: Api, address: String, blocked: Boolean, working: Boolean, agent: String, queued: List<OutItem>) {
+private fun ChatTab(api: Api, address: String, blocked: Boolean, working: Boolean, agent: String, queued: List<OutItem>, active: Boolean) {
     val ctx = LocalContext.current
     // The last transcript read for this agent shows at once; the loop
     // below brings it up to date.
     var chat by remember(address) { mutableStateOf(ctx.app.chats.get(api.base, address)) }
     var err by remember(address) { mutableStateOf<String?>(null) }
-    LaunchedEffect(address, api.base) {
+    LaunchedEffect(address, api.base, active) {
+        if (!active) return@LaunchedEffect
         while (true) {
             io { api.chat(address, chat?.version) }
                 .onSuccess { c -> if (c != null) { chat = c; ctx.app.chats.put(api.base, address, c); ctx.app.outbox.dropDelivered(address, userTexts(c.messages)) }; err = null }
@@ -308,7 +403,7 @@ private fun ChatTab(api: Api, address: String, blocked: Boolean, working: Boolea
     when {
         c == null && err != null -> NoChat("Could not read the transcript: $err", queued, error = true)
         c == null -> if (queued.isEmpty()) SkeletonChat() else NoChat("Loading the conversation…", queued)
-        !c.available -> NoChat("${c.reason ?: "No transcript."} Use Terminal.", queued)
+        !c.available -> NoChat("${c.reason ?: "No transcript."} Open Raw terminal from Session options.", queued)
         else -> {
             val list = rememberLazyListState()
             // The first transcript folds here (no blank frame); later ones
