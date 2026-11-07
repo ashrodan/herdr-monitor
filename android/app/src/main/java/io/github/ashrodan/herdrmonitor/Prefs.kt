@@ -45,6 +45,13 @@ class Prefs(context: Context) {
         get() = readMap("posted").mapValues { it.value.toString() }
         set(v) = writeMap("posted", v)
 
+    // Replies waiting to be sent (Outbox), as JSON.
+    val outboxStorage = object : OutboxStorage {
+        override fun load(): String? = p.getString("outbox", null)
+        // commit, not apply: the queue must be on disk before the process can die.
+        override fun save(json: String) { p.edit().putString("outbox", json).commit() }
+    }
+
     // The widget's data, as the service last wrote it.
     var widgetJson: String?
         get() = p.getString("widget", null)

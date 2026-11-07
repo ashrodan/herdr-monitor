@@ -1,5 +1,9 @@
 package io.github.ashrodan.herdrmonitor.ui
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.github.ashrodan.herdrmonitor.userTexts
+import io.github.ashrodan.herdrmonitor.Link
+import io.github.ashrodan.herdrmonitor.OutItem
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -104,6 +108,9 @@ private suspend fun <T> io(block: () -> T): Result<T> = withContext(Dispatchers.
 fun AgentScreen(live: Live, address: String, back: () -> Unit) {
     val ctx = LocalContext.current
     val api = remember(live) { ctx.app.store.api }
+    val port = remember(api) { ApiPort(api) }
+    val outboxAll by ctx.app.outbox.items.collectAsStateWithLifecycle()
+    val queued = outboxAll.filter { it.address == address }
     val t = live.terminals[address]
     val now = rememberNow()
     var tab by remember { mutableIntStateOf(0) }
@@ -132,7 +139,7 @@ fun AgentScreen(live: Live, address: String, back: () -> Unit) {
             navigationIcon = { IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
         )
     }, bottomBar = {
-        if (t != null && !t.finished) Composer(api, address, blocked, t.kind, working = t.status == "working")
+        if (t != null && !t.finished) Composer(port, ctx.app.outbox, address, online = live.link == Link.Online, blocked, t.kind, working = t.status == "working")
     }) { pad ->
         Column(Modifier.fillMaxSize().padding(pad)) {
             ConnectionLine(live)
@@ -141,7 +148,7 @@ fun AgentScreen(live: Live, address: String, back: () -> Unit) {
                 listOf("Chat", "Text", "Commits", "Status").forEachIndexed { i, s -> Tab(selected = tab == i, onClick = { tab = i }, text = { Text(s) }) }
             }
             when (tab) {
-                0 -> ChatTab(api, address, blocked, working = t.status == "working")
+                0 -> ChatTab(api, address, blocked, working = t.status == "working", queued)
                 1 -> TextTab(api, address)
                 2 -> CommitsTab(api, address)
                 else -> StatusTab(api, address)
@@ -154,32 +161,34 @@ fun AgentScreen(live: Live, address: String, back: () -> Unit) {
 // ---- Chat ----
 
 @Composable
-private fun ChatTab(api: Api, address: String, blocked: Boolean, working: Boolean) {
+private fun ChatTab(api: Api, address: String, blocked: Boolean, working: Boolean, queued: List<OutItem>) {
+    val ctx = LocalContext.current
     var chat by remember(address) { mutableStateOf<Chat?>(null) }
     var err by remember(address) { mutableStateOf<String?>(null) }
     LaunchedEffect(address, api.base) {
         while (true) {
             io { api.chat(address, chat?.version) }
-                .onSuccess { c -> if (c != null) chat = c; err = null }
+                .onSuccess { c -> if (c != null) { chat = c; ctx.app.outbox.dropDelivered(address, userTexts(c.messages)) }; err = null }
                 .onFailure { err = it.message }
             delay(if (working || blocked) 2500 else 6000)
         }
     }
     val c = chat
     when {
-        c == null && err != null -> Text("Could not read the transcript: $err", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error)
-        c == null -> Text("Loading the conversation…", Modifier.padding(16.dp))
-        !c.available -> Text("${c.reason ?: "No transcript."} Use Text.", Modifier.padding(16.dp))
+        c == null && err != null -> NoChat("Could not read the transcript: $err", queued, error = true)
+        c == null -> NoChat("Loading the conversation…", queued)
+        !c.available -> NoChat("${c.reason ?: "No transcript."} Use Text.", queued)
         else -> {
             val list = rememberLazyListState()
             val waitingOn = if (blocked) lastUnansweredAsk(c.messages) else null
-            LaunchedEffect(c.messages.size) { if (c.messages.isNotEmpty()) list.scrollToItem(c.messages.size - 1) }
+            LaunchedEffect(c.messages.size, queued.size) { list.layoutInfo.totalItemsCount.takeIf { it > 0 }?.let { list.scrollToItem(it - 1) } }
             LazyColumn(Modifier.fillMaxSize(), state = list, verticalArrangement = Arrangement.spacedBy(10.dp),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp)) {
                 if (c.truncated) item { Text("Older messages are not shown (long transcript).", style = MaterialTheme.typography.labelSmall) }
                 if (c.messages.isEmpty()) item { Text("No messages yet.") }
                 items(c.messages, key = { it.id.ifEmpty { it.hashCode().toString() } }) { m -> MessageView(m, api, address, waitingOn) }
                 if (working) item { Text("Working…", color = stateColor("working"), style = MaterialTheme.typography.labelMedium) }
+                if (queued.isNotEmpty()) item(key = "outbox") { QueuedReplies(queued) { ctx.app.outbox.remove(it.id) } }
             }
         }
     }
@@ -437,70 +446,13 @@ private fun StatusTab(api: Api, address: String) {
     }
 }
 
-// ---- Composer ----
-
-private val DIALOG_KEYS = listOf("up" to "↑", "down" to "↓", "enter" to "⏎", "esc" to "Esc", "tab" to "Tab", "1" to "1", "2" to "2", "3" to "3")
-
+// No transcript to show (offline, loading, or none): the note, then any
+// replies waiting in the outbox.
 @Composable
-private fun Composer(api: Api, address: String, blocked: Boolean, kind: String?, working: Boolean) {
+private fun NoChat(text: String, queued: List<OutItem>, error: Boolean = false) {
     val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var text by remember(address) { mutableStateOf("") }
-    var note by remember { mutableStateOf<String?>(null) }
-    var sending by remember { mutableStateOf(false) }
-    val images = remember(address) { mutableStateListOf<String>() } // uploaded paths
-    var uploading by remember { mutableStateOf(false) }
-    LaunchedEffect(note) { if (note != null && !note!!.startsWith("Not")) { delay(2500); note = null } }
-
-    val pick = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        uploading = true
-        scope.launch {
-            io {
-                val type = ctx.contentResolver.getType(uri) ?: "application/octet-stream"
-                val bytes = ctx.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
-                api.upload(address, bytes, type)
-            }.onSuccess { images.add(it) }.onFailure { note = "Not uploaded: ${it.message}" }
-            uploading = false
-        }
-    }
-    fun send() {
-        val full = (listOf(text.trim()) + images).filter { it.isNotBlank() }.joinToString(" ")
-        if (full.isBlank() || sending || uploading) return
-        sending = true
-        scope.launch {
-            // At a dialog, force: the text goes to the dialog (e.g. an "Other" answer).
-            io { api.send(address, full, force = blocked) }
-                .onSuccess { text = ""; images.clear(); note = "Sent." }
-                .onFailure { note = "Not sent: ${it.message}" }
-            sending = false
-        }
-    }
-    fun keys(k: String) = scope.launch { io { api.keys(address, listOf(k)) }.onFailure { note = "Not sent: ${it.message}" } }
-    fun interrupt() = scope.launch { io { api.interrupt(address) }.onSuccess { note = "Stop key sent." }.onFailure { note = "Not sent: ${it.message}" } }
-
-    Surface(tonalElevation = 3.dp) {
-        Column(Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(8.dp)) {
-            val info = if (blocked) "Waiting at a ${kind ?: "dialog"}. Tap an answer in Chat, press keys, or type here." else null
-            (note ?: info)?.let {
-                Text(it, style = MaterialTheme.typography.labelSmall, color = if (it.startsWith("Not")) MaterialTheme.colorScheme.error else if (blocked && note == null) stateColor("blocked") else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
-            }
-            if (blocked) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                for ((k, label) in DIALOG_KEYS) AssistChip(onClick = { keys(k) }, label = { Text(label) })
-            }
-            if (images.isNotEmpty()) Text("${images.size} image${if (images.size == 1) "" else "s"} attached", style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier.clickable { images.clear() }.padding(4.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, enabled = !uploading) {
-                    Icon(Icons.Default.Add, "Attach an image")
-                }
-                OutlinedTextField(text, { text = it }, Modifier.weight(1f), placeholder = { Text(if (blocked) "Answer…" else "Reply…") }, maxLines = 6)
-                if (working || blocked) TextButton(onClick = { interrupt() }) { Text("Stop") }
-                IconButton(onClick = { send() }, enabled = !sending && !uploading && (text.isNotBlank() || images.isNotEmpty())) {
-                    Icon(Icons.AutoMirrored.Filled.Send, "Send")
-                }
-            }
-        }
+    Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(text, color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+        if (queued.isNotEmpty()) QueuedReplies(queued) { ctx.app.outbox.remove(it.id) }
     }
 }

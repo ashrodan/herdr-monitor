@@ -120,15 +120,21 @@ class AlertService : Service() {
                 list.forEach { agents[it.address] = it }
                 val addresses = prefs.posted.keys + agents.keys
                 for (a in addresses) apply(planAlert(a, prefs.posted[a], agents[a], prefs.localSeen, since))
+                app.serviceStates.clear()
+                list.forEach { app.serviceStates[it.address] = it.state }
+                // The link is up: send replies that waited in the outbox.
+                app.flushOutbox()
             }
             "agent" -> {
                 val a = Json.agent(o)
                 agents[a.address] = a
+                app.serviceStates[a.address] = a.state
                 apply(planAlert(a.address, prefs.posted[a.address], a, prefs.localSeen))
             }
             "removed" -> {
                 val a = o.optString("address")
                 agents.remove(a)
+                app.serviceStates.remove(a)
                 apply(planAlert(a, prefs.posted[a], null))
             }
             "connection" -> status(if (o.optBoolean("connected")) "Herdr monitor connected" else "Herdr monitor connected (Herdr is not running)")

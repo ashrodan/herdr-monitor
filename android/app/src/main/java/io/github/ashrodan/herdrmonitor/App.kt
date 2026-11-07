@@ -8,15 +8,41 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import io.github.ashrodan.herdrmonitor.ui.theme.ThemePref
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
 
 data class Look(val pref: ThemePref, val wallpaperColours: Boolean)
 
 class App : Application() {
     lateinit var prefs: Prefs
     lateinit var store: Store
+    lateinit var outbox: Outbox
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // Agent states the alert service last heard (address -> state). The app's
+    // own Store is stale while no screen is open.
+    val serviceStates = ConcurrentHashMap<String, String>()
     // The theme the screens draw with; Settings changes it.
     val look = MutableStateFlow(Look(ThemePref.Dark, false))
+
+    fun isBlocked(address: String): Boolean =
+        (serviceStates[address] ?: store.live.value.terminals[address]?.status) == "blocked"
+
+    // Send the outbox now (the alert service calls this when it connects).
+    // Outbox.flush ignores a call while one runs.
+    fun flushOutbox() {
+        if (outbox.items.value.isEmpty()) return
+        scope.launch {
+            val api = Api(prefs.server)
+            outbox.flush(::isBlocked) { item, force -> api.send(item.address, item.text, force) }
+        }
+    }
 
     fun setLook(l: Look) {
         prefs.theme = l.pref.name
@@ -30,6 +56,15 @@ class App : Application() {
         look.value = Look(ThemePref.of(prefs.theme), prefs.wallpaperColours)
         store = Store { prefs.server }
         Notifier.channels(this)
+        outbox = Outbox(prefs.outboxStorage)
+        // Flush when the app's link comes up, and every 15 s while replies wait.
+        scope.launch { store.live.map { it.link }.distinctUntilChanged().collect { if (it == Link.Online) flushOutbox() } }
+        scope.launch {
+            while (true) {
+                delay(15_000)
+                if (outbox.items.value.isNotEmpty()) flushOutbox()
+            }
+        }
     }
 }
 
