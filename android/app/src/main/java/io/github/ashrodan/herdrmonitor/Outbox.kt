@@ -50,6 +50,13 @@ enum class Failure {
     Retry,
 }
 
+// The outbox state for a first send that failed this way.
+fun stateAfter(f: Failure): String = when (f) {
+    Failure.Refused -> OutState.FAILED
+    Failure.MaybeSent -> OutState.UNCONFIRMED
+    Failure.Retry -> OutState.WAITING
+}
+
 fun failureOf(e: Throwable): Failure = when {
     e is MaybeSentException -> Failure.MaybeSent
     e is HttpError && e.code in 400..499 && e.code != 408 && e.code != 429 -> Failure.Refused
@@ -84,8 +91,8 @@ class Outbox(
 
     fun forAddress(server: String, address: String): List<OutItem> = _items.value.filter { it.server == server && it.address == address }
 
-    fun add(server: String, address: String, text: String, force: Boolean, error: String? = null): OutItem {
-        val item = OutItem(UUID.randomUUID().toString(), server, address, text, force, clock(), lastError = error)
+    fun add(server: String, address: String, text: String, force: Boolean, error: String? = null, state: String = OutState.WAITING): OutItem {
+        val item = OutItem(UUID.randomUUID().toString(), server, address, text, force, clock(), lastError = error, state = state)
         update { it + item }
         return item
     }
@@ -125,11 +132,7 @@ class Outbox(
                         if (e is CancellationException) throw e
                         val why = e.message ?: e.javaClass.simpleName
                         val attempts = head.attempts + 1
-                        val state = when (failureOf(e)) {
-                            Failure.Refused -> OutState.FAILED
-                            Failure.MaybeSent -> OutState.UNCONFIRMED
-                            Failure.Retry -> if (attempts >= MAX_ATTEMPTS) OutState.FAILED else OutState.WAITING
-                        }
+                        val state = stateAfter(failureOf(e)).let { if (it == OutState.WAITING && attempts >= MAX_ATTEMPTS) OutState.FAILED else it }
                         update { list -> list.map { if (it.id == head.id) it.copy(attempts = attempts, lastError = why, state = state) else it } }
                         if (state == OutState.WAITING) break
                         continue

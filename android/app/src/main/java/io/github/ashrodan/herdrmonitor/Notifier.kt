@@ -63,6 +63,7 @@ object Notifier {
         val i = Intent(c, ActionReceiver::class.java).apply {
             action = "io.github.ashrodan.herdrmonitor.$what"
             putExtra(ActionReceiver.EXTRA_ADDRESS, address)
+            putExtra(ActionReceiver.EXTRA_SERVER, c.app.prefs.server)
             extras()
         }
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or if (mutable) PendingIntent.FLAG_MUTABLE else PendingIntent.FLAG_IMMUTABLE
@@ -96,6 +97,7 @@ object Notifier {
     fun answerIntent(c: Context, address: String, shape: List<QuestionShape>, j: Int, label: String) = Intent(c, ActionReceiver::class.java).apply {
         action = "io.github.ashrodan.herdrmonitor.${ActionReceiver.ANSWER}.$j"
         putExtra(ActionReceiver.EXTRA_ADDRESS, address)
+        putExtra(ActionReceiver.EXTRA_SERVER, c.app.prefs.server)
         putExtra(ActionReceiver.EXTRA_SHAPE, shapeJson(shape))
         putExtra(ActionReceiver.EXTRA_OPTION, j)
         putExtra(ActionReceiver.EXTRA_LABEL, label)

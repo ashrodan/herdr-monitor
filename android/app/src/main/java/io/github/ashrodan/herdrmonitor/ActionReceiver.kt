@@ -6,8 +6,10 @@ import android.content.Context
 import android.content.Intent
 import kotlin.concurrent.thread
 
-// Notification actions -> the server. Android asks for an unlocked phone
+// Notification actions -> the server the notification came from (not the
+// one in use now, if the user switched). Android asks for an unlocked phone
 // first (setAuthenticationRequired). The HTTP call runs off the main thread.
+// A Reply that fails is kept in the outbox, so the text is not lost.
 class ActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val address = intent.getStringExtra(EXTRA_ADDRESS) ?: return
@@ -15,7 +17,10 @@ class ActionReceiver : BroadcastReceiver() {
         val pending = goAsync()
         val c = context.applicationContext
         thread(name = "herdr-action") {
-            val api = Api(c.app.prefs.server)
+            val server = intent.getStringExtra(EXTRA_SERVER) ?: c.app.prefs.server
+            val api = Api(server)
+            var reply: String? = null
+            val force = intent.getBooleanExtra(EXTRA_FORCE, false)
             val label = when {
                 what == REPLY -> "Reply"
                 what == INTERRUPT -> "Interrupt"
@@ -26,7 +31,8 @@ class ActionReceiver : BroadcastReceiver() {
                     what == REPLY -> {
                         val text = RemoteInput.getResultsFromIntent(intent)?.getCharSequence(Notifier.KEY_REPLY)?.toString()?.trim()
                         if (text.isNullOrEmpty()) throw IllegalArgumentException("empty reply")
-                        api.send(address, text, intent.getBooleanExtra(EXTRA_FORCE, false))
+                        reply = text
+                        api.send(address, text, force)
                     }
                     what == INTERRUPT -> api.interrupt(address)
                     what.startsWith(ANSWER) || intent.hasExtra(EXTRA_OPTION) -> {
@@ -41,7 +47,18 @@ class ActionReceiver : BroadcastReceiver() {
                 // Done: the alert goes (the stream says what happens next).
                 Notifier.cancelAgent(c, address)
             } catch (e: Exception) {
-                Notifier.postFailure(c, address, label, e.message ?: e.javaClass.simpleName)
+                val why = e.message ?: e.javaClass.simpleName
+                val text = reply
+                if (text != null) {
+                    // Retry: it goes later. Refused or unconfirmed: it waits
+                    // in the app for Send again or Delete.
+                    val f = failureOf(e)
+                    c.app.outbox.add(server, address, text, force, why, stateAfter(f))
+                    val where = if (f == Failure.Retry) "Queued in the app" else "Kept in the app"
+                    Notifier.postFailure(c, address, label, "$why. $where.")
+                } else {
+                    Notifier.postFailure(c, address, label, why)
+                }
             } finally {
                 pending.finish()
             }
@@ -50,6 +67,7 @@ class ActionReceiver : BroadcastReceiver() {
 
     companion object {
         const val EXTRA_ADDRESS = "address"
+        const val EXTRA_SERVER = "server"
         const val EXTRA_FORCE = "force"
         const val EXTRA_SHAPE = "shape"
         const val EXTRA_OPTION = "option"

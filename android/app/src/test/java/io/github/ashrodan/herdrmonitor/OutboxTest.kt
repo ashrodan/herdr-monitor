@@ -165,6 +165,17 @@ class OutboxTest {
         assertEquals(Failure.MaybeSent, failureOf(MaybeSentException(java.net.SocketTimeoutException("read timed out"))))
     }
 
+    @Test fun aFailedFirstSendGetsTheMatchingState() {
+        // A notification Reply that fails keeps its text in this state.
+        assertEquals(OutState.FAILED, stateAfter(Failure.Refused))
+        assertEquals(OutState.UNCONFIRMED, stateAfter(Failure.MaybeSent))
+        assertEquals(OutState.WAITING, stateAfter(Failure.Retry))
+        val b = box()
+        val i = b.add(S, "t1", "from a notification", true, "no such terminal", OutState.FAILED)
+        assertEquals(OutState.FAILED, i.state)
+        assertEquals(S, i.server)
+    }
+
     @Test fun aRefusedItemIsMarkedFailedAndDoesNotHoldBackTheNext() = runBlocking {
         val b = box()
         b.add(S, "t1", "refused", false)
