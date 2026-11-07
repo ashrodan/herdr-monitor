@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { cn } from '@/lib/utils';
-import { getJson } from '@/api';
+import { getJson, termPath } from '@/api';
 import { ago } from '@/model';
 import type { PrStatus } from '@/types';
 import { Msg } from './CommitsPane';
@@ -18,11 +18,11 @@ const dur = (a: string | null, b: string | null) => {
 export function StatusPane({ addr, data, onData }: { addr: string; data: PrStatus | null; onData: (d: PrStatus) => void }) {
   // Fresh on open; then every 20 s while a check is pending.
   useEffect(() => {
-    getJson<PrStatus>(`/api/terminals/${addr}/status?fresh`).then(onData).catch((e) => onData({ repo: null, pr: null, error: e.message }));
+    getJson<PrStatus>(termPath(addr, `status?fresh`)).then(onData).catch((e) => onData({ repo: null, pr: null, error: e.message }));
   }, [addr]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!data?.counts?.pending) return;
-    const id = setInterval(() => getJson<PrStatus>(`/api/terminals/${addr}/status?fresh`).then(onData).catch(() => {}), 20000);
+    const id = setInterval(() => getJson<PrStatus>(termPath(addr, `status?fresh`)).then(onData).catch(() => {}), 20000);
     return () => clearInterval(id);
   }, [addr, data?.counts?.pending]); // eslint-disable-line react-hooks/exhaustive-deps
 

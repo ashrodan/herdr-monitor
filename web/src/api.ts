@@ -9,3 +9,7 @@ export async function post<T = Record<string, unknown>>(url: string, body: unkno
   const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   return { ok: res.ok, body: await res.json().catch(() => ({})) };
 }
+
+// An agent's API path. Remote agents are `machine/t1`: the slash must be
+// encoded, or the path has one segment too many and the server answers 404.
+export const termPath = (addr: string, rest: string) => `/api/terminals/${encodeURIComponent(addr)}/${rest}`;
