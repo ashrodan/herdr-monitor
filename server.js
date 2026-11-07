@@ -16,6 +16,7 @@ import { chatFor } from './lib/transcript.js';
 import { loadVapid, Subscriptions, sendPush } from './lib/push.js';
 import { answerKeys, currentQuestion } from './lib/answer.js';
 import { AgentFeed, sseFrame } from './lib/agents.js';
+import { herdrInfo, discover } from './lib/herdr.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOST = process.env.HOST || '127.0.0.1';
@@ -458,6 +459,25 @@ async function icons() {
   return iconIndex;
 }
 
+// What runs here (Herdr app, TUI, hc) and the herdr-monitor servers on the
+// tailnet, for the Android app's server picker. Each cached 60 s.
+let infoCache = null, discoverCache = null;
+async function info() {
+  if (!infoCache || Date.now() - infoCache.at > 60000) infoCache = { at: Date.now(), value: { app: 'herdr-monitor', host: tailnetName, herdr: await herdrInfo({ hcBin: HC_BIN }) } };
+  return infoCache.value;
+}
+function tailscaleStatus() {
+  return new Promise((resolve) => execFile('tailscale', ['status', '--json'], { timeout: 5000, maxBuffer: 8 * 1024 * 1024 }, (err, out) => {
+    try { resolve(err ? null : JSON.parse(out)); } catch { resolve(null); }
+  }));
+}
+async function discovered() {
+  if (!discoverCache || Date.now() - discoverCache.at > 60000) {
+    discoverCache = { at: Date.now(), value: await discover({ status: await tailscaleStatus(), port: HTTPS_PORT, self: await info() }) };
+  }
+  return discoverCache.value;
+}
+
 export const isDialogKey = (k) => typeof k === 'string' && /^(up|down|left|right|tab|shift\+tab|space|enter|esc|backspace|[a-z0-9])$/.test(k);
 
 const routes = [
@@ -475,6 +495,8 @@ const routes = [
   }],
   ['GET', /^\/api\/sidebar$/, (req, res) => send(res, 200, { spaces: layout })],
   ['GET', /^\/api\/overview$/, async (req, res, m, url) => send(res, 200, await overview({ fresh: url.searchParams.has('fresh') }))],
+  ['GET', /^\/api\/info$/, async (req, res) => send(res, 200, await info())],
+  ['GET', /^\/api\/discover$/, async (req, res) => send(res, 200, await discovered())],
   ['GET', /^\/api\/health$/, (req, res) => send(res, 200, { ok: true, connected, socket: SOCKET, terminals: terminals.size })],
   ['GET', /^\/api\/terminals$/, (req, res) => send(res, 200, snapshot())],
   ['GET', /^\/api\/events$/, (req, res) => {
