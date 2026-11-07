@@ -6,6 +6,8 @@ import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,8 +26,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -50,6 +55,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -65,6 +71,7 @@ import io.github.ashrodan.herdrmonitor.Terminal
 import io.github.ashrodan.herdrmonitor.age
 import io.github.ashrodan.herdrmonitor.app
 import io.github.ashrodan.herdrmonitor.appUrl
+import io.github.ashrodan.herdrmonitor.agentAddresses
 import io.github.ashrodan.herdrmonitor.displayName
 import io.github.ashrodan.herdrmonitor.groupAgents
 import io.github.ashrodan.herdrmonitor.isAgent
@@ -213,45 +220,89 @@ fun PrRow(p: OverviewPr, onClick: () -> Unit) {
     }
 }
 
-// web SpaceView: a header (avatar, name, repo path, branch, ↓behind), then
-// one section per tab in Herdr's order, one row per terminal. A shell says
-// "shell"; an app opens in the browser.
-@OptIn(ExperimentalMaterial3Api::class)
+// A space is a horizontal set of agent sessions. App servers are actions
+// above the composer; shell terminals stay behind Session options.
 @Composable
 fun SpaceScreen(live: Live, id: String, go: (Route) -> Unit, back: () -> Unit) {
+    val space = live.spaces.find { it.id == id }
+    val addresses = remember(space, live.terminals) { space?.agentAddresses(live.terminals).orEmpty() }
+    if (addresses.isEmpty()) {
+        SpaceWithoutAgents(live, space, go, back)
+        return
+    }
+
+    val pager = rememberPagerState(pageCount = { addresses.size })
+    LaunchedEffect(addresses) {
+        if (pager.currentPage > addresses.lastIndex) pager.scrollToPage(addresses.lastIndex)
+    }
+    HorizontalPager(
+        state = pager,
+        key = { addresses[it] },
+        modifier = Modifier.fillMaxSize().testTag("space-session-pager"),
+    ) { page ->
+        AgentScreen(
+            live = live,
+            address = addresses[page],
+            back = back,
+            pageIndex = page,
+            pageCount = addresses.size,
+            active = pager.currentPage == page,
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SpaceWithoutAgents(live: Live, space: Space?, go: (Route) -> Unit, back: () -> Unit) {
     val ctx = LocalContext.current
-    val seen = ctx.app.prefs.localSeen
-    val now = rememberNow()
-    val s = live.spaces.find { it.id == id }
+    val terminals = remember(space, live.terminals) {
+        space?.tabs?.flatMap { it.terminals }?.distinct()?.mapNotNull(live.terminals::get).orEmpty()
+    }
+    val apps = remember(terminals) { terminals.filter { it.isApp() && !it.finished } }
+    val shells = remember(terminals) { terminals.filter { !it.isApp() && !it.isAgent() && !it.finished } }
+    var menu by remember { mutableStateOf(false) }
     Scaffold(containerColor = Palette.background, topBar = {
-        TopAppBar(colors = TopAppBarDefaults.topAppBarColors(containerColor = Palette.background),
+        TopAppBar(
+            colors = TopAppBarDefaults.topAppBarColors(containerColor = Palette.background),
             navigationIcon = { IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (s != null) { SpaceAvatar(s); Spacer(Modifier.width(10.dp)) }
+                    if (space != null) { SpaceAvatar(space); Spacer(Modifier.width(10.dp)) }
                     Column {
-                        Text(s?.name ?: "Space", maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
-                        if (s != null) Text(shortPath(s.repo) + (s.branch?.let { " · $it" } ?: "") + if (s.behind > 0) " · ↓${s.behind}" else "",
-                            fontFamily = Mono, fontSize = 11.sp, color = Palette.mutedForeground, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(space?.name ?: "Space", maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
+                        if (space != null) Text(shortPath(space.repo) + (space.branch?.let { " · $it" } ?: "") +
+                            if (space.behind > 0) " · ↓${space.behind}" else "", fontFamily = Mono, fontSize = 11.sp,
+                            color = Palette.mutedForeground, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
-            })
+            },
+            actions = {
+                if (shells.isNotEmpty()) Box {
+                    IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "Space options") }
+                    DropdownMenu(menu, { menu = false }) {
+                        shells.forEach { shell ->
+                            DropdownMenuItem({ Text("Raw shell · ${shell.name ?: shell.agent}") }, {
+                                menu = false
+                                go(Route.Agent(shell.address, terminal = true))
+                            })
+                        }
+                    }
+                }
+            },
+        )
     }) { pad ->
         LazyColumn(Modifier.fillMaxSize().padding(top = pad.calculateTopPadding()),
             contentPadding = PaddingValues(start = 10.dp, end = 10.dp, top = 10.dp, bottom = pad.calculateBottomPadding() + 10.dp)) {
             item { ConnectionLine(live) }
-            if (s == null) { item { Empty(if (live.link == Link.Online) "This space is gone." else "Connecting…") }; return@LazyColumn }
-            for (tab in s.tabs) {
-                item(key = "t-${tab.id}") { SectionTitle(if (tab.named) tab.name else "Tab ${tab.name}") }
-                item(key = "tl-${tab.id}") {
-                    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Palette.card).border(1.dp, Palette.border, RoundedCornerShape(8.dp))) {
-                        tab.terminals.mapNotNull { live.terminals[it] }.forEach { t ->
-                            if (t.isApp()) AppRow(ctx, t, t.name ?: t.agent)
-                            else TerminalRow(t, t.name ?: t.agent, t.msg?.takeIf { it.isNotBlank() } ?: t.title?.takeIf { it.isNotBlank() } ?: shortPath(t.cwd),
-                                t.mark(seen), now, tag = if (!t.isAgent()) "shell" else null) { go(Route.Agent(t.address)) }
-                        }
-                    }
-                }
+            if (space == null) {
+                item { Empty(if (live.link == Link.Online) "This space is gone." else "Connecting…") }
+                return@LazyColumn
+            }
+            item { Empty("No agent sessions in this space.") }
+            if (apps.isNotEmpty()) {
+                item { SectionTitle("Running apps", apps.size) }
+                items(apps, key = { "app-${it.address}" }) { app -> AppRow(ctx, app, app.name ?: "Server") }
             }
         }
     }

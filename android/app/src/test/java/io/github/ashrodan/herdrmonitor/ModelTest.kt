@@ -66,6 +66,21 @@ class ModelTest {
         assertEquals(listOf("c", "b"), g[0].rows.map { it.address })
     }
 
+    @Test fun spaceSwipePagesKeepAgentOrderAndHideAppsAndShells() {
+        val space = Space("s", "app", tabs = listOf(
+            SpaceTab("one", "one", true, listOf("agent-1", "server", "shell")),
+            SpaceTab("two", "two", true, listOf("agent-2", "agent-1")),
+        ))
+        val terminals = listOf(
+            Terminal("agent-1", agent = "claude", status = "working"),
+            Terminal("server", agent = "node", listen = Listen("http", 3000, null)),
+            Terminal("shell", agent = "zsh"),
+            Terminal("agent-2", agent = "omp", status = "done"),
+        ).associateBy { it.address }
+
+        assertEquals(listOf("agent-1", "agent-2"), space.agentAddresses(terminals))
+    }
+
     @Test fun widgetShowsCountsAndTheTopNeedsYouSession() {
         val agents = listOf(agent("blocked", addr = "a"), agent("error", addr = "b"), agent("done", addr = "c"),
             agent("done", seen = 100, addr = "d"), agent("working", addr = "e"))

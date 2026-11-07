@@ -57,7 +57,7 @@ fun HomeListDetail(live: Live, go: (Route) -> Unit) {
         listPane = {
             AnimatedPane {
                 HomeScreen(live, go = { r ->
-                    if (twoPane && r is Route.Agent) scope.launch { nav.navigateTo(ListDetailPaneScaffoldRole.Detail, "${r.tab}|${r.address}") }
+                    if (twoPane && r is Route.Agent) scope.launch { nav.navigateTo(ListDetailPaneScaffoldRole.Detail, "${r.terminal}|${r.address}") }
                     else go(r)
                 }, selected = nav.currentDestination?.contentKey?.substringAfter('|')?.takeIf { twoPane })
             }
@@ -68,7 +68,7 @@ fun HomeListDetail(live: Live, go: (Route) -> Unit) {
                 if (k == null) EmptyDetail()
                 else key(k) {
                     AgentScreen(live, k.substringAfter('|'), back = { scope.launch { nav.navigateBack() } },
-                        initialTab = k.substringBefore('|').toIntOrNull() ?: 0,
+                        showTerminalOnOpen = k.substringBefore('|').toBooleanStrictOrNull() ?: false,
                         showBack = nav.scaffoldValue[ListDetailPaneScaffoldRole.List] != PaneAdaptedValue.Expanded)
                 }
             }

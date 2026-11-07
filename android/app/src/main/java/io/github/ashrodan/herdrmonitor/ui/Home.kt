@@ -282,7 +282,7 @@ fun HomeScreen(live: Live, go: (Route) -> Unit, selected: String? = null) {
     if (picking) ServerSheet { picking = false }
     if (newSession) NewSessionSheet(live, onDismiss = { newSession = false }, onStarted = { addr -> newSession = false; go(Route.Agent(addr)) })
     menuFor?.let { s -> SessionMenu(s, onDismiss = { menuFor = null }, pin = { app.togglePin(s.address) }, stop = { stop(s) },
-        terminal = { go(Route.Agent(s.address, tab = 1)) }) }
+        terminal = { go(Route.Agent(s.address, terminal = true)) }) }
 }
 
 @Composable
@@ -479,7 +479,7 @@ private fun DrawerRow(label: String, count: Int, waiting: Boolean = false, onCli
         badge = { Text("$count", color = if (waiting && count > 0) c.waiting else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = if (waiting && count > 0) FontWeight.Bold else null) })
 }
 
-// Long press: Pin, Stop, Open terminal, Copy branch.
+// Long press: Pin, Stop, Raw terminal, Copy branch.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SessionMenu(s: Session, onDismiss: () -> Unit, pin: () -> Unit, stop: () -> Unit, terminal: () -> Unit) {
@@ -490,7 +490,7 @@ private fun SessionMenu(s: Session, onDismiss: () -> Unit, pin: () -> Unit, stop
             Text(s.name, Modifier.padding(horizontal = 24.dp, vertical = 8.dp), style = MaterialTheme.typography.titleMedium)
             MenuRow(if (s.pinned) "Unpin" else "Pin") { pin(); onDismiss() }
             if (s.status == Status.Working || s.status == Status.Waiting) MenuRow("Stop") { stop(); onDismiss() }
-            MenuRow("Open terminal") { terminal(); onDismiss() }
+            MenuRow("Raw terminal") { terminal(); onDismiss() }
             s.branch?.let { b ->
                 MenuRow("Copy branch  $b") {
                     scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("branch", b))) }

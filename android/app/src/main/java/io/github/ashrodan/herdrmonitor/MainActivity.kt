@@ -40,7 +40,7 @@ sealed interface Route {
     data object Home : Route
     data object Settings : Route
     data class SpaceR(val id: String) : Route
-    data class Agent(val address: String, val tab: Int = 0) : Route
+    data class Agent(val address: String, val terminal: Boolean = false) : Route
 }
 
 // Navigation Compose routes. Addresses and space ids hold "/", so they are
@@ -49,12 +49,12 @@ object Nav {
     const val HOME = "home"
     const val SETTINGS = "settings"
     const val SPACE = "space/{id}"
-    const val AGENT = "agent/{address}?tab={tab}"
+    const val AGENT = "agent/{address}?terminal={terminal}"
     fun path(r: Route): String = when (r) {
         Route.Home -> HOME
         Route.Settings -> SETTINGS
         is Route.SpaceR -> "space/${Uri.encode(r.id)}"
-        is Route.Agent -> "agent/${Uri.encode(r.address)}?tab=${r.tab}"
+        is Route.Agent -> "agent/${Uri.encode(r.address)}?terminal=${r.terminal}"
     }
 }
 
@@ -136,8 +136,9 @@ class MainActivity : ComponentActivity() {
             composable(Nav.HOME) { HomeListDetail(live(), go) }
             composable(Nav.SETTINGS) { SettingsScreen(back) }
             composable(Nav.SPACE) { e -> SpaceScreen(live(), e.arguments?.getString("id").orEmpty(), go, back) }
-            composable(Nav.AGENT, arguments = listOf(navArgument("tab") { type = NavType.IntType; defaultValue = 0 })) { e ->
-                AgentScreen(live(), e.arguments?.getString("address").orEmpty(), back, initialTab = e.arguments?.getInt("tab") ?: 0)
+            composable(Nav.AGENT, arguments = listOf(navArgument("terminal") { type = NavType.BoolType; defaultValue = false })) { e ->
+                AgentScreen(live(), e.arguments?.getString("address").orEmpty(), back,
+                    showTerminalOnOpen = e.arguments?.getBoolean("terminal") ?: false)
             }
         }
     }
