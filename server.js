@@ -18,7 +18,7 @@ import { loadVapid, Subscriptions, sendPush } from './lib/push.js';
 import { answerKeys, currentQuestion } from './lib/answer.js';
 import { AgentFeed, sseFrame } from './lib/agents.js';
 import { herdrInfo, discover, tailnetPeers } from './lib/herdr.js';
-import { listenOf, machineHost, portFromText } from './lib/apps.js';
+import { listenOf, machineHost, portFromText, samePrograms, portAnswers, PortChecks } from './lib/apps.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOST = process.env.HOST || '127.0.0.1';
@@ -110,9 +110,27 @@ function remember(s) {
 // 30 s, each again after 2 minutes.
 const screenListen = new Map(); // address -> {scheme, port}
 const screenRead = new Map();   // address -> ms
+const portChecks = new PortChecks();
 let machines = [], peers = [];
+
+// Forget what the app scan knew about a terminal (removed, or a new program).
+function forgetApp(address) {
+  screenListen.delete(address);
+  screenRead.delete(address);
+  portChecks.forget(address);
+}
+
 async function scanApps() {
   if (!rpc) return;
+  // Ports on this machine that no longer answer: drop them. (A terminal on
+  // another machine, "dai/t1", cannot be checked from here.)
+  for (const t of [...terminals.values()].filter((x) => x.listen && !x.address.includes('/') && portChecks.due(x.address))) {
+    if (portChecks.record(t.address, await portAnswers(t.listen.port))) {
+      forgetApp(t.address);
+      t.listen = null;
+      broadcast('terminal', t);
+    }
+  }
   const due = [...terminals.values()].filter((t) => t.state === 'live' && !t.status && !t.listen && Date.now() - (screenRead.get(t.address) || 0) > 120000).slice(0, 6);
   for (const t of due) {
     screenRead.set(t.address, Date.now());
@@ -167,15 +185,20 @@ async function refreshLayout() {
 async function refreshOne(address) {
   try {
     const t = await rpc.call('terminal.get', { terminal: address });
-    const s = remember(summarize(t.terminal || t));
+    const raw = summarize(t.terminal || t);
     const prev = terminals.get(address);
+    // A new program (or none): what the scan read off the old one's screen
+    // no longer holds.
+    const same = samePrograms(prev, raw);
+    if (prev && !same) forgetApp(address);
+    const s = remember(raw);
     if (prev?.title && !s.title) s.title = prev.title;
     if (prev?.changed_ms && !s.changed_ms) s.changed_ms = prev.changed_ms;
-    if (prev?.listen && !s.listen) s.listen = prev.listen;
+    if (same && prev.listen && !s.listen) s.listen = prev.listen;
     terminals.set(address, s);
     broadcast('terminal', s);
   } catch (err) {
-    if (err.message === 'not_found') { terminals.delete(address); broadcast('removed', { address }); }
+    if (err.message === 'not_found') { terminals.delete(address); forgetApp(address); broadcast('removed', { address }); }
   }
 }
 
@@ -275,6 +298,7 @@ async function resync() {
   const sub = await events.call('events.subscribe', {});
   terminals.clear();
   for (const t of sub.terminals) terminals.set(t.address, remember(summarize(t)));
+  for (const a of new Set([...screenListen.keys(), ...screenRead.keys()])) if (!terminals.has(a)) forgetApp(a);
   await refreshLayout();
   broadcast('snapshot', { ...snapshot(), connected: true });
 }
