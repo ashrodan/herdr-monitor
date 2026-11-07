@@ -8,6 +8,8 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -187,12 +189,14 @@ fun Composer(
                             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary), maxLines = 6)
                     }
                 }
-                val corner by animateDpAsState(if (showStop) 16.dp else 26.dp, label = "corner")
+                // Animations off: the button changes shape and colour at once.
+                val reduced = reducedMotion()
+                val corner by animateDpAsState(if (showStop) 16.dp else 26.dp, if (reduced) snap() else spring(), label = "corner")
                 val bg by animateColorAsState(when {
                     showStop -> MaterialTheme.colorScheme.errorContainer
                     hasText && !sending && !uploading -> MaterialTheme.colorScheme.primary
                     else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
-                }, label = "bg")
+                }, if (reduced) snap() else spring(), label = "bg")
                 val fg = when {
                     showStop -> MaterialTheme.colorScheme.onErrorContainer
                     hasText && !sending && !uploading -> MaterialTheme.colorScheme.onPrimary

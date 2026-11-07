@@ -45,6 +45,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.heightIn
+import io.github.ashrodan.herdrmonitor.ui.reducedMotion
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -53,6 +55,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -118,7 +121,9 @@ fun StatusBadge(status: Status, size: Dp = 20.dp, ring: Color = Color.Transparen
         Status.Idle -> Unit
         Status.Working -> Box(mod.clip(CircleShape).background(MaterialTheme.colorScheme.surfaceContainerHighest).border(2.dp, ring, CircleShape),
             contentAlignment = Alignment.Center) {
-            LoadingIndicator(Modifier.size(size), color = MaterialTheme.colorScheme.primary)
+            // Animations off: a still dot instead of the morphing indicator.
+            if (reducedMotion()) Box(Modifier.size(size * 0.45f).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
+            else LoadingIndicator(Modifier.size(size), color = MaterialTheme.colorScheme.primary)
         }
         Status.Waiting -> Box(mod.clip(CircleShape).background(c.waiting).border(2.dp, ring, CircleShape), contentAlignment = Alignment.Center) {
             Text("?", color = c.onWaiting, fontSize = (size.value * 0.6f).sp, fontWeight = FontWeight.Black)
@@ -165,9 +170,10 @@ fun StatusFilterRow(counts: Counts, selected: Bucket?, onSelect: (Bucket?) -> Un
     val c = LocalStatusColors.current
     val chips = listOf<Pair<Bucket?, String>>(null to "All", Bucket.NeedsYou to "Needs you", Bucket.Working to "Working", Bucket.Ready to "Ready", Bucket.Idle to "Idle")
         .filter { (b, _) -> b == null || counts.of(b) > 0 }
-    LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        items(chips.size, key = { chips[it].second }) { i ->
-            val (b, label) = chips[i]
+    // A FlowRow, not a scrolling row: at a large font size the chips wrap
+    // to a second line instead of going off screen.
+    FlowRow(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        for ((b, label) in chips) {
             FilterChip(
                 selected = selected == b, onClick = { tick(view); onSelect(b) },
                 label = {
@@ -197,7 +203,7 @@ fun MetaChip(kind: MetaKind, label: String, onClick: (() -> Unit)? = null) {
         MetaKind.Branch -> MaterialTheme.colorScheme.onSurfaceVariant to MaterialTheme.colorScheme.outlineVariant
     }
     val shape = RoundedCornerShape(Corner.chip)
-    Row(Modifier.height(28.dp).clip(shape).border(1.dp, border, shape)
+    Row(Modifier.let { if (onClick != null) it.minimumInteractiveComponentSize() else it }.heightIn(min = 28.dp).clip(shape).border(1.dp, border, shape)
         .let { if (onClick != null) it.combinedClickable(onClick = onClick) else it }.padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically) {
         if (kind == MetaKind.Stale) { Icon(ClockIcon, null, Modifier.size(14.dp), tint = fg); Spacer(Modifier.width(5.dp)) }
@@ -247,13 +253,15 @@ fun SessionCard(
     onAnswer: (Int, String) -> Unit,
     onPin: () -> Unit,
     onStop: () -> Unit,
+    selected: Boolean = false,
 ) {
     val sc = LocalStatusColors.current
     val tinted = s.status == Status.Waiting && s.sent == null
     val bg = if (tinted) sc.waitingContainer else MaterialTheme.colorScheme.surfaceContainerLow
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    val corner by animateDpAsState(if (pressed) Corner.groupOuter else 0.dp, MaterialTheme.motionScheme.fastSpatialSpec(), label = "corner")
+    val reduced = reducedMotion()
+    val corner by animateDpAsState(if (pressed && !reduced) Corner.groupOuter else 0.dp, MaterialTheme.motionScheme.fastSpatialSpec(), label = "corner")
     val base = cardGroupShape(index, count)
     val shape = if (corner > 0.dp) RoundedCornerShape(maxOf(corner, Corner.groupInner)) else base
     val a11y = buildString {
@@ -261,10 +269,13 @@ fun SessionCard(
         s.task?.let { append(", "); append(it) }
         s.timeMs?.let { append(", "); append(age(it, now).let { a -> if (a == "<1m") "now" else a }) }
     }
-    Surface(color = bg, shape = shape, modifier = Modifier.fillMaxWidth()
+    // Two panes: the open session has a primary outline.
+    Surface(color = bg, shape = shape, border = if (selected) androidx.compose.foundation.BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
+        modifier = Modifier.fillMaxWidth()
         .combinedClickable(interactionSource = interaction, indication = null, onClick = onOpen, onLongClick = onLongPress)
         .semantics(mergeDescendants = s.ask == null) {
             contentDescription = a11y
+            this.selected = selected
             customActions = listOfNotNull(
                 CustomAccessibilityAction(if (s.pinned) "Unpin" else "Pin") { onPin(); true },
                 if (s.status == Status.Working || s.status == Status.Waiting) CustomAccessibilityAction("Stop") { onStop(); true } else null,

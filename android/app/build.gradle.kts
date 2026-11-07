@@ -49,6 +49,9 @@ dependencies {
     implementation("androidx.compose.material3:material3:1.5.0-beta02")
     implementation("androidx.compose.material3:material3-adaptive-navigation-suite:1.5.0-beta02")
     implementation("androidx.compose.material3.adaptive:adaptive:1.3.0")
+    // material3-adaptive family (allowed): ListDetailPaneScaffold and its navigator.
+    implementation("androidx.compose.material3.adaptive:adaptive-layout:1.3.0")
+    implementation("androidx.compose.material3.adaptive:adaptive-navigation:1.3.0")
     implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.compose.ui:ui-tooling-preview")
     debugImplementation("androidx.compose.ui:ui-tooling")

@@ -13,6 +13,10 @@ import android.content.ClipData
 import android.view.HapticFeedbackConstants
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
+import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
@@ -146,7 +150,7 @@ private suspend fun <T> io(block: () -> T): Result<T> = withContext(Dispatchers.
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AgentScreen(live: Live, address: String, back: () -> Unit, initialTab: Int = 0) {
+fun AgentScreen(live: Live, address: String, back: () -> Unit, initialTab: Int = 0, showBack: Boolean = true) {
     val ctx = LocalContext.current
     val api = remember(live) { ctx.app.store.api }
     val port = remember(api) { ApiPort(api) }
@@ -189,7 +193,8 @@ fun AgentScreen(live: Live, address: String, back: () -> Unit, initialTab: Int =
     Scaffold(contentWindowInsets = WindowInsets(0), topBar = {
         Column(Modifier.statusBarsPadding()) {
             Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+                if (showBack) IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+                else Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f).padding(start = 4.dp)) {
                     Text(name, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     // "Working · MNT-1 · omp · 8:06": the time is how long the
@@ -266,9 +271,9 @@ private fun PillTabs(selected: Int, onSelect: (Int) -> Unit, changes: Int) {
         .selectableGroup(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         TABS.forEachIndexed { i, label ->
             val on = i == selected
-            Row(Modifier.height(32.dp).clip(RoundedCornerShape(16.dp))
-                .background(if (on) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
-                .selectable(on, role = Role.Tab) { onSelect(i) }.padding(horizontal = 14.dp),
+            // 32dp pill, 48dp touch target.
+            Row(Modifier.selectable(on, role = Role.Tab) { onSelect(i) }.minimumInteractiveComponentSize().heightIn(min = 32.dp).clip(RoundedCornerShape(16.dp))
+                .background(if (on) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent).padding(horizontal = 14.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 Text(label, style = MaterialTheme.typography.labelLarge,
                     color = if (on) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
@@ -369,18 +374,19 @@ private fun SystemChip(text: String) {
 // 1 read") and how many failed. Open: one step per tool or thought; a tap
 // on a tool shows its output. No durations: the transcript has no times.
 @Composable
-private fun ActivityCard(a: Item.Activity) {
+internal fun ActivityCard(a: Item.Activity) {
     var open by rememberSaveable(a.key) { mutableStateOf(false) }
     val shape = RoundedCornerShape(16.dp)
     val tools = a.tools
     Column(Modifier.fillMaxWidth().clip(shape).background(MaterialTheme.colorScheme.surfaceContainerLowest)
         .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)) {
-        Row(Modifier.fillMaxWidth().clickable { open = !open }.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(onClickLabel = if (open) "Fold" else "Unfold") { open = !open }
+            .padding(horizontal = 12.dp, vertical = 10.dp).testTag("activity-${a.key}"), verticalAlignment = Alignment.CenterVertically) {
             Text(if (tools.isEmpty()) "Thinking" else toolCounts(tools), Modifier.weight(1f, fill = false),
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (a.failed > 0) Text("  · ${a.failed} failed", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error, maxLines = 1)
             Spacer(Modifier.weight(0.0001f))
-            val turn by animateFloatAsState(if (open) 180f else 0f, label = "chev")
+            val turn by animateFloatAsState(if (open) 180f else 0f, if (reducedMotion()) snap() else spring(), label = "chev")
             Icon(Icons.Default.KeyboardArrowDown, if (open) "Fold" else "Unfold", Modifier.size(20.dp).rotate(turn), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (open) {
@@ -405,7 +411,9 @@ private fun ToolStep(t: Part.Tool) {
     var open by remember { mutableStateOf(false) }
     val failed = t.result?.error == true
     Column(Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth().clickable(enabled = t.result != null) { open = !open }.padding(horizontal = 12.dp, vertical = 6.dp)) {
+        Row(Modifier.fillMaxWidth().let { if (t.result != null) it.heightIn(min = 48.dp) else it }
+            .clickable(enabled = t.result != null, onClickLabel = "Show output") { open = !open }.padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically) {
             StepIcon(t.name, failed)
             Text(buildAnnotatedString {
                 withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, color = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)) { append(t.name) }

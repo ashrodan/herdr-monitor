@@ -30,7 +30,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import io.github.ashrodan.herdrmonitor.ui.AgentScreen
-import io.github.ashrodan.herdrmonitor.ui.HomeScreen
+import io.github.ashrodan.herdrmonitor.ui.HomeListDetail
 import io.github.ashrodan.herdrmonitor.ui.SettingsScreen
 import io.github.ashrodan.herdrmonitor.ui.SpaceScreen
 import io.github.ashrodan.herdrmonitor.ui.theme.HerdrTheme
@@ -128,7 +128,7 @@ class MainActivity : ComponentActivity() {
             toHome = false
         }
         NavHost(nav, startDestination = Nav.HOME) {
-            composable(Nav.HOME) { HomeScreen(live(), go) }
+            composable(Nav.HOME) { HomeListDetail(live(), go) }
             composable(Nav.SETTINGS) { SettingsScreen(back) }
             composable(Nav.SPACE) { e -> SpaceScreen(live(), e.arguments?.getString("id").orEmpty(), go, back) }
             composable(Nav.AGENT, arguments = listOf(navArgument("tab") { type = NavType.IntType; defaultValue = 0 })) { e ->

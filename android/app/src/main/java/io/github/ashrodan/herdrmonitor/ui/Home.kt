@@ -121,7 +121,7 @@ enum class HomeTab { Sessions, Prs, Spaces }
 // wider screens) with Sessions, PRs and Spaces.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(live: Live, go: (Route) -> Unit) {
+fun HomeScreen(live: Live, go: (Route) -> Unit, selected: String? = null) {
     val ctx = LocalContext.current
     val app = ctx.app
     val view = LocalView.current
@@ -185,7 +185,7 @@ fun HomeScreen(live: Live, go: (Route) -> Unit) {
             onSettings = { scope.launch { drawer.close() }; go(Route.Settings) },
             onNotifications = { notificationSettings(ctx) })
     }) {
-        NavigationSuiteScaffold(navigationSuiteItems = {
+        NavigationSuiteScaffold(layoutType = navSuiteType(), navigationSuiteItems = {
             item(selected = tab == HomeTab.Sessions, onClick = { tab = HomeTab.Sessions; filter = null },
                 icon = { NavIcon(Icons.Default.Home, counts.needsYou, waiting = true) }, label = { Text("Sessions") })
             item(selected = tab == HomeTab.Prs, onClick = { tab = HomeTab.Prs },
@@ -236,7 +236,7 @@ fun HomeScreen(live: Live, go: (Route) -> Unit) {
                             }
                             LazyColumn(Modifier.fillMaxSize().nestedScroll(collapse), state = list,
                                 contentPadding = PaddingValues(bottom = 96.dp)) {
-                                sessionsList(shown, filter, now, live,
+                                sessionsList(shown, filter, now, live, selected,
                                     open = { go(Route.Agent(it.address)) }, menu = { menuFor = it },
                                     answer = ::answer, pin = { app.togglePin(it.address) }, stop = { stop(it) },
                                     showIdle = { filter = Bucket.Idle })
@@ -294,7 +294,7 @@ private fun HomeTopBar(query: String, onQuery: (String) -> Unit, onMenu: () -> U
 }
 
 private fun LazyListScope.sessionsList(
-    all: List<Session>, filter: Bucket?, now: Long, live: Live,
+    all: List<Session>, filter: Bucket?, now: Long, live: Live, selected: String?,
     open: (Session) -> Unit, menu: (Session) -> Unit, answer: (Session, Int, String) -> Unit,
     pin: (Session) -> Unit, stop: (Session) -> Unit, showIdle: () -> Unit,
 ) {
@@ -311,7 +311,7 @@ private fun LazyListScope.sessionsList(
         itemsIndexed(rows, key = { _, s -> s.address }, contentType = { _, _ -> "card" }) { i, s ->
             Box(Modifier.padding(horizontal = 12.dp).padding(top = if (i == 0) 0.dp else Corner.groupGap).animateItem()) {
                 SessionCard(s, i, rows.size, now, onOpen = { open(s) }, onLongPress = { menu(s) },
-                    onAnswer = { j, l -> answer(s, j, l) }, onPin = { pin(s) }, onStop = { stop(s) })
+                    onAnswer = { j, l -> answer(s, j, l) }, onPin = { pin(s) }, onStop = { stop(s) }, selected = s.address == selected)
             }
         }
     }
