@@ -101,3 +101,16 @@ test('repoInfo reads a main repo and a linked worktree', async () => {
   assert.equal(await repoInfo(os.tmpdir(), { fresh: true }), null);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('sessionFolder: the space folder; a local cwd only when inside it; never a remote path', async () => {
+  const { sessionFolder } = await import('../lib/sidebar.js');
+  assert.equal(sessionFolder('/u/app', 't1', '/u/app/web'), '/u/app/web');   // local, inside
+  assert.equal(sessionFolder('/u/app', 't1', '/u/app'), '/u/app');
+  assert.equal(sessionFolder('/u/app', 't1', '/u/other'), '/u/app');         // local, outside
+  assert.equal(sessionFolder('/u/app', 't1', '/u/app-2'), '/u/app');         // a prefix is not inside
+  assert.equal(sessionFolder('/u/app', 'dai/t1', '/u/app/web'), '/u/app');   // remote
+  assert.equal(sessionFolder(null, 'dai/t1', '/home/x'), null);
+  assert.equal(sessionFolder(null, 't1', '/u/x'), '/u/x');
+  assert.equal(sessionFolder(null, undefined, null), null);
+  assert.equal(sessionFolder('/u/app', 't1', 'relative'), '/u/app');
+});
