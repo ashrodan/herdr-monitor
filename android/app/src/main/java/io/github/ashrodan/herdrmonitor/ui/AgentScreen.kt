@@ -75,6 +75,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.ashrodan.herdrmonitor.ui.theme.Mono
 import io.github.ashrodan.herdrmonitor.Api
 import io.github.ashrodan.herdrmonitor.Chat
 import io.github.ashrodan.herdrmonitor.CommitDetail
@@ -256,14 +257,14 @@ private fun ToolRow(t: Part.Tool) {
         HorizontalDivider(color = Palette.border)
         Row(Modifier.fillMaxWidth().clickable(enabled = t.result != null) { open = !open }.padding(horizontal = 10.dp, vertical = 6.dp)) {
             Text(t.name, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = if (t.result?.error == true) Palette.error else Palette.foreground)
-            Text("  " + t.summary, Modifier.weight(1f), fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = Palette.mutedForeground, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("  " + t.summary, Modifier.weight(1f), fontSize = 11.sp, fontFamily = Mono, color = Palette.mutedForeground, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (t.result == null) Text("running", fontSize = 12.sp, color = Palette.blocked)
         }
         val r = t.result
         if (open && r != null) {
             Text(r.text.ifEmpty { "(no output)" } + if (r.truncated) "\n… (cut)" else "",
                 Modifier.fillMaxWidth().heightIn(max = 300.dp).background(Palette.code).verticalScroll(rememberScrollState()).padding(10.dp),
-                fontFamily = FontFamily.Monospace, fontSize = 11.sp, lineHeight = 14.sp, color = Palette.foreground)
+                fontFamily = Mono, fontSize = 11.sp, lineHeight = 14.sp, color = Palette.foreground)
         }
     }
 }
@@ -338,7 +339,7 @@ private fun TextTab(api: Api, address: String) {
             text == null -> Text("Reading the screen…", Modifier.padding(16.dp))
             else -> SelectionContainer {
                 Text(text!!.trimEnd(), Modifier.fillMaxSize().verticalScroll(scroll).horizontalScroll(rememberScrollState()).padding(8.dp),
-                    fontFamily = FontFamily.Monospace, fontSize = 10.sp, lineHeight = 12.sp, softWrap = false)
+                    fontFamily = Mono, fontSize = 10.sp, lineHeight = 12.sp, softWrap = false)
             }
         }
     }
@@ -384,7 +385,7 @@ private fun CommitsTab(api: Api, address: String) {
                 val dd = detail
                 if (dd != null && dd.sha.startsWith(c.sha.take(7))) {
                     Text(dd.message, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
-                    for (f in dd.files) Text("${f.file}  +${f.additions ?: "?"} −${f.deletions ?: "?"}", fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                    for (f in dd.files) Text("${f.file}  +${f.additions ?: "?"} −${f.deletions ?: "?"}", fontFamily = Mono, fontSize = 11.sp)
                 }
             }
         }

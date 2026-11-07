@@ -1,5 +1,7 @@
 <resources>
     <style name="Theme.Herdr" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowBackground">#FF111414</item>
+        <!-- The system splash: dark, like the app's default theme. -->
+        <item name="android:windowSplashScreenBackground">#FF111414</item>
     </style>
 </resources>

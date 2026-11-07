@@ -2,22 +2,33 @@ package io.github.ashrodan.herdrmonitor
 
 import android.Manifest
 import android.content.Intent
+import android.graphics.Color
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.BackHandler
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.NavHostController
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
 import io.github.ashrodan.herdrmonitor.ui.AgentScreen
-import io.github.ashrodan.herdrmonitor.ui.HerdrTheme
 import io.github.ashrodan.herdrmonitor.ui.HomeScreen
 import io.github.ashrodan.herdrmonitor.ui.SettingsScreen
 import io.github.ashrodan.herdrmonitor.ui.SpaceScreen
+import io.github.ashrodan.herdrmonitor.ui.theme.HerdrTheme
+import io.github.ashrodan.herdrmonitor.ui.theme.isDark
 
 sealed interface Route {
     data object Home : Route
@@ -26,49 +37,82 @@ sealed interface Route {
     data class Agent(val address: String) : Route
 }
 
+// Navigation Compose routes. Addresses and space ids hold "/", so they are
+// encoded into one path segment.
+object Nav {
+    const val HOME = "home"
+    const val SETTINGS = "settings"
+    const val SPACE = "space/{id}"
+    const val AGENT = "agent/{address}"
+    fun path(r: Route): String = when (r) {
+        Route.Home -> HOME
+        Route.Settings -> SETTINGS
+        is Route.SpaceR -> "space/${Uri.encode(r.id)}"
+        is Route.Agent -> "agent/${Uri.encode(r.address)}"
+    }
+}
+
 // The whole app is native Compose over the server's API: no WebView.
+// Back (and the predictive back gesture) comes from Navigation Compose;
+// sheets close on back before the screen pops.
 class MainActivity : ComponentActivity() {
-    private val stack = mutableStateListOf<Route>(Route.Home)
     private val askNotify = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    // An agent to open, from a notification, the widget or a deep link.
+    private var pending by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        handle(intent)
+        if (savedInstanceState == null) pending = addressFrom(intent?.data)
         if (Build.VERSION.SDK_INT >= 33 && !mayNotify()) {
             askNotify.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         AlertService.start(this)
-        setContent { HerdrTheme { App() } }
+        setContent {
+            val look by app.look.collectAsStateWithLifecycle()
+            val dark = isDark(look.pref, isSystemInDarkTheme())
+            // Light or dark status and navigation bar icons, to match the theme.
+            DisposableEffect(dark) {
+                val style = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT) { dark }
+                enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
+                onDispose {}
+            }
+            HerdrTheme(look.pref, look.wallpaperColours) { Screens() }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        handle(intent)
+        addressFrom(intent.data)?.let { pending = it }
     }
 
     override fun onStart() { super.onStart(); app.store.start() }
     override fun onStop() { super.onStop(); app.store.stop() }
 
-    // A notification, the widget or herdrmonitor://agent/<addr>: open that agent.
-    private fun handle(i: Intent?) {
-        val addr = addressFrom(i?.data) ?: return
-        while (stack.size > 1) stack.removeAt(stack.lastIndex)
-        stack.add(Route.Agent(addr))
+    @Composable
+    private fun Screens() {
+        val nav = rememberNavController()
+        val live by app.store.live.collectAsStateWithLifecycle()
+        val go: (Route) -> Unit = { nav.navigate(Nav.path(it)) { launchSingleTop = true } }
+        val back: () -> Unit = { if (!nav.popBackStack()) finish() }
+        LaunchedEffect(pending) {
+            val addr = pending ?: return@LaunchedEffect
+            openAgent(nav, addr)
+            pending = null
+        }
+        NavHost(nav, startDestination = Nav.HOME) {
+            composable(Nav.HOME) { HomeScreen(live, go) }
+            composable(Nav.SETTINGS) { SettingsScreen(back) }
+            composable(Nav.SPACE) { e -> SpaceScreen(live, e.arguments?.getString("id").orEmpty(), go, back) }
+            composable(Nav.AGENT) { e -> AgentScreen(live, e.arguments?.getString("address").orEmpty(), back) }
+        }
     }
 
-    fun go(r: Route) { stack.add(r) }
-    fun back() { if (stack.size > 1) stack.removeAt(stack.lastIndex) else finish() }
-
-    @Composable
-    private fun App() {
-        val live by app.store.live.collectAsStateWithLifecycle()
-        BackHandler(enabled = stack.size > 1) { back() }
-        when (val r = stack.last()) {
-            Route.Home -> HomeScreen(live, ::go)
-            Route.Settings -> SettingsScreen(::back)
-            is Route.SpaceR -> SpaceScreen(live, r.id, ::go, ::back)
-            is Route.Agent -> AgentScreen(live, r.address, ::back)
+    // Home, then that agent: back from the agent returns to Home.
+    private fun openAgent(nav: NavHostController, address: String) {
+        nav.navigate(Nav.path(Route.Agent(address))) {
+            popUpTo(Nav.HOME)
+            launchSingleTop = true
         }
     }
 }

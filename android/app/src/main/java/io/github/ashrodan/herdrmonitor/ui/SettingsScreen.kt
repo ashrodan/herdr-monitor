@@ -14,12 +14,18 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
+import io.github.ashrodan.herdrmonitor.ui.theme.ThemePref
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -87,7 +93,8 @@ fun SettingsScreen(back: () -> Unit) {
         TopAppBar(colors = TopAppBarDefaults.topAppBarColors(containerColor = Palette.background), title = { Text("Settings") },
             navigationIcon = { IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } })
     }) { pad ->
-        Column(Modifier.fillMaxSize().padding(pad).verticalScroll(rememberScrollState()).padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.fillMaxSize().padding(top = pad.calculateTopPadding()).imePadding().verticalScroll(rememberScrollState())
+            .padding(top = 8.dp, bottom = pad.calculateBottomPadding() + 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(if (tailnet) "Tailscale: on (this phone has a tailnet address)" else "Tailscale: not detected. Turn on Tailscale to reach the Mac.",
                 Modifier.padding(horizontal = 16.dp), color = if (tailnet) Palette.done else Palette.blocked, style = MaterialTheme.typography.bodySmall)
 
@@ -102,6 +109,8 @@ fun SettingsScreen(back: () -> Unit) {
                 note?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             }
 
+            HorizontalDivider(color = Palette.border)
+            Appearance()
             HorizontalDivider(color = Palette.border)
             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
@@ -131,3 +140,28 @@ private fun appSettings(c: Context) = c.startActivity(Intent(Settings.ACTION_APP
 
 @SuppressLint("BatteryLife")
 private fun askBattery(c: Context) = c.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${c.packageName}")))
+
+// Dark is the default. Status colours stay the same with wallpaper colours on.
+@Composable
+private fun Appearance() {
+    val ctx = LocalContext.current
+    val look by ctx.app.look.collectAsStateWithLifecycle()
+    Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Appearance", style = MaterialTheme.typography.titleSmall)
+        val prefs = ThemePref.entries
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            prefs.forEachIndexed { i, p ->
+                SegmentedButton(selected = look.pref == p, onClick = { ctx.app.setLook(look.copy(pref = p)) },
+                    shape = SegmentedButtonDefaults.itemShape(i, prefs.size)) { Text(p.name) }
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Use wallpaper colours", style = MaterialTheme.typography.bodyLarge)
+                Text("Takes the app colours from your wallpaper. Status colours do not change.",
+                    style = MaterialTheme.typography.bodySmall, color = Palette.mutedForeground)
+            }
+            Switch(look.wallpaperColours, { ctx.app.setLook(look.copy(wallpaperColours = it)) })
+        }
+    }
+}

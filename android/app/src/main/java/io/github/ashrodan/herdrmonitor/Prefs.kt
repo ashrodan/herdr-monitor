@@ -13,6 +13,16 @@ class Prefs(context: Context) {
         get() = p.getString("server", null) ?: DEFAULT_SERVER
         set(v) = p.edit().putString("server", v).apply()
 
+    // Dark (default), Light or System; and whether to take colours from the
+    // wallpaper (off by default). Status colours never change.
+    var theme: String
+        get() = p.getString("theme", null) ?: "Dark"
+        set(v) = p.edit().putString("theme", v).apply()
+
+    var wallpaperColours: Boolean
+        get() = p.getBoolean("wallpaper_colours", false)
+        set(v) = p.edit().putBoolean("wallpaper_colours", v).apply()
+
     var alerts: Boolean
         get() = p.getBoolean("alerts", true)
         set(v) = p.edit().putBoolean("alerts", v).apply()

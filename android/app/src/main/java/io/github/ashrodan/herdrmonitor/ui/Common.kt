@@ -25,9 +25,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -50,43 +51,31 @@ import androidx.compose.ui.unit.sp
 import io.github.ashrodan.herdrmonitor.Block
 import io.github.ashrodan.herdrmonitor.Markdown
 import io.github.ashrodan.herdrmonitor.Space
+import io.github.ashrodan.herdrmonitor.ui.theme.LocalStatusColors
+import io.github.ashrodan.herdrmonitor.ui.theme.Mono
 
-// The web UI's dark theme (web/src/index.css, .dark). The app is always
-// dark: it does not follow the system's light theme.
+// The old names, now read from the theme (ui/theme/Theme.kt) so every
+// screen follows Dark, Light, System and wallpaper colours. Status colours
+// come from LocalStatusColors, never from the wallpaper scheme.
 object Palette {
-    val background = Color(0xFF131417)
-    val foreground = Color(0xFFE6E6E8)
-    val card = Color(0xFF1A1B1F)
-    val secondary = Color(0xFF24252B)
-    val muted = Color(0xFF222328)
-    val mutedForeground = Color(0xFF8D8E96)
-    val accent = Color(0xFF26272D)
-    val border = Color(0xFF2A2B31)
-    val code = Color(0xFF0E0F12)
-    val working = Color(0xFF6EA8FF)
-    val done = Color(0xFF4CC38A)
-    val blocked = Color(0xFFF0A83A)
-    val error = Color(0xFFF0645A)
-    val idle = Color(0xFF7D7E86)
+    val background: Color @Composable @ReadOnlyComposable get() = MaterialTheme.colorScheme.surface
+    val foreground: Color @Composable @ReadOnlyComposable get() = MaterialTheme.colorScheme.onSurface
+    val card: Color @Composable @ReadOnlyComposable get() = MaterialTheme.colorScheme.surfaceContainerLow
+    val secondary: Color @Composable @ReadOnlyComposable get() = MaterialTheme.colorScheme.secondaryContainer
+    val muted: Color @Composable @ReadOnlyComposable get() = MaterialTheme.colorScheme.surfaceContainerHigh
+    val mutedForeground: Color @Composable @ReadOnlyComposable get() = MaterialTheme.colorScheme.onSurfaceVariant
+    val accent: Color @Composable @ReadOnlyComposable get() = MaterialTheme.colorScheme.surfaceContainerHigh
+    val border: Color @Composable @ReadOnlyComposable get() = MaterialTheme.colorScheme.outlineVariant
+    val code: Color @Composable @ReadOnlyComposable get() = MaterialTheme.colorScheme.surfaceContainerLowest
+    val working: Color @Composable @ReadOnlyComposable get() = MaterialTheme.colorScheme.primary
+    val done: Color @Composable @ReadOnlyComposable get() = LocalStatusColors.current.ready
+    val blocked: Color @Composable @ReadOnlyComposable get() = LocalStatusColors.current.waiting
+    val error: Color @Composable @ReadOnlyComposable get() = LocalStatusColors.current.failed
+    val idle: Color @Composable @ReadOnlyComposable get() = MaterialTheme.colorScheme.onSurfaceVariant
 }
 
-private val Scheme = darkColorScheme(
-    primary = Palette.foreground, onPrimary = Palette.background,
-    secondary = Palette.secondary, onSecondary = Palette.foreground,
-    secondaryContainer = Palette.secondary, onSecondaryContainer = Palette.foreground,
-    tertiary = Palette.working,
-    background = Palette.background, onBackground = Palette.foreground,
-    surface = Palette.background, onSurface = Palette.foreground,
-    surfaceVariant = Palette.muted, onSurfaceVariant = Palette.mutedForeground,
-    surfaceContainer = Palette.card, surfaceContainerLow = Palette.card, surfaceContainerHigh = Palette.accent,
-    surfaceContainerHighest = Palette.accent, surfaceContainerLowest = Palette.background,
-    outline = Palette.border, outlineVariant = Palette.border,
-    error = Palette.error,
-)
-
 @Composable
-fun HerdrTheme(content: @Composable () -> Unit) = MaterialTheme(colorScheme = Scheme, content = content)
-
+@ReadOnlyComposable
 fun stateColor(state: String?) = when (state) {
     "working" -> Palette.working
     "blocked" -> Palette.blocked
@@ -138,17 +127,24 @@ val STATE_LABEL = mapOf("blocked" to "Needs you", "error" to "Error", "done" to 
 
 // ---- Markdown (Markdown.kt parses; this draws) ----
 
-fun annotated(text: String): AnnotatedString = buildAnnotatedString {
+@Composable
+fun annotated(text: String): AnnotatedString {
+    val codeBg = Palette.muted
+    val link = Palette.working
+    return remember(text, codeBg, link) { annotatedWith(text, codeBg, link) }
+}
+
+private fun annotatedWith(text: String, codeBg: Color, link: Color): AnnotatedString = buildAnnotatedString {
     for (s in Markdown.spans(text)) {
         val style = SpanStyle(
             fontWeight = if (s.bold) FontWeight.SemiBold else null,
             fontStyle = if (s.italic) FontStyle.Italic else null,
-            fontFamily = if (s.code) FontFamily.Monospace else null,
-            background = if (s.code) Palette.muted else Color.Unspecified,
+            fontFamily = if (s.code) Mono else null,
+            background = if (s.code) codeBg else Color.Unspecified,
             fontSize = if (s.code) 0.9.em else androidx.compose.ui.unit.TextUnit.Unspecified,
         )
         if (s.url != null) {
-            withLink(LinkAnnotation.Url(s.url, TextLinkStyles(SpanStyle(color = Palette.working, textDecoration = TextDecoration.Underline)))) {
+            withLink(LinkAnnotation.Url(s.url, TextLinkStyles(SpanStyle(color = link, textDecoration = TextDecoration.Underline)))) {
                 withStyle(style) { append(s.text) }
             }
         } else withStyle(style) { append(s.text) }
@@ -171,7 +167,7 @@ fun MarkdownView(text: String, modifier: Modifier = Modifier, keepBreaks: Boolea
             }
             is Block.Rule -> Box(Modifier.fillMaxWidth().padding(vertical = 4.dp).height(1.dp).background(Palette.border))
             is Block.Code -> Text(b.text, Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Palette.code)
-                .horizontalScroll(rememberScrollState()).padding(10.dp), fontFamily = FontFamily.Monospace, fontSize = 12.sp, lineHeight = 16.sp,
+                .horizontalScroll(rememberScrollState()).padding(10.dp), fontFamily = Mono, fontSize = 12.sp, lineHeight = 16.sp,
                 softWrap = false, color = Palette.foreground)
             is Block.Items -> Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 b.items.forEachIndexed { i, item ->

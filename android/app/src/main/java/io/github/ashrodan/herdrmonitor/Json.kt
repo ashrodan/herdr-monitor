@@ -50,16 +50,16 @@ object Json {
         val st = o.optJSONObject("status")
         return Terminal(
             address = o.getString("address"),
-            name = o.optStringOrNull("name"),
+            name = Glyphs.label(o.optStringOrNull("name")),
             agent = o.optString("agent", "?"),
             cwd = o.optStringOrNull("cwd"),
             state = o.optString("state", "live"),
-            title = o.optStringOrNull("title"),
-            where = o.optStringOrNull("where"),
+            title = Glyphs.label(o.optStringOrNull("title")),
+            where = Glyphs.label(o.optStringOrNull("where")),
             reported = o.optBoolean("reported"),
             status = st?.optStringOrNull("state"),
             kind = st?.optStringOrNull("kind"),
-            msg = st?.optStringOrNull("msg"),
+            msg = Glyphs.label(st?.optStringOrNull("msg")),
             exitCode = o.optIntOrNull("exit_code"),
             parent = o.optStringOrNull("parent"),
             space = o.optStringOrNull("space"),
@@ -72,19 +72,19 @@ object Json {
 
     fun spaces(a: JSONArray?): List<Space> = a.mapObj { s ->
         Space(
-            id = s.getString("id"), name = s.optString("name"), color = s.optStringOrNull("color"),
+            id = s.getString("id"), name = Glyphs.label(s.optString("name"))!!, color = s.optStringOrNull("color"),
             repo = s.optStringOrNull("repo"), branch = s.optStringOrNull("branch"),
             worktree = s.optBoolean("worktree"), virtual = s.optBoolean("virtual"),
             parent = s.optStringOrNull("parent"), behind = s.optInt("behind"),
-            tabs = s.optJSONArray("tabs").mapObj { t -> SpaceTab(t.getString("id"), t.optString("name"), t.optBoolean("named"), t.optJSONArray("terminals").strings()) },
+            tabs = s.optJSONArray("tabs").mapObj { t -> SpaceTab(t.getString("id"), Glyphs.label(t.optString("name"))!!, t.optBoolean("named"), t.optJSONArray("terminals").strings()) },
         )
     }
 
     fun terminals(a: JSONArray?): List<Terminal> = a.mapObj(::terminal)
 
     fun agent(o: JSONObject) = AgentInfo(
-        address = o.getString("address"), name = o.optString("name", o.getString("address")), state = o.optString("state", "idle"),
-        kind = o.optStringOrNull("kind"), msg = o.optStringOrNull("msg"),
+        address = o.getString("address"), name = Glyphs.label(o.optString("name", o.getString("address")))!!, state = o.optString("state", "idle"),
+        kind = o.optStringOrNull("kind"), msg = Glyphs.label(o.optStringOrNull("msg")),
         changedMs = o.optLongOrNull("changed_ms"), seenMs = o.optLongOrNull("seen_ms"),
     )
 
@@ -115,7 +115,7 @@ object Json {
         ServerInfo(it.getString("url"), it.optString("name"), it.optStringOrNull("os"), it.optBoolean("self"), herdr(it.optJSONObject("herdr")), it.optBoolean("older"))
     }
 
-    fun readText(text: String): String = JSONObject(text).optString("text")
+    fun readText(text: String): String = Glyphs.mono(JSONObject(text).optString("text"))
     fun uploadPath(text: String): String = JSONObject(text).optString("path")
 
     // null when the server says the version did not change.
@@ -135,17 +135,17 @@ object Json {
     private fun result(o: JSONObject): ToolResult? {
         if (!o.has("result") || o.isNull("result")) return null
         val r = o.opt("result")
-        return if (r is JSONObject) ToolResult(r.optString("text"), r.optBoolean("error"), r.optBoolean("truncated"))
+        return if (r is JSONObject) ToolResult(Glyphs.mono(r.optString("text")), r.optBoolean("error"), r.optBoolean("truncated"))
         else ToolResult(r.toString(), false, false)
     }
 
     private fun part(p: JSONObject): Part? = when (p.optString("kind")) {
-        "text" -> Part.Text(p.optString("text"))
-        "thinking" -> Part.Thinking(p.optString("text"))
-        "tool" -> Part.Tool(p.optString("name"), p.optString("summary"), result(p))
+        "text" -> Part.Text(Glyphs.prose(p.optString("text")))
+        "thinking" -> Part.Thinking(Glyphs.prose(p.optString("text")))
+        "tool" -> Part.Tool(p.optString("name"), Glyphs.label(p.optString("summary"))!!, result(p))
         "question" -> Part.Ask(p.optString("id"), p.optJSONArray("questions").mapObj { q ->
-            Question(q.optString("header"), q.optString("question"), q.optBoolean("multi"),
-                q.optJSONArray("options").mapObj { Option(it.optString("label"), it.optString("description")) })
+            Question(Glyphs.label(q.optString("header"))!!, Glyphs.prose(q.optString("question")), q.optBoolean("multi"),
+                q.optJSONArray("options").mapObj { Option(Glyphs.label(it.optString("label"))!!, Glyphs.label(it.optString("description"))!!) })
         }, answered = result(p) != null, answer = result(p)?.text)
         else -> null
     }

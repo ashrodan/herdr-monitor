@@ -7,14 +7,27 @@ import android.net.Uri
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
+import io.github.ashrodan.herdrmonitor.ui.theme.ThemePref
+import kotlinx.coroutines.flow.MutableStateFlow
+
+data class Look(val pref: ThemePref, val wallpaperColours: Boolean)
 
 class App : Application() {
     lateinit var prefs: Prefs
     lateinit var store: Store
+    // The theme the screens draw with; Settings changes it.
+    val look = MutableStateFlow(Look(ThemePref.Dark, false))
+
+    fun setLook(l: Look) {
+        prefs.theme = l.pref.name
+        prefs.wallpaperColours = l.wallpaperColours
+        look.value = l
+    }
 
     override fun onCreate() {
         super.onCreate()
         prefs = Prefs(this)
+        look.value = Look(ThemePref.of(prefs.theme), prefs.wallpaperColours)
         store = Store { prefs.server }
         Notifier.channels(this)
     }

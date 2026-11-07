@@ -52,6 +52,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.ashrodan.herdrmonitor.ui.theme.Mono
 import io.github.ashrodan.herdrmonitor.Link
 import io.github.ashrodan.herdrmonitor.Live
 import io.github.ashrodan.herdrmonitor.OverviewPr
@@ -109,7 +110,9 @@ fun HomeScreen(live: Live, go: (Route) -> Unit) {
             title = { ServerChip(server, live.link) { picking = true } },
             actions = { IconButton(onClick = { go(Route.Settings) }) { Icon(Icons.Default.Settings, "Settings") } })
     }) { pad ->
-        Column(Modifier.fillMaxSize().padding(pad)) {
+        // Only the top inset pads the screen; the list scrolls under the
+        // navigation bar and ends clear of it.
+        Column(Modifier.fillMaxSize().padding(top = pad.calculateTopPadding())) {
             ConnectionLine(live)
             SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
                 SECTIONS.forEachIndexed { i, s ->
@@ -119,7 +122,7 @@ fun HomeScreen(live: Live, go: (Route) -> Unit) {
                         icon = {}) { Text(s) }
                 }
             }
-            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 6.dp, end = 6.dp, bottom = 24.dp)) {
+            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 6.dp, end = 6.dp, bottom = pad.calculateBottomPadding() + 24.dp)) {
                 when (section) {
                     "Spaces" -> spacesList(ctx, live, go)
                     "Agents" -> agentsList(ctx, live, now, go)
@@ -224,7 +227,7 @@ private fun Empty(text: String) = Text(text, Modifier.padding(horizontal = 16.dp
 @Composable
 fun Glyph(agent: String) {
     Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) {
-        Text(agent.take(1).uppercase(), fontFamily = FontFamily.Monospace, fontSize = 12.sp, color = Palette.mutedForeground)
+        Text(agent.take(1).uppercase(), fontSize = 12.sp, color = Palette.mutedForeground)
     }
 }
 
@@ -259,7 +262,7 @@ fun AppRow(ctx: Context, t: Terminal, name: String) {
                 Text(name, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                 Text("  app", fontSize = 12.sp, color = Palette.mutedForeground)
             }
-            Text(url ?: "port ${t.listen?.port} · the machine's address is not known", fontSize = 12.sp, fontFamily = FontFamily.Monospace,
+            Text(url ?: "port ${t.listen?.port} · the machine's address is not known", fontSize = 12.sp, fontFamily = Mono,
                 color = if (url != null) Palette.working else Palette.mutedForeground, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (url != null) Text("Open ↗", fontSize = 12.sp, color = Palette.working)
@@ -300,12 +303,13 @@ fun SpaceScreen(live: Live, id: String, go: (Route) -> Unit, back: () -> Unit) {
                     Column {
                         Text(s?.name ?: "Space", maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
                         if (s != null) Text(shortPath(s.repo) + (s.branch?.let { " · $it" } ?: "") + if (s.behind > 0) " · ↓${s.behind}" else "",
-                            fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = Palette.mutedForeground, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            fontFamily = Mono, fontSize = 11.sp, color = Palette.mutedForeground, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             })
     }) { pad ->
-        LazyColumn(Modifier.fillMaxSize().padding(pad), contentPadding = PaddingValues(10.dp)) {
+        LazyColumn(Modifier.fillMaxSize().padding(top = pad.calculateTopPadding()),
+            contentPadding = PaddingValues(start = 10.dp, end = 10.dp, top = 10.dp, bottom = pad.calculateBottomPadding() + 10.dp)) {
             item { ConnectionLine(live) }
             if (s == null) { item { Empty(if (live.link == Link.Online) "This space is gone." else "Connecting…") }; return@LazyColumn }
             for (tab in s.tabs) {

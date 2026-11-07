@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -72,7 +71,7 @@ fun ServerChip(server: String, link: Link, onClick: () -> Unit) {
 @Composable
 fun ServerSheet(onDismiss: () -> Unit) {
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Palette.card) {
-        ServerList(Modifier.navigationBarsPadding().padding(bottom = 16.dp), onPicked = onDismiss)
+        ServerList(Modifier.padding(bottom = 16.dp), onPicked = onDismiss)
     }
 }
 
