@@ -49,3 +49,18 @@ test('discover: keeps peers that answer as herdr-monitor', async () => {
   const none = await discover({ status: STATUS, port: 443, self: null, fetchJson: async () => null });
   assert.deepEqual(none.servers, []);
 });
+
+test('discover: also tries the extra ports, on every peer', async () => {
+  const asked = [];
+  const fetchJson = async (url) => { asked.push(url); return url.endsWith(':7400/api/info') ? { app: 'herdr-monitor', herdr: null } : null; };
+  const { servers } = await discover({ status: STATUS, port: 7410, ports: [7400, 7410, 99999], self: { app: 'herdr-monitor' }, fetchJson });
+  assert.deepEqual(asked.filter((u) => u.endsWith('/info')).sort(), ['https://box.tail1.ts.net:7400/api/info', 'https://box.tail1.ts.net:7410/api/info', 'https://mac.tail1.ts.net:7400/api/info']);
+  assert.deepEqual(servers.map((s) => [s.name, s.port, s.self]), [['mac.tail1.ts.net', 7400, true], ['mac.tail1.ts.net', 7410, true], ['box.tail1.ts.net', 7400, false]]);
+});
+
+test('discover: an older server without /api/info is found by its /api/health', async () => {
+  const fetchJson = async (url) => url === 'https://box.tail1.ts.net:7400/api/health' ? { ok: true, connected: true, socket: '/x.sock', terminals: 3 }
+    : url.endsWith('/api/health') ? { ok: true } : null;
+  const { servers } = await discover({ status: STATUS, port: 7400, self: null, fetchJson });
+  assert.deepEqual(servers.map((s) => [s.name, s.older, s.herdr]), [['box.tail1.ts.net', true, null]]);
+});

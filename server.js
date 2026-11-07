@@ -16,7 +16,8 @@ import { chatFor } from './lib/transcript.js';
 import { loadVapid, Subscriptions, sendPush } from './lib/push.js';
 import { answerKeys, currentQuestion } from './lib/answer.js';
 import { AgentFeed, sseFrame } from './lib/agents.js';
-import { herdrInfo, discover } from './lib/herdr.js';
+import { herdrInfo, discover, tailnetPeers } from './lib/herdr.js';
+import { listenOf, machineHost, portFromText } from './lib/apps.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOST = process.env.HOST || '127.0.0.1';
@@ -97,7 +98,35 @@ async function loadSeed() {
 function remember(s) {
   if (s.changed_ms == null) s.changed_ms = seedChanged.get(s.address) ?? null;
   s.seen_ms = herdrSeen.get(s.address) ?? null;
+  if (!s.listen && screenListen.has(s.address)) s.listen = screenListen.get(s.address);
+  if (s.listen) s.listen = { ...s.listen, host: machineHost(s.address, machines, peers) };
   return s;
+}
+
+// ---- Running apps (lib/apps.js) ----
+// A shell's dev server often prints its URL but has no --port: read the
+// first screen lines of live terminals without a status, at most 6 every
+// 30 s, each again after 2 minutes.
+const screenListen = new Map(); // address -> {scheme, port}
+const screenRead = new Map();   // address -> ms
+let machines = [], peers = [];
+async function scanApps() {
+  if (!rpc) return;
+  const due = [...terminals.values()].filter((t) => t.state === 'live' && !t.status && !t.listen && Date.now() - (screenRead.get(t.address) || 0) > 120000).slice(0, 6);
+  for (const t of due) {
+    screenRead.set(t.address, Date.now());
+    try {
+      const r = await rpc.call('terminal.read', { terminal: t.address, lines: 60 });
+      const l = listenOf({ screen: String(r?.text ?? '') });
+      if (l) { screenListen.set(t.address, l); remember(t); broadcast('terminal', t); }
+    } catch { /* gone */ }
+  }
+}
+// hc machines and tailnet names, for apps on other machines (dai/t1).
+async function loadMachines() {
+  const out = await new Promise((resolve) => execFile(HC_BIN, ['machine', 'ls', '--json'], { timeout: 5000 }, (err, o) => resolve(err ? null : o)));
+  try { machines = JSON.parse(out).machines || []; } catch { machines = []; }
+  peers = tailnetPeers(await tailscaleStatus());
 }
 
 let layoutTimer = null;
@@ -141,6 +170,7 @@ async function refreshOne(address) {
     const prev = terminals.get(address);
     if (prev?.title && !s.title) s.title = prev.title;
     if (prev?.changed_ms && !s.changed_ms) s.changed_ms = prev.changed_ms;
+    if (prev?.listen && !s.listen) s.listen = prev.listen;
     terminals.set(address, s);
     broadcast('terminal', s);
   } catch (err) {
@@ -159,6 +189,7 @@ function onEvent(ev) {
   if (ev.type === 'missed') { resync(); return; }
   if (ev.type === 'title' && t) {
     t.title = ev.data?.title ?? null;
+    if (!t.listen) { const l = portFromText(t.title); if (l) { t.listen = l; remember(t); } }
     broadcast('terminal', t);
   } else if (ev.type === 'status' && t) {
     const before = t.status?.state ?? null;
@@ -471,9 +502,10 @@ function tailscaleStatus() {
     try { resolve(err ? null : JSON.parse(out)); } catch { resolve(null); }
   }));
 }
-async function discovered() {
-  if (!discoverCache || Date.now() - discoverCache.at > 60000) {
-    discoverCache = { at: Date.now(), value: await discover({ status: await tailscaleStatus(), port: HTTPS_PORT, self: await info() }) };
+async function discovered(ports = []) {
+  const key = ports.slice().sort().join(',');
+  if (!discoverCache || discoverCache.key !== key || Date.now() - discoverCache.at > 60000) {
+    discoverCache = { at: Date.now(), key, value: await discover({ status: await tailscaleStatus(), port: HTTPS_PORT, ports, self: await info() }) };
   }
   return discoverCache.value;
 }
@@ -496,7 +528,10 @@ const routes = [
   ['GET', /^\/api\/sidebar$/, (req, res) => send(res, 200, { spaces: layout })],
   ['GET', /^\/api\/overview$/, async (req, res, m, url) => send(res, 200, await overview({ fresh: url.searchParams.has('fresh') }))],
   ['GET', /^\/api\/info$/, async (req, res) => send(res, 200, await info())],
-  ['GET', /^\/api\/discover$/, async (req, res) => send(res, 200, await discovered())],
+  ['GET', /^\/api\/discover$/, async (req, res, m, url) => {
+    const ports = (url.searchParams.get('ports') || '').split(',').map(Number).filter((n) => Number.isInteger(n) && n > 0 && n < 65536).slice(0, 3);
+    send(res, 200, await discovered(ports));
+  }],
   ['GET', /^\/api\/health$/, (req, res) => send(res, 200, { ok: true, connected, socket: SOCKET, terminals: terminals.size })],
   ['GET', /^\/api\/terminals$/, (req, res) => send(res, 200, snapshot())],
   ['GET', /^\/api\/events$/, (req, res) => {
@@ -649,4 +684,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   server.listen(PORT, HOST, () => console.log(`herdr-monitor on http://${HOST}:${PORT}`));
   start();
   setInterval(() => { if (connected) refreshLayout(); }, 60000); // cwd and branch drift
+  loadMachines(); setInterval(loadMachines, 300000);
+  setInterval(() => { if (connected) scanApps(); }, 30000);
 }
