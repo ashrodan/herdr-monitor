@@ -85,6 +85,9 @@ class App : Application() {
     fun serverChanged() {
         digests.value = emptyMap()
         sent.value = emptyMap()
+        // Pins, seen and opened are per server (Prefs).
+        pins.value = prefs.pinned
+        serviceStates.clear()
         store.restart()
         readDigests()
     }

@@ -38,6 +38,8 @@ class AlertService : Service() {
     private val asks = ConcurrentHashMap<String, Part.Ask>()
     private val running = ConcurrentHashMap<String, Job>()
     private lateinit var prefs: Prefs
+    // The server the records above are for.
+    private var server: String? = null
     private val net = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) { reconnect() }
     }
@@ -88,6 +90,9 @@ class AlertService : Service() {
         // registerDefaultNetworkCallback calls onAvailable right away: skip
         // that one when a link is already starting.
         if (firstNetwork) { firstNetwork = false; if (link?.isActive == true) return }
+        val srv = prefs.server
+        if (server != null && server != srv) forgetServer()
+        server = srv
         val gen = ++generation
         link?.cancel()
         link = scope.launch {
@@ -107,6 +112,18 @@ class AlertService : Service() {
                 delay(backoff.next())
             }
         }
+    }
+
+    // The server changed: what the service knows of the old one's agents
+    // goes, and so do their notifications. The new server's posted record
+    // matches the screen again (nothing of it is on screen).
+    private fun forgetServer() {
+        for (a in running.keys.toList()) stopRunning(a)
+        agents.clear()
+        asks.clear()
+        app.serviceStates.clear()
+        Notifier.cancelAllAgents(this)
+        prefs.posted = emptyMap()
     }
 
     private var lastHeard = 0L

@@ -195,6 +195,15 @@ object Notifier {
         if (lastRunning.remove(address) != null) summary(c)
     }
 
+    // Another server: its agents' alerts, running notifications and group
+    // summaries go (the next snapshot posts the new server's). The service
+    // notification stays.
+    fun cancelAllAgents(c: Context) {
+        for (n in nm(c).activeNotifications) if (n.id == ID_AGENT || n.id == ID_RUNNING || n.id == ID_SUMMARY) nm(c).cancel(n.tag, n.id)
+        lastRunning.clear()
+        lastSummary.clear()
+    }
+
     // Quiet agents turned on: only Needs you stays.
     fun cancelQuiet(c: Context) {
         for (n in nm(c).activeNotifications) {

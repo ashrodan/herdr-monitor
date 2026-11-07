@@ -6,8 +6,29 @@ import org.json.JSONObject
 
 const val DEFAULT_SERVER = "https://ashleys-macbook-pro-2.tail5265d4.ts.net:7400"
 
+// The per-agent records (seen, posted, opened, pinned) are kept per server:
+// t1 on one server is not t1 on another.
+fun scopedKey(key: String, server: String) = "$key@$server"
+private val SCOPED = listOf("seen", "posted", "opened", "pinned")
+
 class Prefs(context: Context) {
     private val p: SharedPreferences = context.applicationContext.getSharedPreferences("herdr", Context.MODE_PRIVATE)
+
+    // Records from before they were per server belong to the server in use.
+    init {
+        val e = p.edit()
+        for (k in SCOPED) if (p.contains(k)) {
+            val to = scopedKey(k, server)
+            if (!p.contains(to)) when (k) {
+                "pinned" -> e.putStringSet(to, p.getStringSet(k, emptySet())!!.toSet())
+                else -> e.putString(to, p.getString(k, "{}"))
+            }
+            e.remove(k)
+        }
+        e.commit()
+    }
+
+    private fun scoped(key: String) = scopedKey(key, server)
 
     var server: String
         get() = p.getString("server", null) ?: DEFAULT_SERVER
@@ -42,17 +63,18 @@ class Prefs(context: Context) {
         get() = p.getLong("listened_ms", 0)
         set(v) = p.edit().putLong("listened_ms", v).apply()
 
-    // "Done" agents opened on this phone (address -> ms), like the web UI's seen map.
+    // "Done" agents opened on this phone (address -> ms), like the web UI's
+    // seen map. This and the records below are for the server in use.
     var localSeen: Map<String, Long>
-        get() = readMap("seen").mapValues { (it.value as? Number)?.toLong() ?: 0L }
-        set(v) = writeMap("seen", v)
+        get() = readMap(scoped("seen")).mapValues { (it.value as? Number)?.toLong() ?: 0L }
+        set(v) = writeMap(scoped("seen"), v)
 
     fun markSeen(address: String) { localSeen = localSeen + (address to System.currentTimeMillis()) }
 
     // The alert state of each notification on screen (address -> state).
     var posted: Map<String, String>
-        get() = readMap("posted").mapValues { it.value.toString() }
-        set(v) = writeMap("posted", v)
+        get() = readMap(scoped("posted")).mapValues { it.value.toString() }
+        set(v) = writeMap(scoped("posted"), v)
 
     // Replies waiting to be sent (Outbox), as JSON.
     val outboxStorage = object : OutboxStorage {
@@ -64,8 +86,8 @@ class Prefs(context: Context) {
     // When each agent was last opened on this phone (address -> ms): newer
     // output than that is unread.
     var opened: Map<String, Long>
-        get() = readMap("opened").mapValues { (it.value as? Number)?.toLong() ?: 0L }
-        set(v) = writeMap("opened", v)
+        get() = readMap(scoped("opened")).mapValues { (it.value as? Number)?.toLong() ?: 0L }
+        set(v) = writeMap(scoped("opened"), v)
 
     fun markOpened(address: String) { opened = opened + (address to System.currentTimeMillis()) }
 
@@ -75,8 +97,8 @@ class Prefs(context: Context) {
 
     // Pinned sessions sit at the top of their section. Local to the phone.
     var pinned: Set<String>
-        get() = p.getStringSet("pinned", emptySet())!!.toSet()
-        set(v) = p.edit().putStringSet("pinned", v).apply()
+        get() = p.getStringSet(scoped("pinned"), emptySet())!!.toSet()
+        set(v) = p.edit().putStringSet(scoped("pinned"), v).apply()
 
     // The widget's data, as the service last wrote it.
     var widgetJson: String?
