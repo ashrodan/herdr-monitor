@@ -13,7 +13,7 @@ test('sessionRequest: starts the harness with the prompt as one argument, in the
   assert.equal(r.ok, true);
   assert.deepEqual(r.params.argv, ['claude', '--', 'fix the "tests"; rm -rf /']);
   assert.equal(r.params.cwd, '/Users/me/dev/herdr-monitor');
-  assert.match(r.params.name, /^mnt1-claude-[a-z0-9]{1,6}$/);
+  assert.match(r.params.name, /^hm-claude-[a-z0-9]{1,6}$/);
   assert.equal(r.params.wait, false);
   assert.equal(r.params.no_parent, true);
   assert.equal(r.params.line, undefined);
@@ -58,8 +58,8 @@ test('sessionRequest: a prompt that starts with - is refused, so it cannot pass 
   assert.deepEqual(sessionRequest({ space: 's1', harness: 'claude', prompt: ' --x' }, layout).params.argv, ['claude', '--', ' --x']);
 });
 
-test('sessionName: valid for hc and starts with mnt1-', () => {
+test('sessionName: valid for hc and starts with hm-', () => {
   const n = sessionName('claude', Date.now());
-  assert.match(n, /^mnt1-[a-z0-9_-]{1,27}$/);
+  assert.match(n, /^hm-[a-z0-9_-]{1,29}$/);
   assert.ok(n.length <= 32);
 });
