@@ -152,8 +152,15 @@ object Notifier {
     // A working agent: its name, the current step, Stop, and the stage
     // (Plan, Edit, Verify, PR). Segmented ProgressStyle on Android 16
     // (API 36); a plain progress bar below. Silent.
+    // What each running notification and each host summary last showed:
+    // post again only when it changes, so a slow device is not flooded.
+    private val lastRunning = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val lastSummary = java.util.concurrent.ConcurrentHashMap<String, String>()
+
     fun postRunning(c: Context, a: AgentInfo, step: String?, stage: Int?) {
         val text = step ?: a.msg?.takeIf { it.isNotBlank() } ?: "Working"
+        val sig = listOf(a.name, text, stage?.toString() ?: "-", a.changedMs?.toString() ?: "-").joinToString("\u0000")
+        if (lastRunning.put(a.address, sig) == sig) return
         val b = Notification.Builder(c, CH_RUNNING)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(a.name)
@@ -180,13 +187,17 @@ object Notifier {
         summary(c)
     }
 
-    fun cancelRunning(c: Context, address: String) { nm(c).cancel(address, ID_RUNNING); summary(c) }
+    fun cancelRunning(c: Context, address: String) {
+        // Always cancel: one may be left from before an app restart.
+        nm(c).cancel(address, ID_RUNNING)
+        if (lastRunning.remove(address) != null) summary(c)
+    }
 
     // Quiet agents turned on: only Needs you stays.
     fun cancelQuiet(c: Context) {
         for (n in nm(c).activeNotifications) {
             val ch = n.notification.channelId
-            if (ch == CH_RUNNING || ch == CH_FINISHED) if (n.tag != null) nm(c).cancel(n.tag, n.id)
+            if (ch == CH_RUNNING || ch == CH_FINISHED) if (n.tag != null) { nm(c).cancel(n.tag, n.id); lastRunning.remove(n.tag) }
         }
         summary(c)
     }
@@ -196,8 +207,13 @@ object Notifier {
     fun summary(c: Context) {
         val g = group(c)
         val kids = nm(c).activeNotifications.filter { it.notification.group == g && it.id != ID_SUMMARY && it.id != ID_SERVICE }
-        if (kids.isEmpty()) { nm(c).cancel(g, ID_SUMMARY); return }
+        if (kids.isEmpty()) {
+            if (lastSummary.remove(g) != null) nm(c).cancel(g, ID_SUMMARY)
+            return
+        }
         val lines = kids.mapNotNull { it.notification.extras.getCharSequence(Notification.EXTRA_TITLE) }
+        val sig = lines.joinToString("\u0000")
+        if (lastSummary.put(g, sig) == sig) return
         val style = Notification.InboxStyle().setSummaryText(hostOf(c.app.prefs.server))
         lines.take(5).forEach { style.addLine(it) }
         val n = Notification.Builder(c, CH_RUNNING)
