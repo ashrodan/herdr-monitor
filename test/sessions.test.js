@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sessionName, sessionRequest, PROMPT_MAX } from '../lib/sessions.js';
+import { sessionName, sessionRequest, sessionResult, PROMPT_MAX } from '../lib/sessions.js';
 
 const layout = [
   { id: 's1', name: 'herdr-monitor', folder: '/Users/me/dev/herdr-monitor', tabs: [] },
@@ -62,4 +62,12 @@ test('sessionName: valid for hc and starts with hm-', () => {
   const n = sessionName('claude', Date.now());
   assert.match(n, /^hm-[a-z0-9_-]{1,29}$/);
   assert.ok(n.length <= 32);
+});
+
+test('sessionResult reads the address from either reply shape, and the name falls back to ours', () => {
+  const params = { name: 'hm-claude-abc' };
+  assert.deepEqual(sessionResult({ address: 't7', name: 'x' }, params), { address: 't7', name: 'x' });
+  assert.deepEqual(sessionResult({ terminal: { address: 't8' } }, params), { address: 't8', name: 'hm-claude-abc' });
+  assert.equal(sessionResult({}, params), null);
+  assert.equal(sessionResult(null, params), null);
 });

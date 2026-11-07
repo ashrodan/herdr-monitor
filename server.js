@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { HcConnection, defaultSocket, summarize } from './lib/hc.js';
 import { repoCommits, commitDetail } from './lib/git.js';
 import { buildLayout, repoInfo, terminalsIn } from './lib/sidebar.js';
-import { sessionRequest } from './lib/sessions.js';
+import { sessionRequest, sessionResult } from './lib/sessions.js';
 import { prStatus } from './lib/pr.js';
 import { chatFor } from './lib/transcript.js';
 import { loadVapid, Subscriptions, sendPush } from './lib/push.js';
@@ -599,8 +599,9 @@ const routes = [
   ['POST', /^\/api\/sessions$/, async (req, res) => {
     const r = sessionRequest(await readJson(req), layout);
     if (!r.ok) return send(res, r.status, { error: r.error });
-    const t = await rpc.call('terminal.run', r.params);
-    send(res, 200, { address: t.address, name: t.name ?? r.params.name });
+    const out = sessionResult(await rpc.call('terminal.run', r.params), r.params);
+    if (!out) return send(res, 502, { error: 'hc started no terminal' });
+    send(res, 200, out);
   }],
   ['POST', /^\/api\/terminals\/([^/]+)\/send$/, async (req, res, [addr]) => {
     if (!terminalOr404(res, addr)) return;
