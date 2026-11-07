@@ -50,7 +50,7 @@ object Notifier {
     private fun nm(c: Context) = c.getSystemService(NotificationManager::class.java)
     // One group per host.
     fun group(c: Context) = "host:" + hostOf(c.app.prefs.server)
-    private fun icon(c: Context) = Icon.createWithResource(c, R.drawable.ic_notification)
+    private fun icon(c: Context) = Icon.createWithResource(c, R.drawable.ic_stat_herdr)
 
     // Request codes must differ per agent and action, or Android reuses the
     // first PendingIntent's extras.
@@ -131,7 +131,7 @@ object Notifier {
         val body = question ?: if (state == "blocked") alertBody(a, state) else finishedLine(a, state, pr)
         val ch = if (channelFor(state) == Channel.Finished) CH_FINISHED else CH_NEEDS
         val n = Notification.Builder(c, ch)
-            .setSmallIcon(R.drawable.ic_notification)
+            .setSmallIcon(R.drawable.ic_stat_herdr)
             .setContentTitle(alertTitle(a.name, state))
             .setContentText(body)
             .setStyle(Notification.BigTextStyle().bigText(body))
@@ -162,7 +162,7 @@ object Notifier {
         val sig = listOf(a.name, text, stage?.toString() ?: "-", a.changedMs?.toString() ?: "-").joinToString("\u0000")
         if (lastRunning.put(a.address, sig) == sig) return
         val b = Notification.Builder(c, CH_RUNNING)
-            .setSmallIcon(R.drawable.ic_notification)
+            .setSmallIcon(R.drawable.ic_stat_herdr)
             .setContentTitle(a.name)
             .setContentText(text)
             .setSubText(stage?.let { STAGES[it] })
@@ -220,8 +220,9 @@ object Notifier {
         val style = Notification.InboxStyle().setSummaryText(hostOf(c.app.prefs.server))
         lines.take(5).forEach { style.addLine(it) }
         val n = Notification.Builder(c, CH_RUNNING)
-            .setSmallIcon(R.drawable.ic_notification)
+            .setSmallIcon(R.drawable.ic_stat_herdr)
             .setContentTitle("${kids.size} agent${if (kids.size == 1) "" else "s"}")
+            .setColor(c.getColor(R.color.herdr_notification_accent))
             .setStyle(style)
             .setGroup(g)
             .setGroupSummary(true)
@@ -234,7 +235,7 @@ object Notifier {
     // After an action: say it failed, keep a way back into the app.
     fun postFailure(c: Context, address: String, what: String, error: String) {
         val n = Notification.Builder(c, CH_NEEDS)
-            .setSmallIcon(R.drawable.ic_notification)
+            .setSmallIcon(R.drawable.ic_stat_herdr)
             .setContentTitle("$what not sent")
             .setContentText(error)
             .setContentIntent(openPi(c, address))
@@ -248,8 +249,9 @@ object Notifier {
     fun cancelAgent(c: Context, address: String) { nm(c).cancel(address, ID_AGENT); summary(c) }
 
     fun service(c: Context, text: String): Notification = Notification.Builder(c, CH_SERVICE)
-        .setSmallIcon(R.drawable.ic_notification)
+        .setSmallIcon(R.drawable.ic_stat_herdr)
         .setContentTitle(text)
+        .setColor(c.getColor(R.color.herdr_notification_accent))
         .setContentIntent(PendingIntent.getActivity(c, 0, Intent(c, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
         .setOngoing(true)
         .setShowWhen(false)

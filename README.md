@@ -81,6 +81,11 @@ WebView.
   reply before it goes.
 - **Look**: Material 3 Expressive, dark by default. Settings has Dark, Light
   or System, and an option for wallpaper colours.
+- **Brand**: a border collie (the orchestrator) and sheep (the agents). The
+  launcher icon is an adaptive icon with a monochrome layer (themed icons).
+  The splash shows the collie on wheat, or on pine in dark mode. The
+  notification and tile icons are the white collie head. Sessions and Spaces
+  have sheep and paddock glyphs, and empty and offline Home show a scene.
 - **Notifications**, on three channels, grouped by server:
   - **Needs you** (high): an agent asks a question or stopped with an
     error. Up to three answer buttons, or Reply.

@@ -28,7 +28,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
@@ -187,11 +186,11 @@ fun HomeScreen(live: Live, go: (Route) -> Unit, selected: String? = null) {
     }) {
         NavigationSuiteScaffold(layoutType = navSuiteType(), navigationSuiteItems = {
             item(selected = tab == HomeTab.Sessions, onClick = { tab = HomeTab.Sessions; filter = null },
-                icon = { NavIcon(Icons.Default.Home, counts.needsYou, waiting = true) }, label = { Text("Sessions") })
+                icon = { NavIcon(HerdrGlyph.Sheep, counts.needsYou, waiting = true) }, label = { Text("Sessions") })
             item(selected = tab == HomeTab.Prs, onClick = { tab = HomeTab.Prs },
                 icon = { NavIcon(Icons.Default.CheckCircle, awaitingReview(live.prs), waiting = false) }, label = { Text("PRs") })
             item(selected = tab == HomeTab.Spaces, onClick = { tab = HomeTab.Spaces },
-                icon = { Icon(Icons.AutoMirrored.Filled.List, null) }, label = { Text("Spaces") })
+                icon = { HerdrIcon(HerdrGlyph.Paddock, null) }, label = { Text("Spaces") })
         }) {
             val list = rememberLazyListState()
             var fabExpanded by remember { mutableStateOf(true) }
@@ -264,12 +263,18 @@ fun HomeScreen(live: Live, go: (Route) -> Unit, selected: String? = null) {
 }
 
 @Composable
-private fun NavIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, count: Int, waiting: Boolean) {
+private fun NavIcon(glyph: HerdrGlyph, count: Int, waiting: Boolean) = NavIcon({ HerdrIcon(glyph, null) }, count, waiting)
+
+@Composable
+private fun NavIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, count: Int, waiting: Boolean) = NavIcon({ Icon(icon, null) }, count, waiting)
+
+@Composable
+private fun NavIcon(icon: @Composable () -> Unit, count: Int, waiting: Boolean) {
     val c = LocalStatusColors.current
     BadgedBox(badge = {
         if (count > 0) Badge(containerColor = if (waiting) c.waiting else MaterialTheme.colorScheme.primary,
             contentColor = if (waiting) c.onWaiting else MaterialTheme.colorScheme.onPrimary) { Text(if (count > 99) "99+" else "$count") }
-    }) { Icon(icon, null) }
+    }) { icon() }
 }
 
 // Menu, the Ask Herdr pill (a filter on this phone), the host avatar.
@@ -300,7 +305,11 @@ private fun LazyListScope.sessionsList(
 ) {
     if (all.isEmpty()) {
         item(key = "empty") {
-            Text(if (live.link == Link.Online) "No sessions." else "Connecting to Herdr…", Modifier.padding(24.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            when (live.link) {
+                Link.Online -> SceneState(HerdrScene.AllPenned, "No sessions.")
+                Link.Offline -> SceneState(HerdrScene.Offline, "No link to the server.")
+                Link.Connecting -> Text("Connecting to Herdr…", Modifier.padding(24.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
         return
     }
@@ -323,7 +332,8 @@ private fun LazyListScope.sessionsList(
             val idle = all.count { it.bucket == Bucket.Idle }
             if (idle > 0) item(key = "idle-row", contentType = "idle") { IdleRow(idle, showIdle) }
         }
-        Bucket.NeedsYou -> group("Needs you", Bucket.NeedsYou)
+        Bucket.NeedsYou -> if (all.none { it.bucket == Bucket.NeedsYou }) item(key = "penned") { SceneState(HerdrScene.AllPenned, "Nobody needs you.") }
+            else group("Needs you", Bucket.NeedsYou)
         Bucket.Working -> group("Working", Bucket.Working)
         Bucket.Ready -> group("Ready to review", Bucket.Ready)
         Bucket.Idle -> group("Idle", Bucket.Idle)
