@@ -208,7 +208,10 @@ object Notifier {
         val g = group(c)
         val kids = nm(c).activeNotifications.filter { it.notification.group == g && it.id != ID_SUMMARY && it.id != ID_SERVICE }
         if (kids.isEmpty()) {
-            if (lastSummary.remove(g) != null) nm(c).cancel(g, ID_SUMMARY)
+            // Always cancel: one may be left from before an app restart.
+            // The dedupe below is for posting only.
+            lastSummary.remove(g)
+            nm(c).cancel(g, ID_SUMMARY)
             return
         }
         val lines = kids.mapNotNull { it.notification.extras.getCharSequence(Notification.EXTRA_TITLE) }
