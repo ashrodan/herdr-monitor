@@ -123,11 +123,14 @@ monitor connected" notification.
 ### Build and install
 
 The app needs Android 12 or later. To build it, you need the Android SDK
-(`ANDROID_HOME`) and JDK 17 or later. Android Studio is not needed.
+(`ANDROID_HOME`) and JDK 21 or later (the screenshot tests need 21; the app's
+bytecode is Java 17). Android Studio is not needed.
 
     cd android
     ./gradlew assembleDebug         # app/build/outputs/apk/debug/app-debug.apk
-    ./gradlew test lint             # unit tests and lint
+    ./gradlew test lint             # unit tests, screenshot tests and lint
+    ./gradlew verifyPaparazziDebug  # compare the screenshots with the records
+    ./gradlew recordPaparazziDebug  # after a deliberate UI change: new records
     ./gradlew connectedDebugAndroidTest   # UI tests (an emulator or a phone)
     ./gradlew installPerf           # release code (R8), debug key: to measure speed
 

@@ -1,6 +1,8 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
+    // Screenshot tests on the JVM (src/test/.../ScreenshotTest.kt), no device.
+    id("app.cash.paparazzi")
 }
 
 // Release signing (sideload only, no Play). The keystore stays outside the
@@ -69,8 +71,10 @@ android {
     }
 }
 
+// Bytecode for Android stays Java 17. The build itself runs on the JDK that
+// runs Gradle (21 or later): Paparazzi needs 21 to run its tests.
 kotlin {
-    jvmToolchain(17)
+    compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
 }
 
 dependencies {
