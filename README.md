@@ -84,7 +84,8 @@ WebView.
 - **Notifications**, on three channels, grouped by server:
   - **Needs you** (high): an agent asks a question or stopped with an
     error. Up to three answer buttons, or Reply.
-  - **Running** (low, silent): one per working agent, with its current step
+  - **Running** (low, silent): for a pinned session while it works (at most
+    three; pin a session from its long-press menu), with its current step
     and a **Stop** button. A four-stage bar (Plan, Edit, Verify, PR); the
     app guesses the stage from the agent's tool calls, because the server
     does not report one.

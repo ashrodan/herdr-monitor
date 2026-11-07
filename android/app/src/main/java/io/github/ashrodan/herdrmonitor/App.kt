@@ -37,6 +37,8 @@ class App : Application() {
     fun togglePin(address: String) {
         val next = if (address in pins.value) pins.value - address else pins.value + address
         pins.value = next; prefs.pinned = next
+        // Running notifications follow the pins: the service looks again.
+        AlertService.start(this, reconnect = true)
     }
     // The theme the screens draw with; Settings changes it.
     // Home's filter, asked for from outside (the Herdr tile: Needs you).

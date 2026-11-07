@@ -20,6 +20,13 @@ fun mayAlert(state: String, quiet: Boolean): Boolean {
     return !quiet || ch == Channel.NeedsYou
 }
 
+// A Running notification only for a pinned session that works, at most 3
+// at once, and none with Quiet agents. One per working agent flooded a
+// slow device (the emulator's system_server was killed), and a shade of
+// progress bars is noise.
+const val MAX_RUNNING = 3
+fun wantsRunning(state: String, quiet: Boolean, pinned: Boolean): Boolean = state == "working" && !quiet && pinned
+
 // The four stages of the running notification.
 val STAGES = listOf("Plan", "Edit", "Verify", "PR")
 

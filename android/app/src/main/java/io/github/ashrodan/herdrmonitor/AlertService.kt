@@ -197,20 +197,19 @@ class AlertService : Service() {
     // space name in the agent's name, the only link the stream gives).
     private fun prFor(a: AgentInfo): Pr? = prs.firstOrNull { a.name.startsWith(it.spaceName) }?.pr
 
-    // A working agent gets a silent running notification: its current step
-    // and stage, read from its transcript every 15 s while it works. At
-    // most 8 at once. Quiet agents: none.
+    // A pinned working agent gets a silent running notification: its
+    // current step and stage, read from its transcript every 15 s while it
+    // works. At most MAX_RUNNING at once. Quiet agents: none.
     private fun syncRunning(a: AgentInfo) {
-        val working = a.state == "working" && !prefs.quiet
-        if (!working) { stopRunning(a.address); return }
-        if (running[a.address]?.isActive == true || running.size >= 8) return
+        if (!wantsRunning(a.state, prefs.quiet, a.address in prefs.pinned)) { stopRunning(a.address); return }
+        if (running[a.address]?.isActive == true || running.size >= MAX_RUNNING) return
         running[a.address] = scope.launch {
             Notifier.postRunning(this@AlertService, a, null, null)
             while (isActive) {
                 val now = agents[a.address]
-                if (now == null || now.state != "working" || prefs.quiet) break
+                if (now == null || !wantsRunning(now.state, prefs.quiet, a.address in prefs.pinned)) break
                 val chat = withTimeoutOrNull(8000) { runCatching { Api(prefs.server).chat(a.address, null) }.getOrNull() }
-                if (agents[a.address]?.state != "working" || prefs.quiet) break
+                if (agents[a.address]?.state != "working" || prefs.quiet || a.address !in prefs.pinned) break
                 val msgs = chat?.messages.orEmpty()
                 Notifier.postRunning(this@AlertService, now, currentStep(msgs), if (chat?.available == true) progressStage(msgs) else null)
                 delay(15_000)

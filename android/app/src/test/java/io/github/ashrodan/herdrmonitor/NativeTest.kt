@@ -63,3 +63,13 @@ class NativeTest {
         assertEquals("Tests pass", finishedLine(a.copy(msg = "Tests pass"), "done", null))
     }
 }
+
+class RunningRuleTest {
+    @Test fun onlyPinnedWorkingSessionsGetARunningNotification() {
+        assertTrue(wantsRunning("working", quiet = false, pinned = true))
+        assertFalse(wantsRunning("working", quiet = false, pinned = false))
+        assertFalse(wantsRunning("working", quiet = true, pinned = true))
+        assertFalse(wantsRunning("done", quiet = false, pinned = true))
+        assertEquals(3, MAX_RUNNING)
+    }
+}
