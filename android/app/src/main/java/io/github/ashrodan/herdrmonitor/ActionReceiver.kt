@@ -32,6 +32,10 @@ class ActionReceiver : BroadcastReceiver() {
                     what.startsWith(ANSWER) || intent.hasExtra(EXTRA_OPTION) -> {
                         val shape = Notifier.shapeFrom(intent.getStringExtra(EXTRA_SHAPE))
                         api.answer(address, shape, 0, intent.getIntExtra(EXTRA_OPTION, 0))
+                        // The Home card shows "Sent: <answer>" until the
+                        // agent's next output, as after a tap in the app.
+                        val l = intent.getStringExtra(EXTRA_LABEL) ?: "answer"
+                        c.app.sent.value = c.app.sent.value + (address to SentMark(l, System.currentTimeMillis()))
                     }
                 }
                 // Done: the alert goes (the stream says what happens next).
@@ -49,6 +53,7 @@ class ActionReceiver : BroadcastReceiver() {
         const val EXTRA_FORCE = "force"
         const val EXTRA_SHAPE = "shape"
         const val EXTRA_OPTION = "option"
+        const val EXTRA_LABEL = "label"
         const val REPLY = "REPLY"
         const val INTERRUPT = "INTERRUPT"
         const val ANSWER = "ANSWER"

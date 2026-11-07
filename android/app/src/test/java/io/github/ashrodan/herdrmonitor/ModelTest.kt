@@ -66,15 +66,22 @@ class ModelTest {
         assertEquals(listOf("c", "b"), g[0].rows.map { it.address })
     }
 
-    @Test fun widgetDataCountsLikeTheSummaryMod() {
+    @Test fun widgetShowsCountsAndTheTopNeedsYouSession() {
         val agents = listOf(agent("blocked", addr = "a"), agent("error", addr = "b"), agent("done", addr = "c"),
             agent("done", seen = 100, addr = "d"), agent("working", addr = "e"))
         val prs = listOf(OverviewPr("s", "app", null, "b", Pr(7, "Fix", "https://x/7", false, "b", null, null), "ready", 1, 0))
-        val w = widgetData(true, agents, prs, emptyMap(), 1000)
-        assertEquals(listOf(2, 1, 1, 1), listOf(w.waiting, w.done, w.working, w.prs))
-        assertEquals(listOf("a", "b", "c", null), w.rows.map { it.address })
-        assertEquals("https://x/7", w.rows.last().url)
-        assertEquals("error", w.rows.last().state)
+        val ask = Part.Ask("q", listOf(Question("Colours", "Which accent?", false, listOf(Option("Teal", ""), Option("Amber", "")))), false)
+        val w = widgetData(true, "mac", agents, prs, mapOf("a" to ask), emptyMap(), 1000)
+        // Needs you counts waiting and failed.
+        assertEquals(listOf(2, 1, 1), listOf(w.needsYou, w.working, w.prs))
+        // Waiting comes before failed; its first answer is the button.
+        assertEquals("a", w.top?.address)
+        assertEquals("Which accent?", w.top?.line)
+        assertEquals("Teal", w.top?.option)
+        assertEquals(listOf(QuestionShape("Which accent?", 2, false)), w.top?.shape)
+        // No question read yet: no button.
+        assertNull(widgetData(true, "mac", agents, prs, emptyMap(), emptyMap(), 1000).top?.option)
+        assertNull(widgetData(true, "mac", listOf(agent("working", addr = "e")), prs, emptyMap(), emptyMap(), 1000).top)
     }
 
     @Test fun tailnetAddresses() {

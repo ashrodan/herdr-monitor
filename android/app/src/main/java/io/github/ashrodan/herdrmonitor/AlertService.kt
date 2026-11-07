@@ -33,6 +33,10 @@ class AlertService : Service() {
     private var prs: List<OverviewPr> = emptyList()
     @Volatile private var connected = false
     private var widgetJob: Job? = null
+    // The open question of each blocked agent (for the widget's answer
+    // button), and one job per working agent for its running notification.
+    private val asks = ConcurrentHashMap<String, Part.Ask>()
+    private val running = ConcurrentHashMap<String, Job>()
     private lateinit var prefs: Prefs
     private val net = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) { reconnect() }
@@ -69,7 +73,8 @@ class AlertService : Service() {
         runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(net) }
         scope.cancel()
         connected = false
-        Widget.save(this, widgetData(false, agents.values, prs, prefs.localSeen, System.currentTimeMillis()))
+        Widget.save(this, widgetFor(false))
+        for (a in running.keys) Notifier.cancelRunning(this, a)
         super.onDestroy()
     }
 
@@ -120,6 +125,8 @@ class AlertService : Service() {
                 list.forEach { agents[it.address] = it }
                 val addresses = prefs.posted.keys + agents.keys
                 for (a in addresses) apply(planAlert(a, prefs.posted[a], agents[a], prefs.localSeen, since))
+                for (a in running.keys - agents.keys) stopRunning(a)
+                list.forEach { syncRunning(it) }
                 app.serviceStates.clear()
                 list.forEach { app.serviceStates[it.address] = it.state }
                 // The link is up: send replies that waited in the outbox.
@@ -129,13 +136,17 @@ class AlertService : Service() {
                 val a = Json.agent(o)
                 agents[a.address] = a
                 app.serviceStates[a.address] = a.state
+                if (a.state != "blocked") asks.remove(a.address)
                 apply(planAlert(a.address, prefs.posted[a.address], a, prefs.localSeen))
+                syncRunning(a)
             }
             "removed" -> {
                 val a = o.optString("address")
                 agents.remove(a)
                 app.serviceStates.remove(a)
+                asks.remove(a)
                 apply(planAlert(a, prefs.posted[a], null))
+                stopRunning(a)
             }
             "connection" -> status(if (o.optBoolean("connected")) "Herdr monitor connected" else "Herdr monitor connected (Herdr is not running)")
         }
@@ -152,7 +163,9 @@ class AlertService : Service() {
             }
             is AlertAction.Post -> {
                 prefs.posted = prefs.posted + (action.agent.address to action.state)
-                scope.launch { post(action.agent, action.state) }
+                // Quiet agents: the state is kept (so turning quiet off
+                // does not replay it), but only Needs you alerts.
+                if (mayAlert(action.state, prefs.quiet)) scope.launch { post(action.agent, action.state) }
             }
         }
     }
@@ -162,7 +175,7 @@ class AlertService : Service() {
     // transcript, so read the chat a few times (about 6 s) and, when the
     // question shows up, update the alert quietly with its options.
     private suspend fun post(a: AgentInfo, state: String) {
-        Notifier.postAgent(this, a, state, null, quiet = false)
+        Notifier.postAgent(this, a, state, null, quiet = false, pr = prFor(a))
         if (state != "blocked") return
         repeat(5) { attempt ->
             if (attempt > 0) delay(1500)
@@ -171,9 +184,49 @@ class AlertService : Service() {
             }
             // It may have moved on while we read.
             if (prefs.posted[a.address] != state) return
-            if (ask != null) { Notifier.postAgent(this, agents[a.address] ?: a, state, ask, quiet = true); return }
+            if (ask != null) {
+                asks[a.address] = ask
+                Notifier.postAgent(this, agents[a.address] ?: a, state, ask, quiet = true)
+                pushWidget()
+                return
+            }
         }
     }
+
+    // The PR of the agent's space, from the overview (matched by the
+    // space name in the agent's name, the only link the stream gives).
+    private fun prFor(a: AgentInfo): Pr? = prs.firstOrNull { a.name.startsWith(it.spaceName) }?.pr
+
+    // A working agent gets a silent running notification: its current step
+    // and stage, read from its transcript every 15 s while it works. At
+    // most 8 at once. Quiet agents: none.
+    private fun syncRunning(a: AgentInfo) {
+        val working = a.state == "working" && !prefs.quiet
+        if (!working) { stopRunning(a.address); return }
+        if (running[a.address]?.isActive == true || running.size >= 8) return
+        running[a.address] = scope.launch {
+            Notifier.postRunning(this@AlertService, a, null, null)
+            while (isActive) {
+                val now = agents[a.address]
+                if (now == null || now.state != "working" || prefs.quiet) break
+                val chat = withTimeoutOrNull(8000) { runCatching { Api(prefs.server).chat(a.address, null) }.getOrNull() }
+                if (agents[a.address]?.state != "working" || prefs.quiet) break
+                val msgs = chat?.messages.orEmpty()
+                Notifier.postRunning(this@AlertService, now, currentStep(msgs), if (chat?.available == true) progressStage(msgs) else null)
+                delay(15_000)
+            }
+            running.remove(a.address)
+            Notifier.cancelRunning(this@AlertService, a.address)
+        }
+    }
+
+    private fun stopRunning(address: String) {
+        running.remove(address)?.cancel()
+        Notifier.cancelRunning(this, address)
+    }
+
+    private fun widgetFor(connected: Boolean) =
+        widgetData(connected, shortHost(prefs.server), agents.values, prs, asks, prefs.localSeen, System.currentTimeMillis())
 
     private fun loadPrs() {
         prs = runCatching { Json.overview(Api(prefs.server).get("/api/overview", 60000)) }.getOrDefault(prs)
@@ -185,7 +238,7 @@ class AlertService : Service() {
         if (widgetJob?.isActive == true) return
         widgetJob = scope.launch {
             delay(1000)
-            Widget.save(this@AlertService, widgetData(connected, agents.values, prs, prefs.localSeen, System.currentTimeMillis()))
+            Widget.save(this@AlertService, widgetFor(connected))
         }
     }
 

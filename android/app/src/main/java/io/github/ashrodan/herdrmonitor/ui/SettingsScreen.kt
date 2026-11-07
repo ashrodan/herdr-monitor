@@ -52,6 +52,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.github.ashrodan.herdrmonitor.AlertService
+import io.github.ashrodan.herdrmonitor.setQuiet
 import io.github.ashrodan.herdrmonitor.Api
 import io.github.ashrodan.herdrmonitor.DEFAULT_SERVER
 import io.github.ashrodan.herdrmonitor.HerdrInfo
@@ -86,6 +87,7 @@ fun SettingsScreen(back: () -> Unit) {
     var url by remember { mutableStateOf(prefs.server) }
     var note by remember { mutableStateOf<String?>(null) }
     var alerts by remember { mutableStateOf(prefs.alerts) }
+    var quiet by remember { mutableStateOf(prefs.quiet) }
     var round by remember { mutableStateOf(0) }
     val tailnet = remember { onTailnet(ctx) }
 
@@ -122,6 +124,14 @@ fun SettingsScreen(back: () -> Unit) {
                     alerts = on; prefs.alerts = on
                     if (on) AlertService.start(ctx) else AlertService.stop(ctx)
                 })
+            }
+            Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Quiet agents", style = MaterialTheme.typography.titleSmall)
+                    Text("Only Needs you alerts: no Running or Finished notifications. The Quiet agents tile does the same.",
+                        style = MaterialTheme.typography.bodySmall, color = Palette.mutedForeground)
+                }
+                Switch(quiet, { on -> quiet = on; setQuiet(ctx, on) })
             }
             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (!ctx.mayNotify()) OutlinedButton(onClick = { appSettings(ctx) }) { Text("Allow notifications") }

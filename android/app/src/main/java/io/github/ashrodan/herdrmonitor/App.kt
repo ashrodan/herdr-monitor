@@ -39,6 +39,8 @@ class App : Application() {
         pins.value = next; prefs.pinned = next
     }
     // The theme the screens draw with; Settings changes it.
+    // Home's filter, asked for from outside (the Herdr tile: Needs you).
+    val homeFilter = MutableStateFlow<Bucket?>(null)
     val look = MutableStateFlow(Look(ThemePref.Dark, false))
 
     fun isBlocked(address: String): Boolean =

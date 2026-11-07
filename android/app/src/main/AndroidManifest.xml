@@ -48,6 +48,29 @@
 
         <receiver android:name=".ActionReceiver" android:exported="false" />
 
+        <service
+            android:name=".HerdrTile"
+            android:exported="true"
+            android:icon="@drawable/ic_notification"
+            android:label="Herdr"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <service
+            android:name=".QuietTile"
+            android:exported="true"
+            android:icon="@drawable/ic_quiet"
+            android:label="Quiet agents"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data android:name="android.service.quicksettings.TOGGLEABLE_TILE" android:value="true" />
+        </service>
+
         <receiver android:name=".BootReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

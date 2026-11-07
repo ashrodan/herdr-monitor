@@ -8,23 +8,38 @@ import android.app.RemoteInput
 import android.content.Context
 import android.content.Intent
 import android.graphics.drawable.Icon
+import android.os.Build
 import org.json.JSONArray
 import org.json.JSONObject
 
-// The notifications: one per agent (tag = its address, so a new state
-// replaces the old one), plus the quiet "connected" one of AlertService.
+// The notifications, on three channels (Needs you, Running, Finished):
+// one alert per agent (tag = its address, so a new state replaces the old
+// one), one running notification per working agent, a summary per host so
+// they group, and the quiet "connected" one of AlertService.
 object Notifier {
-    const val CH_ALERTS = "alerts"
+    const val CH_NEEDS = "needs_you"
+    const val CH_RUNNING = "running"
+    const val CH_FINISHED = "finished"
     const val CH_SERVICE = "service"
+    private const val CH_OLD = "alerts"
     const val ID_AGENT = 1
     const val ID_SERVICE = 2
-    const val GROUP = "herdr-agents"
+    const val ID_RUNNING = 3
+    const val ID_SUMMARY = 4
     const val KEY_REPLY = "reply"
 
     fun channels(c: Context) {
         val nm = c.getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(NotificationChannel(CH_ALERTS, "Agent alerts", NotificationManager.IMPORTANCE_HIGH).apply {
-            description = "An agent needs you, is done, or hit an error"
+        nm.deleteNotificationChannel(CH_OLD)
+        nm.createNotificationChannel(NotificationChannel(CH_NEEDS, "Needs you", NotificationManager.IMPORTANCE_HIGH).apply {
+            description = "An agent asks a question or stopped with an error"
+        })
+        nm.createNotificationChannel(NotificationChannel(CH_RUNNING, "Running", NotificationManager.IMPORTANCE_LOW).apply {
+            description = "What a working agent does now. Silent."
+            setShowBadge(false)
+        })
+        nm.createNotificationChannel(NotificationChannel(CH_FINISHED, "Finished", NotificationManager.IMPORTANCE_DEFAULT).apply {
+            description = "An agent finished its turn"
         })
         nm.createNotificationChannel(NotificationChannel(CH_SERVICE, "Connection", NotificationManager.IMPORTANCE_MIN).apply {
             description = "Shown while the app listens for alerts"
@@ -33,6 +48,8 @@ object Notifier {
     }
 
     private fun nm(c: Context) = c.getSystemService(NotificationManager::class.java)
+    // One group per host.
+    fun group(c: Context) = "host:" + hostOf(c.app.prefs.server)
     private fun icon(c: Context) = Icon.createWithResource(c, R.drawable.ic_notification)
 
     // Request codes must differ per agent and action, or Android reuses the
@@ -66,19 +83,36 @@ object Notifier {
 
     private fun openAction(c: Context, address: String) = Notification.Action.Builder(icon(c), "Open", openPi(c, address)).build()
 
+    private fun stopAction(c: Context, address: String) =
+        locked(Notification.Action.Builder(icon(c), "Stop", actionPi(c, address, ActionReceiver.INTERRUPT))).build()
+
+    private fun prAction(c: Context, address: String, url: String) = Notification.Action.Builder(icon(c), "Open PR",
+        PendingIntent.getActivity(c, code(address, "pr"), Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)).build()
+
+    private fun viewAction(c: Context, address: String) = Notification.Action.Builder(icon(c), "View session", openPi(c, address)).build()
+
+    // An answer button: the receiver needs the form's shape, the option and
+    // its label (to mark the card "Sent" in the app).
+    fun answerIntent(c: Context, address: String, shape: List<QuestionShape>, j: Int, label: String) = Intent(c, ActionReceiver::class.java).apply {
+        action = "io.github.ashrodan.herdrmonitor.${ActionReceiver.ANSWER}.$j"
+        putExtra(ActionReceiver.EXTRA_ADDRESS, address)
+        putExtra(ActionReceiver.EXTRA_SHAPE, shapeJson(shape))
+        putExtra(ActionReceiver.EXTRA_OPTION, j)
+        putExtra(ActionReceiver.EXTRA_LABEL, label)
+    }
+
     private fun optionAction(c: Context, address: String, shape: List<QuestionShape>, j: Int, label: String): Notification.Action {
-        val pi = actionPi(c, address, "${ActionReceiver.ANSWER}.$j") {
-            putExtra(ActionReceiver.EXTRA_SHAPE, shapeJson(shape))
-            putExtra(ActionReceiver.EXTRA_OPTION, j)
-        }
+        val pi = PendingIntent.getBroadcast(c, code(address, "${ActionReceiver.ANSWER}.$j"), answerIntent(c, address, shape, j, label),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         return locked(Notification.Action.Builder(icon(c), label.take(30), pi)).build()
     }
 
     // Android shows at most three action buttons:
     //  blocked at one single-choice question: its options (then Reply);
     //  blocked otherwise: Reply, Interrupt, Open;
-    //  done or error: Reply, Open.
-    fun actionsFor(c: Context, a: AgentInfo, state: String, ask: Part.Ask?): List<Notification.Action> {
+    //  error: Reply, View session;
+    //  done: Open PR (when the space has one), View session, Reply.
+    fun actionsFor(c: Context, a: AgentInfo, state: String, ask: Part.Ask?, pr: Pr? = null): List<Notification.Action> {
         val opts = if (state == "blocked") ask?.quickOptions(3) else null
         if (opts != null) {
             val shape = ask!!.shape()
@@ -87,14 +121,16 @@ object Notifier {
         }
         return when (state) {
             "blocked" -> listOf(replyAction(c, a.address, force = true), interruptAction(c, a.address), openAction(c, a.address))
-            else -> listOf(replyAction(c, a.address, force = false), openAction(c, a.address))
+            "done" -> listOfNotNull(pr?.let { prAction(c, a.address, it.url) }, viewAction(c, a.address), replyAction(c, a.address, force = false))
+            else -> listOf(replyAction(c, a.address, force = false), viewAction(c, a.address))
         }
     }
 
-    fun postAgent(c: Context, a: AgentInfo, state: String, ask: Part.Ask?, quiet: Boolean = false) {
+    fun postAgent(c: Context, a: AgentInfo, state: String, ask: Part.Ask?, quiet: Boolean = false, pr: Pr? = null) {
         val question = if (state == "blocked") ask?.questions?.singleOrNull()?.question else null
-        val body = question ?: alertBody(a, state)
-        val n = Notification.Builder(c, CH_ALERTS)
+        val body = question ?: if (state == "blocked") alertBody(a, state) else finishedLine(a, state, pr)
+        val ch = if (channelFor(state) == Channel.Finished) CH_FINISHED else CH_NEEDS
+        val n = Notification.Builder(c, ch)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(alertTitle(a.name, state))
             .setContentText(body)
@@ -102,31 +138,95 @@ object Notifier {
             .setContentIntent(openPi(c, a.address))
             .setAutoCancel(true)
             .setOnlyAlertOnce(quiet)
-            .setGroup(GROUP)
+            .setGroup(group(c))
             .setCategory(if (state == "blocked") Notification.CATEGORY_MESSAGE else Notification.CATEGORY_STATUS)
             .setColor(colorOf(state))
             .setWhen(a.changedMs ?: System.currentTimeMillis())
             .setShowWhen(true)
-            .setActions(*actionsFor(c, a, state, ask).toTypedArray())
+            .setActions(*actionsFor(c, a, state, ask, pr).toTypedArray())
             .build()
         nm(c).notify(a.address, ID_AGENT, n)
+        summary(c)
+    }
+
+    // A working agent: its name, the current step, Stop, and the stage
+    // (Plan, Edit, Verify, PR). Segmented ProgressStyle on Android 16
+    // (API 36); a plain progress bar below. Silent.
+    fun postRunning(c: Context, a: AgentInfo, step: String?, stage: Int?) {
+        val text = step ?: a.msg?.takeIf { it.isNotBlank() } ?: "Working"
+        val b = Notification.Builder(c, CH_RUNNING)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(a.name)
+            .setContentText(text)
+            .setSubText(stage?.let { STAGES[it] })
+            .setContentIntent(openPi(c, a.address))
+            .setOnlyAlertOnce(true)
+            .setGroup(group(c))
+            .setCategory(Notification.CATEGORY_PROGRESS)
+            .setColor(colorOf("working"))
+            .setWhen(a.changedMs ?: System.currentTimeMillis())
+            .setShowWhen(true)
+            .setUsesChronometer(a.changedMs != null)
+            .setActions(stopAction(c, a.address))
+        if (stage != null) {
+            if (Build.VERSION.SDK_INT >= 36) {
+                b.setStyle(Notification.ProgressStyle()
+                    .setStyledByProgress(true)
+                    .setProgressSegments(STAGES.map { Notification.ProgressStyle.Segment(1).setColor(colorOf("working")) })
+                    .setProgress(stage + 1))
+            } else b.setProgress(STAGES.size, stage + 1, false)
+        } else b.setProgress(0, 0, true)
+        nm(c).notify(a.address, ID_RUNNING, b.build())
+        summary(c)
+    }
+
+    fun cancelRunning(c: Context, address: String) { nm(c).cancel(address, ID_RUNNING); summary(c) }
+
+    // Quiet agents turned on: only Needs you stays.
+    fun cancelQuiet(c: Context) {
+        for (n in nm(c).activeNotifications) {
+            val ch = n.notification.channelId
+            if (ch == CH_RUNNING || ch == CH_FINISHED) if (n.tag != null) nm(c).cancel(n.tag, n.id)
+        }
+        summary(c)
+    }
+
+    // The group summary for this host: posted while the group has a child,
+    // removed with the last one. Silent: the children alert.
+    fun summary(c: Context) {
+        val g = group(c)
+        val kids = nm(c).activeNotifications.filter { it.notification.group == g && it.id != ID_SUMMARY && it.id != ID_SERVICE }
+        if (kids.isEmpty()) { nm(c).cancel(g, ID_SUMMARY); return }
+        val lines = kids.mapNotNull { it.notification.extras.getCharSequence(Notification.EXTRA_TITLE) }
+        val style = Notification.InboxStyle().setSummaryText(hostOf(c.app.prefs.server))
+        lines.take(5).forEach { style.addLine(it) }
+        val n = Notification.Builder(c, CH_RUNNING)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("${kids.size} agent${if (kids.size == 1) "" else "s"}")
+            .setStyle(style)
+            .setGroup(g)
+            .setGroupSummary(true)
+            .setGroupAlertBehavior(Notification.GROUP_ALERT_CHILDREN)
+            .setContentIntent(PendingIntent.getActivity(c, code(g, "summary"), Intent(c, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
+            .build()
+        nm(c).notify(g, ID_SUMMARY, n)
     }
 
     // After an action: say it failed, keep a way back into the app.
     fun postFailure(c: Context, address: String, what: String, error: String) {
-        val n = Notification.Builder(c, CH_ALERTS)
+        val n = Notification.Builder(c, CH_NEEDS)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("$what not sent")
             .setContentText(error)
             .setContentIntent(openPi(c, address))
             .setAutoCancel(true)
-            .setGroup(GROUP)
+            .setGroup(group(c))
             .setOnlyAlertOnce(true)
             .build()
         nm(c).notify(address, ID_AGENT, n)
     }
 
-    fun cancelAgent(c: Context, address: String) = nm(c).cancel(address, ID_AGENT)
+    fun cancelAgent(c: Context, address: String) { nm(c).cancel(address, ID_AGENT); summary(c) }
 
     fun service(c: Context, text: String): Notification = Notification.Builder(c, CH_SERVICE)
         .setSmallIcon(R.drawable.ic_notification)

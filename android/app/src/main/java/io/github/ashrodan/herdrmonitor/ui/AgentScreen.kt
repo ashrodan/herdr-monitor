@@ -10,6 +10,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import android.content.ClipData
+import android.view.HapticFeedbackConstants
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.PaddingValues
@@ -463,6 +465,7 @@ private fun LiveStep(tool: Part.Tool?) {
 @Composable
 private fun AskCard(q: Part.Ask, api: Api, address: String, live: Boolean) {
     val scope = rememberCoroutineScope()
+    val view = LocalView.current
     val picked = remember(q.id) { mutableStateListOf<String>() }
     var note by remember(q.id) { mutableStateOf<String?>(null) }
     var busy by remember(q.id) { mutableStateOf(false) }
@@ -472,7 +475,8 @@ private fun AskCard(q: Part.Ask, api: Api, address: String, live: Boolean) {
         if (busy) return
         busy = true; note = null
         scope.launch {
-            io(body).onSuccess { after(); note = ok }.onFailure {
+            io(body).onSuccess { view.performHapticFeedback(HapticFeedbackConstants.CONFIRM); after(); note = ok }.onFailure {
+                view.performHapticFeedback(HapticFeedbackConstants.REJECT)
                 note = if (it.message == "the question form is not on screen") "The form is not on screen. Use Text to check." else "Not sent: ${it.message}"
             }
             busy = false

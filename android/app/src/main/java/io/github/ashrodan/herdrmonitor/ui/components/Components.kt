@@ -45,6 +45,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -92,6 +93,11 @@ val ClockIcon: ImageVector = materialIcon("Clock") {
         // Hands.
         moveTo(11f, 7f); lineTo(13f, 7f); lineTo(13f, 11.4f); lineTo(16.2f, 13.3f); lineTo(15.2f, 15f); lineTo(11f, 12.6f); close()
     }
+}
+
+// A light tick (filter chips): SEGMENT_TICK from Android 14, else a clock tick.
+fun tick(view: android.view.View) {
+    view.performHapticFeedback(if (android.os.Build.VERSION.SDK_INT >= 34) android.view.HapticFeedbackConstants.SEGMENT_TICK else android.view.HapticFeedbackConstants.CLOCK_TICK)
 }
 
 // ---- Status ----
@@ -155,6 +161,7 @@ fun SectionHeader(title: String, count: Int, waiting: Boolean = false) {
 // hidden, except All. Only the Needs you count is coloured.
 @Composable
 fun StatusFilterRow(counts: Counts, selected: Bucket?, onSelect: (Bucket?) -> Unit) {
+    val view = LocalView.current
     val c = LocalStatusColors.current
     val chips = listOf<Pair<Bucket?, String>>(null to "All", Bucket.NeedsYou to "Needs you", Bucket.Working to "Working", Bucket.Ready to "Ready", Bucket.Idle to "Idle")
         .filter { (b, _) -> b == null || counts.of(b) > 0 }
@@ -162,7 +169,7 @@ fun StatusFilterRow(counts: Counts, selected: Bucket?, onSelect: (Bucket?) -> Un
         items(chips.size, key = { chips[it].second }) { i ->
             val (b, label) = chips[i]
             FilterChip(
-                selected = selected == b, onClick = { onSelect(b) },
+                selected = selected == b, onClick = { tick(view); onSelect(b) },
                 label = {
                     Text(label)
                     if (b != null) {

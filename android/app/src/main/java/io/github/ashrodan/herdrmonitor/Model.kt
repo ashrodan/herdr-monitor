@@ -233,28 +233,43 @@ fun alertBody(a: AgentInfo, state: String) = a.msg?.takeIf { it.isNotBlank() } ?
     else -> ""
 }
 
-// ---- Widget (like the Summary mod's bar and list) ----
+// ---- Widget (4x2: host, three counts, the top Needs you session) ----
 
-data class WidgetRow(val address: String?, val url: String?, val label: String, val detail: String, val state: String)
+// The session at the top of Needs you, with its first answer when it waits
+// at one single-choice question.
+data class WidgetTop(
+    val address: String,
+    val name: String,
+    val line: String,
+    val state: String,
+    val option: String?,
+    val shape: List<QuestionShape>,
+)
+
 data class WidgetData(
     val connected: Boolean,
-    val waiting: Int,
-    val done: Int,
+    val host: String,
+    val needsYou: Int,
     val working: Int,
     val prs: Int,
-    val rows: List<WidgetRow>,
+    val top: WidgetTop?,
     val updatedMs: Long,
 )
 
-fun widgetData(connected: Boolean, agents: Collection<AgentInfo>, prs: List<OverviewPr>, localSeen: Map<String, Long>, now: Long, maxRows: Int = 8): WidgetData {
+// asks: the open question of each blocked agent, when the service read it.
+fun widgetData(connected: Boolean, host: String, agents: Collection<AgentInfo>, prs: List<OverviewPr>, asks: Map<String, Part.Ask>,
+               localSeen: Map<String, Long>, now: Long): WidgetData {
     val by = agents.groupBy { it.stateOf(localSeen) }
-    val waiting = (by["blocked"].orEmpty() + by["error"].orEmpty()).sortedByDescending { it.changedMs ?: 0 }
-    val done = by["done"].orEmpty().sortedByDescending { it.changedMs ?: 0 }
-    val working = by["working"].orEmpty()
-    val rows = waiting.map { WidgetRow(it.address, null, it.name, it.msg ?: alertBody(it, it.stateOf(localSeen)), it.stateOf(localSeen)) } +
-        done.map { WidgetRow(it.address, null, it.name, "done ${age(it.changedMs, now)} ago", "done") } +
-        prs.map { WidgetRow(null, it.pr.url, "#${it.pr.number} ${it.pr.title}", it.spaceName, if (it.fail > 0) "error" else if (it.pending > 0) "working" else "pr") }
-    return WidgetData(connected, waiting.size, done.size, working.size, prs.size, rows.take(maxRows), now)
+    // Waiting before failed, then the newest.
+    val needs = by["blocked"].orEmpty().sortedByDescending { it.changedMs ?: 0 } + by["error"].orEmpty().sortedByDescending { it.changedMs ?: 0 }
+    val top = needs.firstOrNull()?.let { a ->
+        val state = a.stateOf(localSeen)
+        val ask = asks[a.address]?.takeIf { state == "blocked" }
+        val opt = ask?.quickOptions(1)?.firstOrNull()
+        WidgetTop(a.address, a.name, ask?.questions?.singleOrNull()?.question ?: alertBody(a, state), state,
+            opt, if (opt != null) ask.shape() else emptyList())
+    }
+    return WidgetData(connected, host, needs.size, by["working"].orEmpty().size, prs.size, top, now)
 }
 
 // Tailscale's address range, 100.64.0.0/10.

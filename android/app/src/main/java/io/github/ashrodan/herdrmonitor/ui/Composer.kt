@@ -1,6 +1,8 @@
 package io.github.ashrodan.herdrmonitor.ui
 
 import android.net.Uri
+import android.view.HapticFeedbackConstants
+import androidx.compose.ui.platform.LocalView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -96,6 +98,7 @@ fun Composer(
     harness: String? = null,
 ) {
     val ctx = LocalContext.current
+    val view = LocalView.current
     val scope = rememberCoroutineScope()
     var text by remember(address) { mutableStateOf("") }
     var note by remember { mutableStateOf<String?>(null) }
@@ -134,13 +137,16 @@ fun Composer(
         sending = true
         scope.launch {
             runCatching { port.send(address, full, force) }
-                .onSuccess { text = ""; images.clear(); note = "Sent." }
-                .onFailure { queued(it.message ?: it.javaClass.simpleName) }
+                .onSuccess { view.performHapticFeedback(HapticFeedbackConstants.CONFIRM); text = ""; images.clear(); note = "Sent." }
+                .onFailure { view.performHapticFeedback(HapticFeedbackConstants.REJECT); queued(it.message ?: it.javaClass.simpleName) }
             sending = false
         }
     }
-    fun keys(k: String) = scope.launch { runCatching { port.keys(address, listOf(k)) }.onFailure { note = "Not sent: ${it.message}" } }
-    fun interrupt() = scope.launch { runCatching { port.interrupt(address) }.onSuccess { note = "Stop key sent." }.onFailure { note = "Not sent: ${it.message}" } }
+    fun failed(e: Throwable) { view.performHapticFeedback(HapticFeedbackConstants.REJECT); note = "Not sent: ${e.message}" }
+    fun keys(k: String) = scope.launch { runCatching { port.keys(address, listOf(k)) }.onFailure(::failed) }
+    fun interrupt() = scope.launch {
+        runCatching { port.interrupt(address) }.onSuccess { view.performHapticFeedback(HapticFeedbackConstants.CONFIRM); note = "Stop key sent." }.onFailure(::failed)
+    }
 
     Surface(color = MaterialTheme.colorScheme.surface) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 10.dp)) {

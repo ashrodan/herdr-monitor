@@ -26,6 +26,10 @@ class Prefs(context: Context) {
     var alerts: Boolean
         get() = p.getBoolean("alerts", true)
         set(v) = p.edit().putBoolean("alerts", v).apply()
+    // Quiet agents (the tile, and Settings): only Needs you alerts.
+    var quiet: Boolean
+        get() = p.getBoolean("quiet", false)
+        set(v) = p.edit().putBoolean("quiet", v).apply()
 
     // When the alert service last heard from the server: on a reconnect it
     // alerts only for changes after this time.

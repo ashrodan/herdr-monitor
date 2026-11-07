@@ -58,6 +58,7 @@ import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffo
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -128,6 +129,10 @@ fun HomeScreen(live: Live, go: (Route) -> Unit) {
     val snack = remember { SnackbarHostState() }
     var tab by rememberSaveable { mutableStateOf(HomeTab.Sessions) }
     var filter by rememberSaveable { mutableStateOf<Bucket?>(null) }
+    val asked by app.homeFilter.collectAsStateWithLifecycle()
+    LaunchedEffect(asked) {
+        asked?.let { tab = HomeTab.Sessions; filter = it; app.homeFilter.value = null }
+    }
     var query by rememberSaveable { mutableStateOf("") }
     var picking by remember { mutableStateOf(false) }
     var newSession by remember { mutableStateOf(false) }

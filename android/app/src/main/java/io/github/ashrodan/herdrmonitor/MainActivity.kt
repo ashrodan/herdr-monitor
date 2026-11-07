@@ -69,7 +69,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        if (savedInstanceState == null) pending = addressFrom(intent?.data)
+        if (savedInstanceState == null) { pending = addressFrom(intent?.data); needsYou(intent?.data) }
         if (Build.VERSION.SDK_INT >= 33 && !mayNotify()) {
             askNotify.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
@@ -90,6 +90,15 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         addressFrom(intent.data)?.let { pending = it }
+        needsYou(intent.data)
+    }
+
+    // The Herdr tile: Sessions, filtered to Needs you.
+    private var toHome by mutableStateOf(false)
+    private fun needsYou(uri: android.net.Uri?) {
+        if (!isNeedsYouLink(uri)) return
+        app.homeFilter.value = Bucket.NeedsYou
+        toHome = true
     }
 
     override fun onStart() { super.onStart(); app.store.start() }
@@ -111,6 +120,12 @@ class MainActivity : ComponentActivity() {
                 openAgent(nav, addr)
                 pending = null
             }
+        }
+        LaunchedEffect(nav, toHome) {
+            if (!toHome) return@LaunchedEffect
+            nav.currentBackStackEntryFlow.first()
+            nav.popBackStack(Nav.HOME, inclusive = false)
+            toHome = false
         }
         NavHost(nav, startDestination = Nav.HOME) {
             composable(Nav.HOME) { HomeScreen(live(), go) }
