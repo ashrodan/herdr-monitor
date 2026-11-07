@@ -15,6 +15,7 @@ import { prStatus } from './lib/pr.js';
 import { chatFor } from './lib/transcript.js';
 import { loadVapid, Subscriptions, sendPush } from './lib/push.js';
 import { answerKeys, currentQuestion } from './lib/answer.js';
+import { AgentFeed, sseFrame } from './lib/agents.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOST = process.env.HOST || '127.0.0.1';
@@ -35,8 +36,29 @@ const seedChanged = new Map(); // address -> ms, from Herdr's agent store
 const herdrSeen = new Map();   // address -> ms when Herdr turned its "done" into idle
 
 function broadcast(event, data) {
-  const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  const frame = sseFrame(event, data);
   for (const res of clients) res.write(frame);
+  if (event === 'connection') for (const res of agentClients) res.write(frame);
+  if (AGENT_TRIGGERS.has(event)) scheduleAgents();
+}
+
+// ---- Agent stream (the Android app) ----
+// One small feed: an agent's state, name or status changed. See lib/agents.js.
+const agentClients = new Set();
+const agentFeed = new AgentFeed();
+const AGENT_TRIGGERS = new Set(['terminal', 'removed', 'snapshot', 'layout']);
+let agentsQueued = false;
+function scheduleAgents() {
+  if (agentsQueued || !agentClients.size) return;
+  agentsQueued = true;
+  queueMicrotask(syncAgents);
+}
+function syncAgents() {
+  agentsQueued = false;
+  for (const [event, data] of agentFeed.diff(terminals.values(), nameOf)) {
+    const frame = sseFrame(event, data);
+    for (const res of agentClients) res.write(frame);
+  }
 }
 
 function snapshot() {
@@ -461,6 +483,14 @@ const routes = [
     clients.add(res);
     const ping = setInterval(() => res.write(': ping\n\n'), 25000);
     req.on('close', () => { clearInterval(ping); clients.delete(res); });
+  }],
+  ['GET', /^\/api\/agents\/stream$/, (req, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
+    syncAgents(); // the clients already here get any pending change first
+    res.write(sseFrame('snapshot', { connected, agents: AgentFeed.snapshot(terminals.values(), nameOf) }));
+    agentClients.add(res);
+    const ping = setInterval(() => res.write(': ping\n\n'), 25000);
+    req.on('close', () => { clearInterval(ping); agentClients.delete(res); });
   }],
   ['GET', /^\/api\/terminals\/([^/]+)\/attach$/, (req, res, [addr]) => {
     const t = terminalOr404(res, addr); if (!t) return;
