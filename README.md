@@ -137,9 +137,45 @@ Install it with a USB cable (USB debugging on):
 
 Or send the APK to the phone (for example with Google Drive or a chat app),
 open it, and allow the install. The debug build is signed with the debug
-key. Release signing is not set up yet. The release build is shrunk with
-R8 (about 4 MB instead of 60 MB for debug). A debug build draws several times
-slower, so measure start-up and frames on the `perf` build.
+key. The release build is shrunk with R8 (about 4 MB instead of 60 MB for
+debug). A debug build draws several times slower, so measure start-up and
+frames on the `perf` build.
+
+### Release signing
+
+The release build is for sideloading only (not Google Play). Its key stays on
+your Mac, outside the repo: `~/.config/herdr-monitor/android-release.jks`.
+Never commit a keystore or its password (`*.jks`, `*.keystore` and
+`keystore.properties` are in `android/.gitignore`).
+
+1. Make the keystore once. `keytool` asks for a password; keep it in your
+   password manager. If you lose the key, phones that have the app must
+   uninstall it before they can install a build signed with a new key.
+
+       mkdir -p ~/.config/herdr-monitor
+       keytool -genkeypair -keystore ~/.config/herdr-monitor/android-release.jks \
+         -alias herdr -keyalg RSA -keysize 4096 -validity 10000 -dname "CN=Herdr Monitor"
+       chmod 600 ~/.config/herdr-monitor/android-release.jks
+
+2. Give Gradle the password, in `~/.gradle/gradle.properties` (not the repo's
+   file) or as an environment variable of the same name:
+
+       HERDR_RELEASE_STORE_PASSWORD=...
+
+3. Build and install:
+
+       ./gradlew assembleRelease   # app/build/outputs/apk/release/app-release.apk
+       adb install -r app/build/outputs/apk/release/app-release.apk
+
+| Setting | Default |
+| --- | --- |
+| `HERDR_RELEASE_STORE_FILE` | `~/.config/herdr-monitor/android-release.jks` |
+| `HERDR_RELEASE_STORE_PASSWORD` | none: without it the release APK is unsigned (`app-release-unsigned.apk`) |
+| `HERDR_RELEASE_KEY_ALIAS` | `herdr` |
+| `HERDR_RELEASE_KEY_PASSWORD` | the store password |
+
+A phone that has the debug build must uninstall it before it installs the
+release build, because the two builds are signed with different keys.
 
 ### Set it up
 

@@ -3,6 +3,18 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Release signing (sideload only, no Play). The keystore stays outside the
+// repo: by default ~/.config/herdr-monitor/android-release.jks. Each value
+// comes from a Gradle property (~/.gradle/gradle.properties or -P) or else an
+// environment variable of the same name. Without a password, the release
+// build is unsigned and `assembleRelease` still works. See the README.
+fun signingValue(name: String): String? =
+    (findProperty(name) as String?)?.takeIf { it.isNotBlank() } ?: System.getenv(name)?.takeIf { it.isNotBlank() }
+val releaseStore = file(signingValue("HERDR_RELEASE_STORE_FILE")
+    ?: "${System.getProperty("user.home")}/.config/herdr-monitor/android-release.jks")
+val releaseStorePassword = signingValue("HERDR_RELEASE_STORE_PASSWORD")
+val canSignRelease = releaseStore.isFile && releaseStorePassword != null
+
 android {
     namespace = "io.github.ashrodan.herdrmonitor"
     // Compose 1.12 and material3 1.5 need compileSdk 37. The app still
@@ -18,8 +30,18 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (canSignRelease) create("release") {
+            storeFile = releaseStore
+            storePassword = releaseStorePassword
+            keyAlias = signingValue("HERDR_RELEASE_KEY_ALIAS") ?: "herdr"
+            keyPassword = signingValue("HERDR_RELEASE_KEY_PASSWORD") ?: releaseStorePassword
+        }
+    }
+
     buildTypes {
         release {
+            if (canSignRelease) signingConfig = signingConfigs.getByName("release")
             // R8: shrinks and optimises the Compose code (a debug build is
             // several times slower to draw) and drops unused resources.
             isMinifyEnabled = true
