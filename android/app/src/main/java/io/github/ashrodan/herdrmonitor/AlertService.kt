@@ -67,6 +67,7 @@ class AlertService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (!prefs.alerts) { stopSelf(); return START_NOT_STICKY }
         if (intent?.action == ACTION_RECONNECT || link?.isActive != true) reconnect()
+        else if (intent?.action == ACTION_PINS) scope.launch { resyncRunning() }
         return START_STICKY
     }
 
@@ -216,6 +217,12 @@ class AlertService : Service() {
     // space name in the agent's name, the only link the stream gives).
     private fun prFor(a: AgentInfo): Pr? = prs.firstOrNull { a.name.startsWith(it.spaceName) }?.pr
 
+    // The pins changed: look again at the agents the service knows, with no
+    // new link. Unpinned ones first, so their places free up for the pinned.
+    private fun resyncRunning() {
+        agents.values.sortedBy { wantsRunning(it.state, prefs.quiet, it.address in prefs.pinned) }.forEach(::syncRunning)
+    }
+
     // A pinned working agent gets a silent running notification: its
     // current step and stage, read from its transcript every 15 s while it
     // works. At most MAX_RUNNING at once. Quiet agents: none.
@@ -262,11 +269,14 @@ class AlertService : Service() {
 
     companion object {
         const val ACTION_RECONNECT = "io.github.ashrodan.herdrmonitor.RECONNECT"
+        const val ACTION_PINS = "io.github.ashrodan.herdrmonitor.PINS"
 
-        fun start(c: Context, reconnect: Boolean = false) {
+        fun start(c: Context, reconnect: Boolean = false) = start(c, if (reconnect) ACTION_RECONNECT else null)
+
+        fun start(c: Context, action: String?) {
             if (!c.app.prefs.alerts) return
             val i = Intent(c, AlertService::class.java)
-            if (reconnect) i.action = ACTION_RECONNECT
+            if (action != null) i.action = action
             runCatching { c.startForegroundService(i) }
         }
 
