@@ -194,7 +194,8 @@ fun AgentScreen(live: Live, address: String, back: () -> Unit, initialTab: Int =
                     // agent has been in this state.
                     val bits = listOfNotNull(
                         STATE_WORD[rawState] ?: rawState,
-                        ticketOf(name) ?: where?.space?.name,
+                        ticketOf(name) ?: where?.space?.name?.let { ticketOf(it) ?: it }
+                            ?: t?.where?.substringBefore(" / ")?.let { ticketOf(it) ?: it.takeIf(String::isNotBlank) },
                         t?.agent?.let { harnessName(it) },
                         t?.changedMs?.let { clock(now - it) },
                     )

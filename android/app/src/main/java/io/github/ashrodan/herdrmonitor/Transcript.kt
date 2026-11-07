@@ -18,6 +18,8 @@ sealed interface Item {
     data class Question(override val key: String, val ask: Part.Ask) : Item
 }
 
+private val HARNESS_NOTE = Regex("^\\[(Request interrupted|Request cancelled)[^\\]]*\\]$")
+
 fun transcriptItems(messages: List<Message>): List<Item> {
     val out = mutableListOf<Item>()
     var steps = mutableListOf<Part>()
@@ -31,7 +33,9 @@ fun transcriptItems(messages: List<Message>): List<Item> {
         when (m.role) {
             "user" -> {
                 val text = m.parts.filterIsInstance<Part.Text>().joinToString("\n") { it.text }
-                if (text.isNotBlank()) { flush(); out.add(Item.User(base, text)) }
+                // A harness note in the user turn ("[Request interrupted by
+                // user]") is a system line, not your text.
+                if (text.isNotBlank()) { flush(); out.add(if (HARNESS_NOTE.matches(text.trim())) Item.System(base, text.trim().removeSurrounding("[", "]")) else Item.User(base, text)) }
             }
             "system" -> {
                 val text = m.parts.filterIsInstance<Part.Text>().joinToString(" ") { it.text }

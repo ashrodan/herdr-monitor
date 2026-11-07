@@ -36,6 +36,11 @@ class TranscriptTest {
         assertEquals(items.size, items.map { it.key }.toSet().size)
     }
 
+    @Test fun anInterruptNoteIsASystemLine() {
+        val items = transcriptItems(listOf(Message("1", "user", null, listOf(Part.Text("[Request interrupted by user]")))))
+        assertEquals(Item.System("1", "Request interrupted by user"), items.single())
+    }
+
     @Test fun theRunningToolIsTheLastStepWithNoResult() {
         val running = transcriptItems(listOf(Message("1", "assistant", null, listOf(tool("bash"), tool("bash", ok = null)))))
         assertEquals("bash", runningTool(running)?.name)
