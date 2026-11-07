@@ -23,7 +23,11 @@ built to `dist/`.
     npm start          # builds the UI, then starts the server
     npm run dev        # rebuilds the UI and restarts the server on change
 
-Open <http://127.0.0.1:7400>. Node 20 or later is necessary.
+Open <http://127.0.0.1:7400>. Node 20 or later is necessary. Bun (tested with
+1.4.3) also runs it: `npm run serve:bun`. The server uses only `node:` APIs,
+and the tests run on both runtimes. Under Bun the busy routes answer about
+1.4× faster (`/api/terminals`) to 2× faster (a gzipped transcript); Node uses
+less memory. Either one is fine for a few phones and browsers.
 
 | Variable            | Default                                                            |
 | ------------------- | ------------------------------------------------------------------ |
@@ -35,6 +39,24 @@ Open <http://127.0.0.1:7400>. Node 20 or later is necessary.
 | `VAPID_SUBJECT`     | `mailto:herdr-monitor@localhost`                                   |
 | `REDIRECT_PORT`     | `7480` (http → https helper for Tailscale Serve; `0` turns it off) |
 | `HTTPS_PORT`        | `$PORT` (the https port the redirect points to)                    |
+
+### Keep it running
+
+`scripts/service.js` makes the server a launchd agent: it starts at login,
+and launchd starts it again if it stops.
+
+    npm run build
+    node scripts/service.js print            # show the plist; changes nothing
+    node scripts/service.js install [--bun]  # write it and start the agent
+    node scripts/service.js status
+    node scripts/service.js uninstall
+
+Run `install` from the checkout you want to serve, with the same `PORT`,
+`HOST` and other settings you start the server with: it copies them and your
+`PATH` into the plist. It stops if something already listens on the port:
+stop the server you started by hand first. The log is
+`~/Library/Logs/herdr-monitor/server.log`. The server stops cleanly on
+SIGTERM: it ends every stream, so clients reconnect at once.
 
 ### On a phone
 
@@ -216,10 +238,13 @@ not from this repo.
 ## How it works
 
     browser ── SSE /api/events ──┐
-            ── fetch /api/... ───┤  server.js ── 2 sockets ── hc (herdr-core)
+            ── fetch /api/... ───┤  server.js (routes, lib/http.js)
+                                 ├─ lib/hub.js: the SSE clients
+                                 ├─ lib/monitor.js ── 2 sockets ── hc (herdr-core)
                                  │   events.subscribe  (status, title, doc)
                                  │   doc.get herdr-app (spaces and tabs)
                                  │   terminal.get/read/send/interrupt
+                                 ├─ lib/overview.js ── open PRs (gh), cached on disk
                                  ├─ lib/sidebar.js ── git (repo, worktree, branch)
                                  ├─ lib/git.js, lib/pr.js ── git, gh
                                  └─ lib/push.js ── Web Push (VAPID, aes128gcm)
@@ -231,9 +256,28 @@ not from this repo.
 
 `hc schema` prints the full `hc` API.
 
+What keeps it up and quick:
+
+- **hc goes away.** The monitor closes both sockets, sends `connection:
+  false`, and connects again every 2 s. A missing socket at start does the
+  same; it does not stop the server. Each hc call fails after 20 s with no
+  reply, so a stuck hc cannot hold a request open.
+- **Spinner titles.** Agents put a braille spinner in their title, about 12
+  changes a second. The monitor drops the spinner, so a title change that
+  only moves it sends nothing. It also sends at most one update per terminal
+  every 250 ms (the first at once, the newest one at the end).
+- **A slow client.** A stream with more than 1 MB waiting to go out is cut
+  off; the client reconnects and gets a fresh snapshot.
+- **The PR overview.** It answers at once with the last result, refreshes it
+  in the background when it is older than 60 s, and keeps a copy in
+  `$HERDR_MONITOR_DIR/cache/overview.json`, so a restart does not wait for
+  `gh` (about 6 s for a dozen repos).
+- **Big answers** are gzipped on the thread pool, not on the event loop.
+
 ## Test
 
     npm test           # server and library tests (node:test)
+    npm run test:bun   # the same tests on Bun
     npm run typecheck  # the UI
     cd android && ./gradlew test lint   # the Android app
 

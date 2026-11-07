@@ -10,10 +10,12 @@
   "scripts": {
     "start": "npm run build && node server.js",
     "serve": "node server.js",
+    "serve:bun": "bun server.js",
     "dev": "node scripts/dev.js",
     "build": "vite build",
     "typecheck": "tsc -p .",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "test:bun": "bun test ./test/"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
