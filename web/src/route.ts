@@ -15,15 +15,20 @@ export type Route =
   | { view: 'list'; kind: ListKind }
   | { view: 'agent'; addr: string; tab: AgentTab };
 
+// A remote agent's address has a slash (`dai/t1`): hrefOf encodes it, and the
+// parse below splits the raw hash first, then decodes each part. A bare
+// `machine/t1` (typed by hand) still opens the agent.
+const dec = (s: string) => { try { return decodeURIComponent(s); } catch { return s; } };
+
 export function parseHash(hash: string): Route {
-  const h = decodeURIComponent(hash.replace(/^#\/?/, ''));
+  const h = hash.replace(/^#\/?/, '');
   if (!h) return { view: 'home' };
   const ls = h.match(/^list\/(waiting|working|done|prs)$/);
   if (ls) return { view: 'list', kind: ls[1] as ListKind };
   const sp = h.match(/^space\/(.+)$/);
-  if (sp) return { view: 'space', id: sp[1] };
-  const ag = h.match(/^([^/]+)(?:\/(output|commits|status))?$/);
-  if (ag) return { view: 'agent', addr: ag[1], tab: (ag[2] as AgentTab) || 'output' };
+  if (sp) return { view: 'space', id: dec(sp[1]) };
+  const ag = h.match(/^([^/]+(?:\/(?!(?:output|commits|status)$)[^/]+)?)(?:\/(output|commits|status))?$/);
+  if (ag) return { view: 'agent', addr: dec(ag[1]), tab: (ag[2] as AgentTab) || 'output' };
   return { view: 'home' };
 }
 
@@ -31,7 +36,7 @@ export function hrefOf(r: Route): string {
   if (r.view === 'home') return '#';
   if (r.view === 'space') return `#space/${encodeURIComponent(r.id)}`;
   if (r.view === 'list') return `#list/${r.kind}`;
-  return `#${r.addr}${r.tab === 'output' ? '' : '/' + r.tab}`;
+  return `#${encodeURIComponent(r.addr)}${r.tab === 'output' ? '' : '/' + r.tab}`;
 }
 
 // Navigation has two levels, so Back is always clear:
