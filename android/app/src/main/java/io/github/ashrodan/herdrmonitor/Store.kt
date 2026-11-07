@@ -71,7 +71,9 @@ class Store(private val server: () -> String, private val cache: Cache? = null) 
             launch { while (isActive) { refreshPrs(); delay(120_000) } }
             while (isActive && gen == generation) {
                 try {
-                    api.stream("/api/events", SseParser({ onEvent(it) }), onOpen = { backoff.reset() }, isCancelled = { !isActive || gen != generation })
+                    // A line read after a restart belongs to the old link
+                    // (maybe the old server): drop it, do not cache it.
+                    api.stream("/api/events", SseParser({ if (gen == generation) onEvent(it) }), onOpen = { backoff.reset() }, isCancelled = { !isActive || gen != generation })
                 } catch (e: Exception) {
                     _live.update { it.copy(link = Link.Offline, error = e.message ?: e.javaClass.simpleName) }
                 }

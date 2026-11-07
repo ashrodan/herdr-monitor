@@ -95,7 +95,9 @@ class AlertService : Service() {
             while (isActive && gen == generation) {
                 val api = Api(prefs.server)
                 try {
-                    api.stream("/api/agents/stream", SseParser(onEvent = { onEvent(it) }, onComment = { heard() }),
+                    // After a reconnect the old read can still hand over
+                    // one line: only this link's generation counts.
+                    api.stream("/api/agents/stream", SseParser(onEvent = { if (gen == generation) onEvent(it) }, onComment = { if (gen == generation) heard() }),
                         onOpen = { backoff.reset() }, isCancelled = { gen != generation })
                 } catch (_: Exception) { }
                 if (gen != generation) return@launch
