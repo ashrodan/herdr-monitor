@@ -68,6 +68,8 @@ import kotlinx.coroutines.withContext
 // What the composer needs from the server. Api is the real one; UI tests
 // pass a fake.
 interface ReplyPort {
+    // The server these calls go to; a queued reply keeps it.
+    val server: String get() = ""
     suspend fun send(address: String, text: String, force: Boolean)
     suspend fun keys(address: String, keys: List<String>)
     suspend fun interrupt(address: String)
@@ -75,6 +77,7 @@ interface ReplyPort {
 }
 
 class ApiPort(private val api: Api) : ReplyPort {
+    override val server: String get() = api.base
     override suspend fun send(address: String, text: String, force: Boolean) { withContext(Dispatchers.IO) { api.send(address, text, force) } }
     override suspend fun keys(address: String, keys: List<String>) { withContext(Dispatchers.IO) { api.keys(address, keys) } }
     override suspend fun interrupt(address: String) { withContext(Dispatchers.IO) { api.interrupt(address) } }
@@ -132,7 +135,7 @@ fun Composer(
         // At a dialog, force: the text goes to the dialog (e.g. an "Other" answer).
         val force = blocked
         fun queued(why: String?) {
-            outbox.add(address, full, force, why)
+            outbox.add(port.server, address, full, force, why)
             text = ""; images.clear()
             note = "Queued. It goes when the link is back."
         }

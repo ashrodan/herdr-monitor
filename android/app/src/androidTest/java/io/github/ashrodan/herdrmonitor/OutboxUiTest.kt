@@ -83,8 +83,8 @@ class OutboxUiTest {
 
     @Test fun deleteRemovesThatQueuedBubble() {
         val outbox = Outbox(Mem())
-        val keep = outbox.add("t1", "keep me", false)
-        val drop = outbox.add("t1", "drop me", false)
+        val keep = outbox.add("", "t1", "keep me", false)
+        val drop = outbox.add("", "t1", "drop me", false)
         show(outbox, FailingPort(), online = false)
         rule.onAllNodesWithText("drop me").assertCountEquals(1)
         rule.onNodeWithTag("delete-${drop.id}").performClick()

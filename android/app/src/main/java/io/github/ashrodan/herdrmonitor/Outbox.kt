@@ -11,6 +11,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 // they are live.
 data class OutItem(
     val id: String,
+    // The server the reply was typed for. A flush sends it only there: the
+    // same address on another server is another agent.
+    val server: String,
     val address: String,
     val text: String,
     // True when the agent was blocked at a dialog when the reply was typed.
@@ -29,23 +32,26 @@ interface OutboxStorage {
 
 // The outbox rules, with no Android types, so JVM tests run them.
 //
-// Each address has its own list, oldest first. A flush sends one item at a
+// Each server and address has its own list, oldest first. A flush sends one item at a
 // time; a failure keeps that item, records the error, and stops that
 // address's list (the next item waits). Other addresses still flush. A second
 // flush while one runs does nothing, so no item is sent twice.
 class Outbox(
     private val storage: OutboxStorage,
+    // Items saved before items had a server belong to this one (the server
+    // in use when the app starts).
+    legacyServer: String = "",
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private val lock = Any()
-    private val _items = MutableStateFlow(OutboxCodec.decode(storage.load()))
+    private val _items = MutableStateFlow(OutboxCodec.decode(storage.load(), legacyServer))
     val items: StateFlow<List<OutItem>> = _items.asStateFlow()
     private val flushing = AtomicBoolean(false)
 
-    fun forAddress(address: String): List<OutItem> = _items.value.filter { it.address == address }
+    fun forAddress(server: String, address: String): List<OutItem> = _items.value.filter { it.server == server && it.address == address }
 
-    fun add(address: String, text: String, force: Boolean, error: String? = null): OutItem {
-        val item = OutItem(UUID.randomUUID().toString(), address, text, force, clock(), lastError = error)
+    fun add(server: String, address: String, text: String, force: Boolean, error: String? = null): OutItem {
+        val item = OutItem(UUID.randomUUID().toString(), server, address, text, force, clock(), lastError = error)
         update { it + item }
         return item
     }
@@ -54,24 +60,25 @@ class Outbox(
 
     // Drop items the transcript already shows: a user message with the same
     // text, written after the item was queued (the web outbox's rule).
-    fun dropDelivered(address: String, userMessages: List<Pair<String, Long?>>) = update { list ->
+    fun dropDelivered(server: String, address: String, userMessages: List<Pair<String, Long?>>) = update { list ->
         list.filterNot { item ->
-            item.address == address && userMessages.any { (text, at) ->
+            item.server == server && item.address == address && userMessages.any { (text, at) ->
                 at != null && at > item.createdMs && text.trim() == item.text.trim()
             }
         }
     }
 
-    // Send what waits. send(item, force) throws on failure. isBlocked tells
-    // whether an agent is at a dialog now. Returns the number of items sent.
-    suspend fun flush(isBlocked: (String) -> Boolean, send: suspend (OutItem, Boolean) -> Unit): Int {
+    // Send what waits for this server; items of other servers stay. send(item,
+    // force) throws on failure. isBlocked tells whether an agent is at a
+    // dialog now. Returns the number of items sent.
+    suspend fun flush(server: String, isBlocked: (String) -> Boolean, send: suspend (OutItem, Boolean) -> Unit): Int {
         if (!flushing.compareAndSet(false, true)) return 0
         var sent = 0
         try {
-            val addresses = _items.value.map { it.address }.distinct()
+            val addresses = _items.value.filter { it.server == server }.map { it.address }.distinct()
             for (address in addresses) {
                 while (true) {
-                    val head = _items.value.firstOrNull { it.address == address } ?: break
+                    val head = _items.value.firstOrNull { it.server == server && it.address == address } ?: break
                     val ok = try {
                         send(head, head.force && isBlocked(address)); true
                     } catch (e: Exception) {
@@ -110,11 +117,11 @@ fun userTexts(messages: List<Message>): List<Pair<String, Long?>> = messages.fil
 // and null. org.json is a stub in JVM tests, so this small codec does it.
 object OutboxCodec {
     fun encode(items: List<OutItem>): String = items.joinToString(",", "[", "]") { i ->
-        "{\"id\":${str(i.id)},\"address\":${str(i.address)},\"text\":${str(i.text)},\"force\":${i.force}," +
+        "{\"id\":${str(i.id)},\"server\":${str(i.server)},\"address\":${str(i.address)},\"text\":${str(i.text)},\"force\":${i.force}," +
             "\"createdMs\":${i.createdMs},\"attempts\":${i.attempts},\"lastError\":${i.lastError?.let(::str) ?: "null"}}"
     }
 
-    fun decode(json: String?): List<OutItem> {
+    fun decode(json: String?, legacyServer: String = ""): List<OutItem> {
         if (json.isNullOrBlank()) return emptyList()
         return try {
             val p = Parser(json)
@@ -122,6 +129,7 @@ object OutboxCodec {
                 val m = o as? Map<*, *> ?: return@mapNotNull null
                 OutItem(
                     id = m["id"] as? String ?: return@mapNotNull null,
+                    server = m["server"] as? String ?: legacyServer,
                     address = m["address"] as? String ?: return@mapNotNull null,
                     text = m["text"] as? String ?: return@mapNotNull null,
                     force = m["force"] as? Boolean ?: false,

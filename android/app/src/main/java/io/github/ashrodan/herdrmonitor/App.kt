@@ -54,12 +54,14 @@ class App : Application() {
         (serviceStates[address] ?: store.live.value.terminals[address]?.status) == "blocked"
 
     // Send the outbox now (the alert service calls this when it connects).
-    // Outbox.flush ignores a call while one runs.
+    // Only the items typed for the server in use go, and only to it; items of
+    // another server wait until that server is in use again. Outbox.flush
+    // ignores a call while one runs.
     fun flushOutbox() {
-        if (outbox.items.value.isEmpty()) return
+        val server = prefs.server
+        if (outbox.items.value.none { it.server == server }) return
         scope.launch {
-            val api = Api(prefs.server)
-            outbox.flush(::isBlocked) { item, force -> api.send(item.address, item.text, force) }
+            outbox.flush(server, ::isBlocked) { item, force -> Api(item.server).send(item.address, item.text, force) }
         }
     }
 
@@ -101,14 +103,14 @@ class App : Application() {
         store = Store({ prefs.server }, cache)
         loadDigests()
         Notifier.channels(this)
-        outbox = Outbox(prefs.outboxStorage)
+        outbox = Outbox(prefs.outboxStorage, legacyServer = prefs.server)
         pins.value = prefs.pinned
         // Flush when the app's link comes up, and every 15 s while replies wait.
         scope.launch { store.live.map { it.link }.distinctUntilChanged().collect { if (it == Link.Online) flushOutbox() } }
         scope.launch {
             while (true) {
                 delay(15_000)
-                if (outbox.items.value.isNotEmpty()) flushOutbox()
+                flushOutbox()
             }
         }
     }

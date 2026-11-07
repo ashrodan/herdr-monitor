@@ -183,7 +183,7 @@ fun AgentScreen(
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboard.current
     val outboxAll by ctx.app.outbox.items.collectAsStateWithLifecycle()
-    val queued = remember(outboxAll, address) { outboxAll.filter { it.address == address } }
+    val queued = remember(outboxAll, api.base, address) { outboxAll.filter { it.server == api.base && it.address == address } }
     val t = live.terminals[address]
     val now = rememberNow()
     var menu by remember { mutableStateOf(false) }
@@ -394,7 +394,7 @@ private fun ChatTab(api: Api, address: String, blocked: Boolean, working: Boolea
         if (!active) return@LaunchedEffect
         while (true) {
             io { api.chat(address, chat?.version) }
-                .onSuccess { c -> if (c != null) { chat = c; ctx.app.chats.put(api.base, address, c); ctx.app.outbox.dropDelivered(address, userTexts(c.messages)) }; err = null }
+                .onSuccess { c -> if (c != null) { chat = c; ctx.app.chats.put(api.base, address, c); ctx.app.outbox.dropDelivered(api.base, address, userTexts(c.messages)) }; err = null }
                 .onFailure { err = it.message }
             delay(if (working || blocked) 2500 else 6000)
         }
