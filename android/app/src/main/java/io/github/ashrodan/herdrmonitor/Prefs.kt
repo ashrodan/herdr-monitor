@@ -23,6 +23,11 @@ class Prefs(context: Context) {
         get() = p.getBoolean("wallpaper_colours", false)
         set(v) = p.edit().putBoolean("wallpaper_colours", v).apply()
 
+    // The app asked for the notification permission at least once.
+    var askedNotify: Boolean
+        get() = p.getBoolean("asked_notify", false)
+        set(v) = p.edit().putBoolean("asked_notify", v).apply()
+
     var alerts: Boolean
         get() = p.getBoolean("alerts", true)
         set(v) = p.edit().putBoolean("alerts", v).apply()

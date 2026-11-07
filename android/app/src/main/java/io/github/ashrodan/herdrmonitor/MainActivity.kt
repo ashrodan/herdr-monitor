@@ -70,7 +70,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         if (savedInstanceState == null) { pending = addressFrom(intent?.data); needsYou(intent?.data) }
-        if (Build.VERSION.SDK_INT >= 33 && !mayNotify()) {
+        // Ask the first time, and again only while Android still lets the
+        // app ask (one denial). After "Don't allow" twice, asking only opens
+        // and shuts the system screen on every start, which slows it.
+        if (Build.VERSION.SDK_INT >= 33 && !mayNotify() &&
+            (!app.prefs.askedNotify || shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS))) {
+            app.prefs.askedNotify = true
             askNotify.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         AlertService.start(this)
