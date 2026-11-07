@@ -81,15 +81,27 @@ WebView.
   reply before it goes.
 - **Look**: Material 3 Expressive, dark by default. Settings has Dark, Light
   or System, and an option for wallpaper colours.
-- **Alerts**: a notification when an agent needs you, is done, or hits an
-  error. It goes away when the agent moves on, for example when you answer
-  it on the Mac. There is one notification per agent.
-- **Widget**: like the Summary mod: Waiting, Done (not seen), Working and PR
-  counts, then the agents that wait, the done agents and the open PRs. Tap a
-  row to open that agent (or the PR). Tap anywhere else to open the app.
+- **Notifications**, on three channels, grouped by server:
+  - **Needs you** (high): an agent asks a question or stopped with an
+    error. Up to three answer buttons, or Reply.
+  - **Running** (low, silent): one per working agent, with its current step
+    and a **Stop** button. A four-stage bar (Plan, Edit, Verify, PR); the
+    app guesses the stage from the agent's tool calls, because the server
+    does not report one.
+  - **Finished**: the result line, **Open PR** (when the space has one),
+    **View session** and Reply.
+  An alert goes away when the agent moves on, for example when you answer
+  it on the Mac. An answer from a notification shows as "Sent" on the Home
+  card.
+- **Quick settings tiles**: **Herdr** shows "2 need you" (or "4 working");
+  a tap opens Sessions filtered to Needs you. **Quiet agents**: when on,
+  only the Needs you channel alerts.
+- **Widget** (4x2): the server name, three counts (Needs you, Working,
+  PRs) and the top Needs you session with its first answer button. It
+  changes when the server sends a change, not on a timer.
 - **Settings**: the server URL, **Find on tailnet** (lists the herdr-monitor
   servers on your tailnet, with each one's Herdr app, Herdr TUI and hc
-  versions), the background-alerts switch and the look.
+  versions), the background-alerts switch, Quiet agents and the look.
 
 The phone must be on Tailscale, on the same tailnet as the Mac. No Google
 account, Firebase or push service is used: while alerts are on, the app keeps
@@ -131,7 +143,9 @@ Android shows at most three buttons on a notification.
 | --- | --- |
 | Waits at one single-choice question | Its first three options (then Reply). A tap answers the question, like a tap in Chat (`POST /api/terminals/:t/answer`). |
 | Waits at another dialog | **Reply** (types into the dialog with `force`), **Interrupt** (`POST …/interrupt`), **Open** |
-| Done or error | **Reply** (`POST …/send`), **Open** |
+| Error | **Reply** (`POST …/send`), **View session** |
+| Done | **Open PR** (when there is one), **View session**, **Reply** |
+| Working | **Stop** (`POST …/interrupt`) |
 
 A tap on the notification opens that agent in the app. Every button that
 types or presses keys asks you to unlock the phone first. The app sends an
