@@ -59,7 +59,7 @@ class App : Application() {
     // ignores a call while one runs.
     fun flushOutbox() {
         val server = prefs.server
-        if (outbox.items.value.none { it.server == server }) return
+        if (outbox.items.value.none { it.server == server && it.state == OutState.WAITING }) return
         scope.launch {
             outbox.flush(server, ::isBlocked) { item, force -> Api(item.server).send(item.address, item.text, force) }
         }

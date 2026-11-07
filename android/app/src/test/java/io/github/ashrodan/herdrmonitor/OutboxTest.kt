@@ -155,6 +155,77 @@ class OutboxTest {
         assertEquals(S, b.items.value.single().server)
     }
 
+    @Test fun failuresAreSortedByWhatTheyMean() {
+        assertEquals(Failure.Refused, failureOf(HttpError(404, "no such terminal")))
+        assertEquals(Failure.Refused, failureOf(HttpError(409, "busy")))
+        assertEquals(Failure.Refused, failureOf(HttpError(400, "text required")))
+        assertEquals(Failure.Retry, failureOf(HttpError(429, "slow down")))
+        assertEquals(Failure.Retry, failureOf(HttpError(502, "hc down")))
+        assertEquals(Failure.Retry, failureOf(java.net.ConnectException("refused")))
+        assertEquals(Failure.MaybeSent, failureOf(MaybeSentException(java.net.SocketTimeoutException("read timed out"))))
+    }
+
+    @Test fun aRefusedItemIsMarkedFailedAndDoesNotHoldBackTheNext() = runBlocking {
+        val b = box()
+        b.add(S, "t1", "refused", false)
+        b.add(S, "t1", "next", false)
+        val tried = mutableListOf<String>()
+        val n = b.flush(S, { false }) { item, _ -> tried += item.text; if (item.text == "refused") throw HttpError(404, "no such terminal") }
+        assertEquals(1, n)
+        assertEquals(listOf("refused", "next"), tried)
+        val left = b.items.value.single()
+        assertEquals(OutState.FAILED, left.state)
+        assertEquals("no such terminal", left.lastError)
+        // A later flush does not try it again.
+        tried.clear()
+        assertEquals(0, b.flush(S, { false }) { item, _ -> tried += item.text })
+        assertTrue(tried.isEmpty())
+    }
+
+    @Test fun anUnconfirmedSendIsNeverSentAgainByItself() = runBlocking {
+        val b = box()
+        val item = b.add(S, "t1", "maybe", false)
+        var calls = 0
+        b.flush(S, { false }) { _, _ -> calls++; throw MaybeSentException(java.net.SocketTimeoutException("read timed out")) }
+        b.flush(S, { false }) { _, _ -> calls++ }
+        assertEquals(1, calls)
+        assertEquals(OutState.UNCONFIRMED, b.items.value.single().state)
+        // The transcript shows it: it goes away.
+        b.dropDelivered(S, "t1", listOf("maybe" to item.createdMs + 1))
+        assertTrue(b.items.value.isEmpty())
+    }
+
+    @Test fun afterMaxAttemptsAnItemFailsAndTheNextGoes() = runBlocking {
+        val b = box()
+        b.add(S, "t1", "stuck", false)
+        b.add(S, "t1", "next", false)
+        val sent = mutableListOf<String>()
+        repeat(MAX_ATTEMPTS - 1) {
+            b.flush(S, { false }) { item, _ -> if (item.text == "stuck") error("HTTP 502"); sent += item.text }
+        }
+        assertTrue(sent.isEmpty())
+        assertEquals(OutState.WAITING, b.items.value.first().state)
+        b.flush(S, { false }) { item, _ -> if (item.text == "stuck") error("HTTP 502"); sent += item.text }
+        assertEquals(listOf("next"), sent)
+        val stuck = b.items.value.single()
+        assertEquals(OutState.FAILED, stuck.state)
+        assertEquals(MAX_ATTEMPTS, stuck.attempts)
+        // Send again: it waits once more, and goes.
+        b.retry(stuck.id)
+        assertEquals(1, b.flush(S, { false }) { item, _ -> sent += item.text })
+        assertEquals(listOf("next", "stuck"), sent)
+    }
+
+    @Test fun theStateSurvivesASaveAndALoad() = runBlocking {
+        val mem = Mem()
+        val b = box(mem)
+        b.add(S, "t1", "x", false)
+        b.flush(S, { false }) { _, _ -> throw HttpError(409, "busy") }
+        val again = Outbox(Mem(mem.json))
+        assertEquals(b.items.value, again.items.value)
+        assertEquals(OutState.FAILED, again.items.value.single().state)
+    }
+
     @Test fun userTextsReadsTimes() {
         val m = listOf(
             Message("1", "user", "2026-11-07T08:00:00Z", listOf(Part.Text("hi"))),

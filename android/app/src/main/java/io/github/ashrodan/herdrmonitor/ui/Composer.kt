@@ -43,6 +43,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -58,8 +59,11 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import io.github.ashrodan.herdrmonitor.Api
+import io.github.ashrodan.herdrmonitor.Failure
 import io.github.ashrodan.herdrmonitor.OutItem
+import io.github.ashrodan.herdrmonitor.OutState
 import io.github.ashrodan.herdrmonitor.Outbox
+import io.github.ashrodan.herdrmonitor.failureOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -144,7 +148,17 @@ fun Composer(
         scope.launch {
             runCatching { port.send(address, full, force) }
                 .onSuccess { view.performHapticFeedback(HapticFeedbackConstants.CONFIRM); text = ""; images.clear(); note = "Sent." }
-                .onFailure { view.performHapticFeedback(HapticFeedbackConstants.REJECT); queued(it.message ?: it.javaClass.simpleName) }
+                .onFailure { e ->
+                    view.performHapticFeedback(HapticFeedbackConstants.REJECT)
+                    when (failureOf(e)) {
+                        // It can pass (no link, a 5xx): it goes later.
+                        Failure.Retry -> queued(e.message ?: e.javaClass.simpleName)
+                        // The server said no; the text stays here to change.
+                        Failure.Refused -> note = "Not sent: ${e.message}"
+                        // It may have arrived: never send it again by itself.
+                        Failure.MaybeSent -> note = "Not confirmed: no answer from the server. Look in the chat before you send it again."
+                    }
+                }
             sending = false
         }
     }
@@ -224,15 +238,20 @@ fun Composer(
 // Replies in the outbox for this agent: your bubble, marked Queued, with
 // the last error and a control to delete it before it goes.
 @Composable
-fun QueuedReplies(items: List<OutItem>, onDelete: (OutItem) -> Unit) {
+fun QueuedReplies(items: List<OutItem>, onRetry: ((OutItem) -> Unit)? = null, onDelete: (OutItem) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        for (item in items) QueuedBubble(item, onDelete)
+        for (item in items) QueuedBubble(item, onRetry, onDelete)
     }
 }
 
 @Composable
-fun QueuedBubble(item: OutItem, onDelete: (OutItem) -> Unit) {
-    // One item for TalkBack and tests: "Queued", the error and the text.
+fun QueuedBubble(item: OutItem, onRetry: ((OutItem) -> Unit)? = null, onDelete: (OutItem) -> Unit) {
+    // One item for TalkBack and tests: the state, the error and the text.
+    val label = when (item.state) {
+        OutState.FAILED -> "Not sent"
+        OutState.UNCONFIRMED -> "Not confirmed, look in the chat"
+        else -> "Queued"
+    }
     BoxWithConstraints(Modifier.fillMaxWidth().testTag("queued-${item.id}").semantics(mergeDescendants = true) {}) {
         val w = maxWidth * 0.85f
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -240,8 +259,12 @@ fun QueuedBubble(item: OutItem, onDelete: (OutItem) -> Unit) {
                 contentColor = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.widthIn(max = w)) {
                 Column(Modifier.padding(start = 14.dp, top = 6.dp, bottom = 8.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Queued" + (item.lastError?.let { " · $it" } ?: ""), Modifier.weight(1f, fill = false),
-                            style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                        Text(label + (item.lastError?.let { " · $it" } ?: ""), Modifier.weight(1f, fill = false),
+                            style = MaterialTheme.typography.labelSmall, maxLines = 1,
+                            color = if (item.state == OutState.WAITING) androidx.compose.ui.graphics.Color.Unspecified else MaterialTheme.colorScheme.error)
+                        if (item.state != OutState.WAITING && onRetry != null) {
+                            TextButton(onClick = { onRetry(item) }, Modifier.testTag("retry-${item.id}")) { Text("Send again") }
+                        }
                         IconButton(onClick = { onDelete(item) }, Modifier.testTag("delete-${item.id}")) {
                             Icon(Icons.Default.Close, "Delete queued reply")
                         }

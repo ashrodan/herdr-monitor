@@ -432,7 +432,7 @@ private fun ChatTab(api: Api, address: String, blocked: Boolean, working: Boolea
                     }
                 }
                 if (working) item(key = "live") { LiveStep(running) }
-                if (queued.isNotEmpty()) item(key = "outbox") { QueuedReplies(queued) { ctx.app.outbox.remove(it.id) } }
+                if (queued.isNotEmpty()) item(key = "outbox") { QueuedReplies(queued, onRetry = { ctx.app.outbox.retry(it.id); ctx.app.flushOutbox() }) { ctx.app.outbox.remove(it.id) } }
             }
         }
     }
@@ -741,6 +741,6 @@ private fun NoChat(text: String, queued: List<OutItem>, error: Boolean = false) 
     val ctx = LocalContext.current
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(text, color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
-        if (queued.isNotEmpty()) QueuedReplies(queued) { ctx.app.outbox.remove(it.id) }
+        if (queued.isNotEmpty()) QueuedReplies(queued, onRetry = { ctx.app.outbox.retry(it.id); ctx.app.flushOutbox() }) { ctx.app.outbox.remove(it.id) }
     }
 }
