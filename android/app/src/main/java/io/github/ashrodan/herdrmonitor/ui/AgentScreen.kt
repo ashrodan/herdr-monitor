@@ -1,0 +1,475 @@
+package io.github.ashrodan.herdrmonitor.ui
+
+import android.content.Intent
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import io.github.ashrodan.herdrmonitor.Api
+import io.github.ashrodan.herdrmonitor.Chat
+import io.github.ashrodan.herdrmonitor.CommitDetail
+import io.github.ashrodan.herdrmonitor.Commits
+import io.github.ashrodan.herdrmonitor.Json
+import io.github.ashrodan.herdrmonitor.Live
+import io.github.ashrodan.herdrmonitor.Message
+import io.github.ashrodan.herdrmonitor.Notifier
+import io.github.ashrodan.herdrmonitor.Part
+import io.github.ashrodan.herdrmonitor.PrStatus
+import io.github.ashrodan.herdrmonitor.age
+import io.github.ashrodan.herdrmonitor.app
+import io.github.ashrodan.herdrmonitor.displayName
+import io.github.ashrodan.herdrmonitor.lastUnansweredAsk
+import io.github.ashrodan.herdrmonitor.shape
+import io.github.ashrodan.herdrmonitor.shortPath
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+private suspend fun <T> io(block: () -> T): Result<T> = withContext(Dispatchers.IO) { runCatching(block) }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AgentScreen(live: Live, address: String, back: () -> Unit) {
+    val ctx = LocalContext.current
+    val api = remember(live) { ctx.app.store.api }
+    val t = live.terminals[address]
+    val now = rememberNow()
+    var tab by remember { mutableIntStateOf(0) }
+
+    // Opening a finished agent counts as seeing it (as in the web UI), and
+    // its alert goes.
+    LaunchedEffect(address, t?.status) {
+        if (t?.status == "done") ctx.app.prefs.markSeen(address)
+        Notifier.cancelAgent(ctx, address)
+    }
+
+    val blocked = t?.status == "blocked"
+    val rawState = if (t?.finished == true) "finished" else t?.status ?: "idle"
+    Scaffold(topBar = {
+        TopAppBar(
+            title = {
+                Column {
+                    Text(t?.let { displayName(it, live.spaces) } ?: address, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Dot(stateColor(rawState), 7.dp)
+                        Text("  ${STATE_LABEL[rawState] ?: rawState} · ${t?.agent ?: ""} · ${age(t?.changedMs, now)}",
+                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                    }
+                }
+            },
+            navigationIcon = { IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
+        )
+    }, bottomBar = {
+        if (t != null && !t.finished) Composer(api, address, blocked, t.kind, working = t.status == "working")
+    }) { pad ->
+        Column(Modifier.fillMaxSize().padding(pad)) {
+            ConnectionLine(live)
+            if (t == null) { Text("This terminal is gone.", Modifier.padding(16.dp)); return@Column }
+            TabRow(selectedTabIndex = tab) {
+                listOf("Chat", "Text", "Commits", "Status").forEachIndexed { i, s -> Tab(selected = tab == i, onClick = { tab = i }, text = { Text(s) }) }
+            }
+            when (tab) {
+                0 -> ChatTab(api, address, blocked, working = t.status == "working")
+                1 -> TextTab(api, address)
+                2 -> CommitsTab(api, address)
+                else -> StatusTab(api, address)
+            }
+            t.cwd?.let { Text(shortPath(it), Modifier.padding(horizontal = 12.dp, vertical = 2.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1) }
+        }
+    }
+}
+
+// ---- Chat ----
+
+@Composable
+private fun ChatTab(api: Api, address: String, blocked: Boolean, working: Boolean) {
+    var chat by remember(address) { mutableStateOf<Chat?>(null) }
+    var err by remember(address) { mutableStateOf<String?>(null) }
+    LaunchedEffect(address, api.base) {
+        while (true) {
+            io { api.chat(address, chat?.version) }
+                .onSuccess { c -> if (c != null) chat = c; err = null }
+                .onFailure { err = it.message }
+            delay(if (working || blocked) 2500 else 6000)
+        }
+    }
+    val c = chat
+    when {
+        c == null && err != null -> Text("Could not read the transcript: $err", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error)
+        c == null -> Text("Loading the conversation…", Modifier.padding(16.dp))
+        !c.available -> Text("${c.reason ?: "No transcript."} Use Text.", Modifier.padding(16.dp))
+        else -> {
+            val list = rememberLazyListState()
+            val waitingOn = if (blocked) lastUnansweredAsk(c.messages) else null
+            LaunchedEffect(c.messages.size) { if (c.messages.isNotEmpty()) list.scrollToItem(c.messages.size - 1) }
+            LazyColumn(Modifier.fillMaxSize(), state = list, verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp)) {
+                if (c.truncated) item { Text("Older messages are not shown (long transcript).", style = MaterialTheme.typography.labelSmall) }
+                if (c.messages.isEmpty()) item { Text("No messages yet.") }
+                items(c.messages, key = { it.id.ifEmpty { it.hashCode().toString() } }) { m -> MessageView(m, api, address, waitingOn) }
+                if (working) item { Text("Working…", color = stateColor("working"), style = MaterialTheme.typography.labelMedium) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MessageView(m: Message, api: Api, address: String, waitingOn: Part.Ask?) {
+    when (m.role) {
+        "user" -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            Surface(shape = RoundedCornerShape(16.dp, 16.dp, 4.dp, 16.dp), color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.widthIn(max = 320.dp)) {
+                Prose(m.parts.filterIsInstance<Part.Text>().joinToString("\n") { it.text }, Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+            }
+        }
+        "system" -> Text(m.parts.filterIsInstance<Part.Text>().joinToString(" ") { it.text }, Modifier.fillMaxWidth(),
+            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        else -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            // Runs of tool calls fold into one line.
+            val blocks = mutableListOf<Any>()
+            for (p in m.parts) {
+                val last = blocks.lastOrNull()
+                if (p is Part.Tool && last is MutableList<*>) @Suppress("UNCHECKED_CAST") (last as MutableList<Part.Tool>).add(p)
+                else if (p is Part.Tool) blocks.add(mutableListOf(p)) else blocks.add(p)
+            }
+            for (b in blocks) when (b) {
+                is MutableList<*> -> @Suppress("UNCHECKED_CAST") ToolGroup(b as List<Part.Tool>)
+                is Part.Ask -> AskCard(b, api, address, live = b === waitingOn)
+                is Part.Thinking -> Folded("Thinking", b.text)
+                is Part.Text -> Prose(b.text)
+            }
+        }
+    }
+}
+
+@Composable
+private fun Prose(text: String, modifier: Modifier = Modifier) {
+    val codeBg = MaterialTheme.colorScheme.surfaceVariant
+    SelectionContainer(modifier) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            for ((code, body) in splitFences(text)) {
+                if (code) Text(body, Modifier.fillMaxWidth().background(codeBg, RoundedCornerShape(6.dp)).horizontalScroll(rememberScrollState()).padding(8.dp),
+                    fontFamily = FontFamily.Monospace, fontSize = 12.sp, softWrap = false)
+                else Text(inlineMarkdown(body, codeBg), style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+    }
+}
+
+@Composable
+private fun Folded(title: String, text: String) {
+    var open by remember { mutableStateOf(false) }
+    Column(Modifier.clickable { open = !open }) {
+        Text((if (open) "▾ " else "▸ ") + title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (open) Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 12.dp, top = 4.dp))
+    }
+}
+
+@Composable
+private fun ToolGroup(tools: List<Part.Tool>) {
+    var open by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth().clickable { open = !open }) {
+        val names = tools.map { it.name }.distinct().take(4).joinToString(", ")
+        Text((if (open) "▾ " else "▸ ") + "${tools.size} tool call${if (tools.size == 1) "" else "s"} · $names",
+            style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (open) for (tl in tools) {
+            Text("${tl.name}  ${tl.summary}", Modifier.padding(start = 12.dp, top = 3.dp), fontFamily = FontFamily.Monospace, fontSize = 11.sp,
+                maxLines = 3, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+// A question the agent asked. While it waits on it (live), tap an option:
+// the server presses the keys in the form. One single-choice question: a
+// tap answers it; otherwise each tap fills the form and Submit sends it.
+@Composable
+private fun AskCard(q: Part.Ask, api: Api, address: String, live: Boolean) {
+    val scope = rememberCoroutineScope()
+    val picked = remember(q.id) { mutableStateListOf<String>() }
+    var note by remember(q.id) { mutableStateOf<String?>(null) }
+    var busy by remember(q.id) { mutableStateOf(false) }
+    val needsSubmit = q.questions.size > 1 || q.questions.any { it.multi }
+    val border = if (live) stateColor("blocked") else MaterialTheme.colorScheme.outlineVariant
+    fun act(body: () -> String, ok: String, after: () -> Unit = {}) {
+        if (busy) return
+        busy = true; note = null
+        scope.launch {
+            io(body).onSuccess { after(); note = ok }.onFailure {
+                note = if (it.message == "the question form is not on screen") "The form is not on screen. Use Text to check." else "Not sent: ${it.message}"
+            }
+            busy = false
+        }
+    }
+    Column(Modifier.fillMaxWidth().border(1.dp, border, RoundedCornerShape(12.dp)).padding(12.dp)) {
+        q.questions.forEachIndexed { i, x ->
+            if (i > 0) Spacer(Modifier.height(10.dp))
+            Text((x.header.ifBlank { "Question" }) + if (x.multi) " · pick any" else "", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(x.question, fontWeight = FontWeight.Medium)
+            x.options.forEachIndexed { j, o ->
+                val k = "$i.$j"
+                val on = k in picked
+                OutlinedButton(onClick = {
+                    if (!live) return@OutlinedButton
+                    act({ api.answer(address, q.shape(), i, j) }, if (needsSubmit) "Picked. Submit when ready." else "Answer sent.") {
+                        if (x.multi) { if (on) picked.remove(k) else picked.add(k) } else { picked.removeAll { it.startsWith("$i.") }; picked.add(k) }
+                    }
+                }, enabled = live && !busy, modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                    Column(Modifier.fillMaxWidth()) {
+                        Text((if (on) "✓ " else "${j + 1}. ") + o.label, fontWeight = FontWeight.Medium)
+                        if (o.description.isNotBlank()) Text(o.description, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }
+        if (live && needsSubmit) Button(onClick = { act({ api.submit(address, q.shape()) }, "Submitted.") }, enabled = !busy, modifier = Modifier.padding(top = 8.dp)) { Text("Submit") }
+        if (q.answered) Text("Answered", style = MaterialTheme.typography.labelSmall, color = stateColor("done"), modifier = Modifier.padding(top = 6.dp))
+        note?.let { Text(it, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 6.dp)) }
+    }
+}
+
+// ---- Text: the screen and its history, refreshed every 2 s ----
+
+@Composable
+private fun TextTab(api: Api, address: String) {
+    var text by remember(address) { mutableStateOf<String?>(null) }
+    var err by remember(address) { mutableStateOf<String?>(null) }
+    val scroll = rememberScrollState()
+    LaunchedEffect(address, api.base) {
+        while (true) {
+            io { api.read(address, 300) }.onSuccess { text = it; err = null }.onFailure { err = it.message }
+            delay(2000)
+        }
+    }
+    LaunchedEffect(text) { scroll.scrollTo(scroll.maxValue) }
+    Box(Modifier.fillMaxSize()) {
+        when {
+            text == null && err != null -> Text("Could not read the screen: $err", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error)
+            text == null -> Text("Reading the screen…", Modifier.padding(16.dp))
+            else -> SelectionContainer {
+                Text(text!!.trimEnd(), Modifier.fillMaxSize().verticalScroll(scroll).horizontalScroll(rememberScrollState()).padding(8.dp),
+                    fontFamily = FontFamily.Monospace, fontSize = 10.sp, lineHeight = 12.sp, softWrap = false)
+            }
+        }
+    }
+}
+
+// ---- Commits ----
+
+@Composable
+private fun CommitsTab(api: Api, address: String) {
+    val scope = rememberCoroutineScope()
+    var data by remember(address) { mutableStateOf<Commits?>(null) }
+    var err by remember(address) { mutableStateOf<String?>(null) }
+    var detail by remember(address) { mutableStateOf<CommitDetail?>(null) }
+    val load = { fresh: Boolean ->
+        scope.launch {
+            io { Json.commits(api.get(api.terminalPath(address, "commits") + if (fresh) "?fresh" else "", 30000)) }
+                .onSuccess { data = it; err = null }.onFailure { err = it.message }
+        }
+    }
+    LaunchedEffect(address) { load(false) }
+    val d = data
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp)) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(d?.let { listOfNotNull(it.repo, it.branch).joinToString(" · ") } ?: "", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
+                IconButton(onClick = { load(true) }) { Icon(Icons.Default.Refresh, "Refresh") }
+            }
+            d?.let {
+                val bits = listOfNotNull(it.unpushed?.takeIf { n -> n > 0 }?.let { n -> "$n not pushed" }, it.dirty?.takeIf { n -> n > 0 }?.let { n -> "$n changed files" })
+                if (bits.isNotEmpty()) Text(bits.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = stateColor("blocked"))
+                it.pr?.let { pr -> Text("PR #${pr.number}: ${pr.title}", style = MaterialTheme.typography.bodySmall) }
+            }
+        }
+        if (err != null) item { Text("Could not read commits: $err", color = MaterialTheme.colorScheme.error) }
+        if (d?.reason != null) item { Text(d.reason) }
+        items(d?.commits ?: emptyList(), key = { it.sha }) { c ->
+            Column(Modifier.fillMaxWidth().clickable {
+                scope.launch { io { Json.commitDetail(api.get(api.terminalPath(address, "commits/${c.sha}"))) }.onSuccess { detail = it } }
+            }.padding(vertical = 6.dp)) {
+                Text(c.subject, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+                Text("${c.sha.take(7)} · ${c.author} · ${c.date.take(10)}" + if (c.local) " · not pushed" else "",
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                val dd = detail
+                if (dd != null && dd.sha.startsWith(c.sha.take(7))) {
+                    Text(dd.message, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
+                    for (f in dd.files) Text("${f.file}  +${f.additions ?: "?"} −${f.deletions ?: "?"}", fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                }
+            }
+        }
+    }
+}
+
+// ---- Status: the branch's PR, its checks and whether it can merge ----
+
+@Composable
+private fun StatusTab(api: Api, address: String) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var data by remember(address) { mutableStateOf<PrStatus?>(null) }
+    var err by remember(address) { mutableStateOf<String?>(null) }
+    val load = { fresh: Boolean ->
+        scope.launch {
+            io { Json.prStatus(api.get(api.terminalPath(address, "status") + if (fresh) "?fresh" else "", 30000)) }
+                .onSuccess { data = it; err = null }.onFailure { err = it.message }
+        }
+    }
+    LaunchedEffect(address) { load(false) }
+    val d = data
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp)) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(d?.branch ?: "", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
+                IconButton(onClick = { load(true) }) { Icon(Icons.Default.Refresh, "Refresh") }
+            }
+        }
+        if (err != null) item { Text("Could not read the status: $err", color = MaterialTheme.colorScheme.error) }
+        if (d != null && d.pr == null) item { Text(d.reason ?: "No PR for this branch.") }
+        d?.pr?.let { pr ->
+            item {
+                Column(Modifier.fillMaxWidth().clickable { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(pr.url))) }) {
+                    Text("#${pr.number} ${pr.title}", fontWeight = FontWeight.Medium)
+                    Text(listOfNotNull(if (pr.isDraft) "draft" else null, d.readiness, pr.reviewDecision?.lowercase()?.replace('_', ' ')).joinToString(" · "),
+                        style = MaterialTheme.typography.bodySmall, color = if (d.readiness == "ready") stateColor("done") else MaterialTheme.colorScheme.onSurfaceVariant)
+                    for (r in d.reasons) Text("• $r", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            items(d.checks) { c ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable(enabled = c.url != null) { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(c.url))) },
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Dot(stateColor(when (c.bucket) { "pass" -> "done"; "fail" -> "error"; "pending" -> "blocked"; else -> "idle" }), 8.dp)
+                    Text("  ${c.name}", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+    }
+}
+
+// ---- Composer ----
+
+private val DIALOG_KEYS = listOf("up" to "↑", "down" to "↓", "enter" to "⏎", "esc" to "Esc", "tab" to "Tab", "1" to "1", "2" to "2", "3" to "3")
+
+@Composable
+private fun Composer(api: Api, address: String, blocked: Boolean, kind: String?, working: Boolean) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var text by remember(address) { mutableStateOf("") }
+    var note by remember { mutableStateOf<String?>(null) }
+    var sending by remember { mutableStateOf(false) }
+    val images = remember(address) { mutableStateListOf<String>() } // uploaded paths
+    var uploading by remember { mutableStateOf(false) }
+    LaunchedEffect(note) { if (note != null && !note!!.startsWith("Not")) { delay(2500); note = null } }
+
+    val pick = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        uploading = true
+        scope.launch {
+            io {
+                val type = ctx.contentResolver.getType(uri) ?: "application/octet-stream"
+                val bytes = ctx.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+                api.upload(address, bytes, type)
+            }.onSuccess { images.add(it) }.onFailure { note = "Not uploaded: ${it.message}" }
+            uploading = false
+        }
+    }
+    fun send() {
+        val full = (listOf(text.trim()) + images).filter { it.isNotBlank() }.joinToString(" ")
+        if (full.isBlank() || sending || uploading) return
+        sending = true
+        scope.launch {
+            // At a dialog, force: the text goes to the dialog (e.g. an "Other" answer).
+            io { api.send(address, full, force = blocked) }
+                .onSuccess { text = ""; images.clear(); note = "Sent." }
+                .onFailure { note = "Not sent: ${it.message}" }
+            sending = false
+        }
+    }
+    fun keys(k: String) = scope.launch { io { api.keys(address, listOf(k)) }.onFailure { note = "Not sent: ${it.message}" } }
+    fun interrupt() = scope.launch { io { api.interrupt(address) }.onSuccess { note = "Stop key sent." }.onFailure { note = "Not sent: ${it.message}" } }
+
+    Surface(tonalElevation = 3.dp) {
+        Column(Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(8.dp)) {
+            val info = if (blocked) "Waiting at a ${kind ?: "dialog"}. Tap an answer in Chat, press keys, or type here." else null
+            (note ?: info)?.let {
+                Text(it, style = MaterialTheme.typography.labelSmall, color = if (it.startsWith("Not")) MaterialTheme.colorScheme.error else if (blocked && note == null) stateColor("blocked") else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
+            }
+            if (blocked) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                for ((k, label) in DIALOG_KEYS) AssistChip(onClick = { keys(k) }, label = { Text(label) })
+            }
+            if (images.isNotEmpty()) Text("${images.size} image${if (images.size == 1) "" else "s"} attached", style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.clickable { images.clear() }.padding(4.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, enabled = !uploading) {
+                    Icon(Icons.Default.Add, "Attach an image")
+                }
+                OutlinedTextField(text, { text = it }, Modifier.weight(1f), placeholder = { Text(if (blocked) "Answer…" else "Reply…") }, maxLines = 6)
+                if (working || blocked) TextButton(onClick = { interrupt() }) { Text("Stop") }
+                IconButton(onClick = { send() }, enabled = !sending && !uploading && (text.isNotBlank() || images.isNotEmpty())) {
+                    Icon(Icons.AutoMirrored.Filled.Send, "Send")
+                }
+            }
+        }
+    }
+}
