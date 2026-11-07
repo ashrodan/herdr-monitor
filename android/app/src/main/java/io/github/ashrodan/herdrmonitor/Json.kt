@@ -7,14 +7,13 @@ import org.json.JSONObject
 // that matter live in Model.kt, where unit tests reach them.
 
 data class HerdrInfo(val uiVersion: String?, val uiRunning: Boolean, val tuiVersion: String?, val tuiRunning: Boolean, val hc: String?) {
-    fun describe(): String = listOfNotNull(
-        uiVersion?.let { "Herdr app $it" + if (uiRunning) "" else " (not running)" },
-        tuiVersion?.let { "Herdr TUI $it" + if (tuiRunning) "" else " (not running)" },
-        hc?.let { "hc $it" },
-    ).joinToString(" · ").ifEmpty { "Herdr not found" }
+    // Two lines, one per product: they run side by side.
+    val appLine get() = "Herdr app: " + (uiVersion?.let { "$it, " + if (uiRunning) "running" else "not running" } ?: "not installed")
+    val tuiLine get() = "Herdr TUI: " + (tuiVersion?.let { "$it, " + if (tuiRunning) "running" else "not running" } ?: "not installed")
 }
 
-data class ServerInfo(val url: String, val name: String, val os: String?, val self: Boolean, val herdr: HerdrInfo?)
+// One herdr-monitor server. older: it has no /api/info, so no versions.
+data class ServerInfo(val url: String, val name: String, val os: String?, val self: Boolean, val herdr: HerdrInfo?, val older: Boolean = false, val host: String? = null)
 
 data class Commit(val sha: String, val author: String, val date: String, val subject: String, val local: Boolean)
 data class Commits(val repo: String?, val reason: String?, val branch: String?, val unpushed: Int?, val dirty: Int?, val pr: Pr?, val commits: List<Commit>)
@@ -67,6 +66,7 @@ object Json {
             tab = o.optStringOrNull("tab"),
             changedMs = o.optLongOrNull("changed_ms"),
             seenMs = o.optLongOrNull("seen_ms"),
+            listen = o.optJSONObject("listen")?.let { l -> Listen(l.optString("scheme", "http"), l.optInt("port"), l.optStringOrNull("host")) }?.takeIf { it.port > 0 },
         )
     }
 
@@ -75,6 +75,7 @@ object Json {
             id = s.getString("id"), name = s.optString("name"), color = s.optStringOrNull("color"),
             repo = s.optStringOrNull("repo"), branch = s.optStringOrNull("branch"),
             worktree = s.optBoolean("worktree"), virtual = s.optBoolean("virtual"),
+            parent = s.optStringOrNull("parent"), behind = s.optInt("behind"),
             tabs = s.optJSONArray("tabs").mapObj { t -> SpaceTab(t.getString("id"), t.optString("name"), t.optBoolean("named"), t.optJSONArray("terminals").strings()) },
         )
     }
@@ -107,9 +108,11 @@ object Json {
     }
 
     fun info(text: String): HerdrInfo? = herdr(JSONObject(text).optJSONObject("herdr"))
+    fun infoHost(text: String): String? = JSONObject(text).optStringOrNull("host")
+    fun isHealth(text: String): Boolean = try { JSONObject(text).let { it.optBoolean("ok") && it.has("socket") && it.has("terminals") } } catch (e: Exception) { false }
 
     fun discover(text: String): List<ServerInfo> = JSONObject(text).optJSONArray("servers").mapObj {
-        ServerInfo(it.getString("url"), it.optString("name"), it.optStringOrNull("os"), it.optBoolean("self"), herdr(it.optJSONObject("herdr")))
+        ServerInfo(it.getString("url"), it.optString("name"), it.optStringOrNull("os"), it.optBoolean("self"), herdr(it.optJSONObject("herdr")), it.optBoolean("older"))
     }
 
     fun readText(text: String): String = JSONObject(text).optString("text")
@@ -128,20 +131,22 @@ object Json {
         )
     }
 
-    private fun resultText(o: JSONObject): String? {
+    // A result is {text, error, truncated} (lib/transcript.js).
+    private fun result(o: JSONObject): ToolResult? {
         if (!o.has("result") || o.isNull("result")) return null
         val r = o.opt("result")
-        return if (r is String) r else r.toString()
+        return if (r is JSONObject) ToolResult(r.optString("text"), r.optBoolean("error"), r.optBoolean("truncated"))
+        else ToolResult(r.toString(), false, false)
     }
 
     private fun part(p: JSONObject): Part? = when (p.optString("kind")) {
         "text" -> Part.Text(p.optString("text"))
         "thinking" -> Part.Thinking(p.optString("text"))
-        "tool" -> Part.Tool(p.optString("name"), p.optString("summary"), resultText(p))
+        "tool" -> Part.Tool(p.optString("name"), p.optString("summary"), result(p))
         "question" -> Part.Ask(p.optString("id"), p.optJSONArray("questions").mapObj { q ->
             Question(q.optString("header"), q.optString("question"), q.optBoolean("multi"),
                 q.optJSONArray("options").mapObj { Option(it.optString("label"), it.optString("description")) })
-        }, answered = resultText(p) != null)
+        }, answered = result(p) != null, answer = result(p)?.text)
         else -> null
     }
 

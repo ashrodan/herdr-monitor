@@ -22,9 +22,28 @@ data class Terminal(
     val tab: String? = null,
     val changedMs: Long? = null,
     val seenMs: Long? = null,
+    val listen: Listen? = null,
 ) {
     val finished get() = state == "finished"
 }
+
+// A dev server's port (lib/apps.js). host: the tailnet name of the machine
+// that runs it, or null for the server's own machine.
+data class Listen(val scheme: String, val port: Int, val host: String?)
+
+// The URL the phone opens for an app, or null when we do not know the host
+// (never a localhost URL: the phone cannot reach the Mac's localhost).
+fun appUrl(t: Terminal, serverUrl: String): String? {
+    val l = t.listen ?: return null
+    val host = when {
+        l.host != null -> l.host
+        t.address.contains('/') -> return null
+        else -> runCatching { java.net.URI(serverUrl).host }.getOrNull() ?: return null
+    }
+    return "${l.scheme}://$host:${l.port}"
+}
+
+fun Terminal.isApp() = listen != null && status == null
 
 data class SpaceTab(val id: String, val name: String, val named: Boolean, val terminals: List<String>)
 
@@ -37,6 +56,8 @@ data class Space(
     val worktree: Boolean = false,
     val virtual: Boolean = false,
     val tabs: List<SpaceTab> = emptyList(),
+    val parent: String? = null,
+    val behind: Int = 0,
 )
 
 data class Pr(
@@ -144,9 +165,11 @@ data class Question(val header: String, val question: String, val multi: Boolean
 sealed interface Part {
     data class Text(val text: String) : Part
     data class Thinking(val text: String) : Part
-    data class Tool(val name: String, val summary: String, val result: String?) : Part
-    data class Ask(val id: String, val questions: List<Question>, val answered: Boolean) : Part
+    data class Tool(val name: String, val summary: String, val result: ToolResult?) : Part
+    data class Ask(val id: String, val questions: List<Question>, val answered: Boolean, val answer: String? = null) : Part
 }
+
+data class ToolResult(val text: String, val error: Boolean, val truncated: Boolean)
 
 data class Message(val id: String, val role: String, val at: String?, val parts: List<Part>)
 
@@ -242,3 +265,18 @@ fun isTailnetAddress(ip: String): Boolean {
     val b = p[1].toIntOrNull() ?: return false
     return a == 100 && b in 64..127
 }
+
+// The status mark the web shows (marks.tsx StatusMark): a shell that is idle
+// gets none.
+fun Terminal.mark(localSeen: Map<String, Long> = emptyMap()): String? = when {
+    finished -> "finished"
+    status == null -> if (isAgent()) "idle" else null
+    else -> stateOf(localSeen)
+}
+
+// Machine name and port of a server URL: "ashleys-macbook-pro-2", 7400.
+fun shortHost(url: String): String {
+    val host = runCatching { java.net.URI(url).host }.getOrNull() ?: return url
+    return if (Regex("^[\\d.]+$").matches(host) || host.contains(':')) host else host.substringBefore('.')
+}
+fun portOf(url: String): Int = runCatching { java.net.URI(url).let { if (it.port != -1) it.port else if (it.scheme == "https") 443 else 80 } }.getOrDefault(-1)

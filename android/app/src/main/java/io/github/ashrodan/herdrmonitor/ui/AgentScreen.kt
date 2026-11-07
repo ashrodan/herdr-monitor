@@ -6,6 +6,15 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.withStyle
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -178,15 +187,20 @@ private fun ChatTab(api: Api, address: String, blocked: Boolean, working: Boolea
 @Composable
 private fun MessageView(m: Message, api: Api, address: String, waitingOn: Part.Ask?) {
     when (m.role) {
-        "user" -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            Surface(shape = RoundedCornerShape(16.dp, 16.dp, 4.dp, 16.dp), color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.widthIn(max = 320.dp)) {
-                Prose(m.parts.filterIsInstance<Part.Text>().joinToString("\n") { it.text }, Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+        // Your prompt: a bubble on the right, at most ~85% wide, Markdown
+        // with single line breaks kept.
+        "user" -> BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val w = maxWidth * 0.85f
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                Surface(shape = RoundedCornerShape(16.dp, 16.dp, 6.dp, 16.dp), color = Palette.secondary, modifier = Modifier.widthIn(max = w)) {
+                    SelectionContainer { MarkdownView(m.parts.filterIsInstance<Part.Text>().joinToString("\n") { it.text }, Modifier.padding(horizontal = 14.dp, vertical = 8.dp), keepBreaks = true) }
+                }
             }
         }
         "system" -> Text(m.parts.filterIsInstance<Part.Text>().joinToString(" ") { it.text }, Modifier.fillMaxWidth(),
-            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        else -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            // Runs of tool calls fold into one line.
+            style = MaterialTheme.typography.labelSmall, color = Palette.mutedForeground, textAlign = TextAlign.Center)
+        else -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Runs of tool calls fold into one card.
             val blocks = mutableListOf<Any>()
             for (p in m.parts) {
                 val last = blocks.lastOrNull()
@@ -196,46 +210,60 @@ private fun MessageView(m: Message, api: Api, address: String, waitingOn: Part.A
             for (b in blocks) when (b) {
                 is MutableList<*> -> @Suppress("UNCHECKED_CAST") ToolGroup(b as List<Part.Tool>)
                 is Part.Ask -> AskCard(b, api, address, live = b === waitingOn)
-                is Part.Thinking -> Folded("Thinking", b.text)
-                is Part.Text -> Prose(b.text)
+                is Part.Thinking -> Thinking(b.text)
+                is Part.Text -> SelectionContainer { MarkdownView(b.text) }
             }
         }
     }
 }
 
 @Composable
-private fun Prose(text: String, modifier: Modifier = Modifier) {
-    val codeBg = MaterialTheme.colorScheme.surfaceVariant
-    SelectionContainer(modifier) {
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            for ((code, body) in splitFences(text)) {
-                if (code) Text(body, Modifier.fillMaxWidth().background(codeBg, RoundedCornerShape(6.dp)).horizontalScroll(rememberScrollState()).padding(8.dp),
-                    fontFamily = FontFamily.Monospace, fontSize = 12.sp, softWrap = false)
-                else Text(inlineMarkdown(body, codeBg), style = MaterialTheme.typography.bodyMedium)
-            }
-        }
-    }
-}
-
-@Composable
-private fun Folded(title: String, text: String) {
+private fun Thinking(text: String) {
     var open by remember { mutableStateOf(false) }
     Column(Modifier.clickable { open = !open }) {
-        Text((if (open) "▾ " else "▸ ") + title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (open) Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 12.dp, top = 4.dp))
+        Text((if (open) "▾  " else "▸  ") + "Thinking", fontSize = 12.sp, color = Palette.mutedForeground)
+        if (open) Text(text, Modifier.padding(start = 18.dp, top = 4.dp), fontSize = 12.sp, fontStyle = FontStyle.Italic, color = Palette.mutedForeground)
     }
 }
 
+// web ToolGroup: one collapsed card. Closed: the tool and its summary, or
+// "N tool calls · names", and how many failed. Open: one row per tool; a
+// tap shows its result.
 @Composable
 private fun ToolGroup(tools: List<Part.Tool>) {
     var open by remember { mutableStateOf(false) }
-    Column(Modifier.fillMaxWidth().clickable { open = !open }) {
-        val names = tools.map { it.name }.distinct().take(4).joinToString(", ")
-        Text((if (open) "▾ " else "▸ ") + "${tools.size} tool call${if (tools.size == 1) "" else "s"} · $names",
-            style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        if (open) for (tl in tools) {
-            Text("${tl.name}  ${tl.summary}", Modifier.padding(start = 12.dp, top = 3.dp), fontFamily = FontFamily.Monospace, fontSize = 11.sp,
-                maxLines = 3, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    val failed = tools.count { it.result?.error == true }
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Palette.card.copy(alpha = 0.6f)).border(1.dp, Palette.border, RoundedCornerShape(8.dp))) {
+        Row(Modifier.fillMaxWidth().clickable { open = !open }.padding(horizontal = 10.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(if (open) "▾ " else "▸ ", fontSize = 12.sp, color = Palette.mutedForeground)
+            Text("🔧 ", fontSize = 11.sp)
+            val one = tools.singleOrNull()
+            Text(buildAnnotatedString {
+                if (one != null) { withStyle(SpanStyle(fontWeight = FontWeight.Medium, color = Palette.foreground)) { append(one.name) }; append(" "); append(one.summary) }
+                else append("${tools.size} tool calls · " + tools.map { it.name }.distinct().take(3).joinToString(", "))
+            }, Modifier.weight(1f), fontSize = 12.sp, color = Palette.mutedForeground, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (failed > 0) Text("  ⚠ $failed", fontSize = 12.sp, color = Palette.error)
+            if (tools.any { it.result == null }) Text("  running", fontSize = 12.sp, color = Palette.blocked)
+        }
+        if (open) for (t in tools) ToolRow(t)
+    }
+}
+
+@Composable
+private fun ToolRow(t: Part.Tool) {
+    var open by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth()) {
+        HorizontalDivider(color = Palette.border)
+        Row(Modifier.fillMaxWidth().clickable(enabled = t.result != null) { open = !open }.padding(horizontal = 10.dp, vertical = 6.dp)) {
+            Text(t.name, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = if (t.result?.error == true) Palette.error else Palette.foreground)
+            Text("  " + t.summary, Modifier.weight(1f), fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = Palette.mutedForeground, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (t.result == null) Text("running", fontSize = 12.sp, color = Palette.blocked)
+        }
+        val r = t.result
+        if (open && r != null) {
+            Text(r.text.ifEmpty { "(no output)" } + if (r.truncated) "\n… (cut)" else "",
+                Modifier.fillMaxWidth().heightIn(max = 300.dp).background(Palette.code).verticalScroll(rememberScrollState()).padding(10.dp),
+                fontFamily = FontFamily.Monospace, fontSize = 11.sp, lineHeight = 14.sp, color = Palette.foreground)
         }
     }
 }
@@ -283,7 +311,9 @@ private fun AskCard(q: Part.Ask, api: Api, address: String, live: Boolean) {
             }
         }
         if (live && needsSubmit) Button(onClick = { act({ api.submit(address, q.shape()) }, "Submitted.") }, enabled = !busy, modifier = Modifier.padding(top = 8.dp)) { Text("Submit") }
-        if (q.answered) Text("Answered", style = MaterialTheme.typography.labelSmall, color = stateColor("done"), modifier = Modifier.padding(top = 6.dp))
+        if (q.answered) Text("Answered: " + (q.answer ?: "").lineSequence().firstOrNull().orEmpty().take(200), fontSize = 12.sp, color = Palette.mutedForeground, modifier = Modifier.padding(top = 6.dp))
+        else if (live && note == null) Text(if (needsSubmit) "Tap your answers, then Submit. To write your own, type it below." else "Tap an answer. To write your own, type it below.",
+            fontSize = 12.sp, color = Palette.blocked, modifier = Modifier.padding(top = 6.dp))
         note?.let { Text(it, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 6.dp)) }
     }
 }
