@@ -292,12 +292,14 @@ private fun PillTabs(selected: Int, onSelect: (Int) -> Unit, changes: Int) {
 @Composable
 private fun ChatTab(api: Api, address: String, blocked: Boolean, working: Boolean, agent: String, queued: List<OutItem>) {
     val ctx = LocalContext.current
-    var chat by remember(address) { mutableStateOf<Chat?>(null) }
+    // The last transcript read for this agent shows at once; the loop
+    // below brings it up to date.
+    var chat by remember(address) { mutableStateOf(ctx.app.chats.get(api.base, address)) }
     var err by remember(address) { mutableStateOf<String?>(null) }
     LaunchedEffect(address, api.base) {
         while (true) {
             io { api.chat(address, chat?.version) }
-                .onSuccess { c -> if (c != null) { chat = c; ctx.app.outbox.dropDelivered(address, userTexts(c.messages)) }; err = null }
+                .onSuccess { c -> if (c != null) { chat = c; ctx.app.chats.put(api.base, address, c); ctx.app.outbox.dropDelivered(address, userTexts(c.messages)) }; err = null }
                 .onFailure { err = it.message }
             delay(if (working || blocked) 2500 else 6000)
         }
@@ -305,12 +307,20 @@ private fun ChatTab(api: Api, address: String, blocked: Boolean, working: Boolea
     val c = chat
     when {
         c == null && err != null -> NoChat("Could not read the transcript: $err", queued, error = true)
-        c == null -> NoChat("Loading the conversation…", queued)
+        c == null -> if (queued.isEmpty()) SkeletonChat() else NoChat("Loading the conversation…", queued)
         !c.available -> NoChat("${c.reason ?: "No transcript."} Use Terminal.", queued)
         else -> {
             val list = rememberLazyListState()
-            val items = remember(c) { transcriptItems(c.messages) }
-            val waitingOn = if (blocked) lastUnansweredAsk(c.messages) else null
+            // The first transcript folds here (no blank frame); later ones
+            // fold off the main thread, and the list keeps the old items
+            // until the new ones are ready. The question to answer comes from
+            // the same transcript as the items (AskCard compares identity).
+            var shown by remember(address) { mutableStateOf(c to transcriptItems(c.messages)) }
+            LaunchedEffect(c) {
+                if (shown.first !== c) shown = withContext(Dispatchers.Default) { c to transcriptItems(c.messages) }
+            }
+            val items = shown.second
+            val waitingOn = if (blocked) remember(shown) { lastUnansweredAsk(shown.first.messages) } else null
             val running = if (working) runningTool(items) else null
             LaunchedEffect(items.size, queued.size, working) { list.layoutInfo.totalItemsCount.takeIf { it > 0 }?.let { list.scrollToItem(it - 1) } }
             LazyColumn(Modifier.fillMaxSize(), state = list, verticalArrangement = Arrangement.spacedBy(12.dp),

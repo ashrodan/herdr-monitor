@@ -106,9 +106,9 @@ class Api(val base: String) {
 
     fun keys(addr: String, keys: List<String>) = post(terminalPath(addr, "keys"), Json.keysBody(keys))
 
-    fun chat(addr: String, version: String?): Chat? {
+    fun chat(addr: String, version: String?, timeoutMs: Int = 30000): Chat? {
         val q = if (version != null) "?v=${pathPart(version)}" else ""
-        return Json.chat(get(terminalPath(addr, "chat") + q, 30000))
+        return Json.chat(get(terminalPath(addr, "chat") + q, timeoutMs))
     }
 
     fun read(addr: String, lines: Int) = Json.readText(get(terminalPath(addr, "read") + "?lines=$lines"))

@@ -14,7 +14,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
@@ -24,6 +26,7 @@ class App : Application() {
     lateinit var prefs: Prefs
     lateinit var store: Store
     lateinit var outbox: Outbox
+    lateinit var cache: Cache
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     // Agent states the alert service last heard (address -> state). The app's
     // own Store is stale while no screen is open.
@@ -33,6 +36,8 @@ class App : Application() {
     val digests = MutableStateFlow<Map<String, Digest>>(emptyMap())
     val sent = MutableStateFlow<Map<String, SentMark>>(emptyMap())
     val pins = MutableStateFlow<Set<String>>(emptySet())
+    // The last few transcripts read, so reopening an agent is instant.
+    val chats = ChatCache(8)
 
     fun togglePin(address: String) {
         val next = if (address in pins.value) pins.value - address else pins.value + address
@@ -58,6 +63,30 @@ class App : Application() {
         }
     }
 
+    // The cards' last words survive a restart: read them back (no version,
+    // so Home reads each transcript again), and save them 2 s after a change.
+    @OptIn(kotlinx.coroutines.FlowPreview::class)
+    private fun loadDigests() {
+        readDigests()
+        scope.launch { digests.debounce(2_000).collect { d -> cache.write(prefs.server, Cache.DIGESTS, digestsToJson(d)) } }
+    }
+
+    private fun readDigests() = scope.launch {
+        val srv = prefs.server
+        cache.read(srv, Cache.DIGESTS)?.let { (_, text) ->
+            val saved = runCatching { digestsFromJson(text) }.getOrNull().orEmpty()
+            if (prefs.server == srv) digests.update { saved + it }
+        }
+    }
+
+    // Another server: its own sessions, PRs and last words.
+    fun serverChanged() {
+        digests.value = emptyMap()
+        sent.value = emptyMap()
+        store.restart()
+        readDigests()
+    }
+
     fun setLook(l: Look) {
         prefs.theme = l.pref.name
         prefs.wallpaperColours = l.wallpaperColours
@@ -68,7 +97,9 @@ class App : Application() {
         super.onCreate()
         prefs = Prefs(this)
         look.value = Look(ThemePref.of(prefs.theme), prefs.wallpaperColours)
-        store = Store { prefs.server }
+        cache = Cache(java.io.File(cacheDir, "live"))
+        store = Store({ prefs.server }, cache)
+        loadDigests()
         Notifier.channels(this)
         outbox = Outbox(prefs.outboxStorage)
         pins.value = prefs.pinned

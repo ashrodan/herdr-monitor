@@ -79,6 +79,7 @@ import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -110,6 +111,10 @@ import io.github.ashrodan.herdrmonitor.ui.theme.LocalStatusColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
 enum class HomeTab { Sessions, Prs, Spaces }
@@ -219,7 +224,7 @@ fun HomeScreen(live: Live, go: (Route) -> Unit, selected: String? = null) {
                 },
             ) { pad ->
                 Column(Modifier.fillMaxSize().padding(top = pad.calculateTopPadding())) {
-                    if (!online) ConnectionLine(live)
+                    ConnectionLine(live)
                     when (tab) {
                         HomeTab.Sessions -> {
                             StatusFilterRow(counts, filter) { filter = it }
@@ -242,7 +247,8 @@ fun HomeScreen(live: Live, go: (Route) -> Unit, selected: String? = null) {
                             }
                         }
                         HomeTab.Prs -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(12.dp)) {
-                            if (live.prs.isEmpty()) item { Text("No open pull requests.", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                            if (!live.prsLoaded) item { SkeletonRows(label = "Loading pull requests") }
+                            else if (live.prs.isEmpty()) item { Text("No open pull requests.", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
                             items(live.prs.size, key = { "pr-${live.prs[it].pr.url}" }) { i ->
                                 val p = live.prs[i]
                                 PrRow(p) { openUrl(ctx, p.pr.url) }
@@ -303,12 +309,14 @@ private fun LazyListScope.sessionsList(
     open: (Session) -> Unit, menu: (Session) -> Unit, answer: (Session, Int, String) -> Unit,
     pin: (Session) -> Unit, stop: (Session) -> Unit, showIdle: () -> Unit,
 ) {
+    // Cards from the cache are dimmed until the live list is in.
+    val stale = live.cachedAt != null
     if (all.isEmpty()) {
         item(key = "empty") {
             when (live.link) {
                 Link.Online -> SceneState(HerdrScene.AllPenned, "No sessions.")
                 Link.Offline -> SceneState(HerdrScene.Offline, "No link to the server.")
-                Link.Connecting -> Text("Connecting to Herdr…", Modifier.padding(24.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Link.Connecting -> SkeletonSessions()
             }
         }
         return
@@ -318,7 +326,8 @@ private fun LazyListScope.sessionsList(
         if (rows.isEmpty()) return
         item(key = "h-$bucket", contentType = "header") { SectionHeader(title, rows.size, waiting = bucket == Bucket.NeedsYou) }
         itemsIndexed(rows, key = { _, s -> s.address }, contentType = { _, _ -> "card" }) { i, s ->
-            Box(Modifier.padding(horizontal = 12.dp).padding(top = if (i == 0) 0.dp else Corner.groupGap).animateItem()) {
+            Box(Modifier.padding(horizontal = 12.dp).padding(top = if (i == 0) 0.dp else Corner.groupGap).animateItem()
+                .graphicsLayer { alpha = if (stale) 0.6f else 1f }) {
                 SessionCard(s, i, rows.size, now, onOpen = { open(s) }, onLongPress = { menu(s) },
                     onAnswer = { j, l -> answer(s, j, l) }, onPin = { pin(s) }, onStop = { stop(s) }, selected = s.address == selected)
             }
@@ -342,21 +351,29 @@ private fun LazyListScope.sessionsList(
 
 // Reads the transcript of each session that is not idle (up to 12), every
 // 8 s while Home shows, for its last words, its question and its last
-// output time. An unchanged transcript costs one small request.
+// output time. Needs you first (its answer buttons wait on this), four at a
+// time, a 10 s read timeout each: one slow agent does not hold up the rest. An
+// unchanged transcript costs one small request.
 @Composable
 private fun DigestLoader(sessions: List<Session>) {
     val app = LocalContext.current.app
     val current by rememberUpdatedState(sessions)
     LaunchedEffect(Unit) {
+        val gate = Semaphore(4)
         while (true) {
             val api = app.store.api
-            val targets = current.filter { it.bucket != Bucket.Idle }.take(12)
-            for (s in targets) {
-                val old = app.digests.value[s.address]
-                val chat = runCatching { withContext(Dispatchers.IO) { api.chat(s.address, old?.version) } }.getOrNull() ?: continue
-                if (!chat.available) continue
-                val d: Digest = withContext(Dispatchers.Default) { digest(chat) }
-                app.digests.value = app.digests.value + (s.address to d)
+            val targets = current.filter { it.bucket != Bucket.Idle }.sortedBy { it.bucket.ordinal }.take(12)
+            coroutineScope {
+                for (s in targets) launch {
+                    gate.withPermit {
+                        val old = app.digests.value[s.address]
+                        val chat = runCatching { withContext(Dispatchers.IO) { api.chat(s.address, old?.version, timeoutMs = 10_000) } }.getOrNull()
+                            ?: return@withPermit
+                        if (!chat.available) return@withPermit
+                        val d: Digest = withContext(Dispatchers.Default) { digest(chat) }
+                        app.digests.update { it + (s.address to d) }
+                    }
+                }
             }
             delay(8_000)
         }

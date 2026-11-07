@@ -46,7 +46,7 @@ import kotlinx.coroutines.withContext
 fun useServer(c: Context, url: String): Boolean {
     val n = normalizeServer(url) ?: return false
     c.app.prefs.server = n
-    c.app.store.restart()
+    c.app.serverChanged()
     AlertService.start(c, reconnect = true)
     return true
 }

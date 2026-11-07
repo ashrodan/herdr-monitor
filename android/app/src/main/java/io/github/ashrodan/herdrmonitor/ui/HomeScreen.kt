@@ -43,6 +43,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -72,16 +75,31 @@ import io.github.ashrodan.herdrmonitor.spaceState
 import io.github.ashrodan.herdrmonitor.stateOf
 import kotlinx.coroutines.delay
 
+// The link state, in one line. "Connecting…" waits 1 s, so a quick
+// connect does not push the screen down and back up. With cached sessions
+// on screen, it says how old they are.
 @Composable
 fun ConnectionLine(live: Live) {
+    var late by remember { mutableStateOf(false) }
+    LaunchedEffect(live.link) { late = false; if (live.link == Link.Connecting) { delay(1_000); late = true } }
+    val from = live.cachedAt?.let { " Showing sessions from ${clockOf(it)}." } ?: ""
     val text = when {
-        live.link == Link.Connecting -> "Connecting…"
-        live.link == Link.Offline -> "No link to the server" + (live.error?.let { ": $it" } ?: "")
+        live.link == Link.Connecting -> if (late || live.cachedAt != null) "Connecting…$from" else null
+        live.link == Link.Offline -> "No link to the server" + (live.error?.let { ": $it" } ?: "") + "." + from
         !live.hcConnected -> "Connected, but Herdr (hc) is not running on the Mac"
         else -> null
     } ?: return
-    Text(text, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+    Text(text, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp).semantics { liveRegion = LiveRegionMode.Polite },
         color = if (live.link == Link.Offline) Palette.error else Palette.mutedForeground, style = MaterialTheme.typography.bodySmall)
+}
+
+// "9:31" today, else "Nov 6, 9:31".
+fun clockOf(ms: Long): String {
+    val z = java.time.ZoneId.systemDefault()
+    val t = java.time.Instant.ofEpochMilli(ms).atZone(z)
+    val today = java.time.LocalDate.now(z)
+    val hm = java.time.format.DateTimeFormatter.ofPattern("H:mm")
+    return if (t.toLocalDate() == today) t.format(hm) else t.format(java.time.format.DateTimeFormatter.ofPattern("MMM d, H:mm"))
 }
 
 // The rows' ages tick.

@@ -175,3 +175,23 @@ fun duration(ms: Long): String {
 
 // PRs waiting for a review: open, not a draft, review required.
 fun awaitingReview(prs: List<OverviewPr>) = prs.count { !it.pr.isDraft && it.pr.reviewDecision == "REVIEW_REQUIRED" }
+
+// The cached part of a Digest: the snippet and the last output time. The
+// version and the question are left out: Home reads the transcript again
+// before it shows answer buttons.
+fun digestsToJson(d: Map<String, Digest>): String {
+    val o = org.json.JSONObject()
+    for ((addr, v) in d) {
+        if (v.snippet == null && v.lastAtMs == null) continue
+        o.put(addr, org.json.JSONObject().apply { v.snippet?.let { put("s", it) }; v.lastAtMs?.let { put("t", it) } })
+    }
+    return o.toString()
+}
+
+fun digestsFromJson(text: String): Map<String, Digest> {
+    val o = org.json.JSONObject(text)
+    return o.keys().asSequence().associateWith { k ->
+        val v = o.getJSONObject(k)
+        Digest(version = null, snippet = v.optString("s").ifEmpty { null }, lastAtMs = if (v.has("t")) v.getLong("t") else null, ask = null)
+    }
+}

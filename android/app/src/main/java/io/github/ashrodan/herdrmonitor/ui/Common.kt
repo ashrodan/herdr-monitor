@@ -157,7 +157,8 @@ private val Double.em get() = androidx.compose.ui.unit.TextUnit(this.toFloat(), 
 fun MarkdownView(text: String, modifier: Modifier = Modifier, keepBreaks: Boolean = false) {
     val body = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 22.sp)
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        for (b in Markdown.blocks(text, keepBreaks)) when (b) {
+        val blocks = remember(text, keepBreaks) { Markdown.blocks(text, keepBreaks) }
+        for (b in blocks) when (b) {
             is Block.Heading -> Text(annotated(b.text), fontWeight = FontWeight.SemiBold,
                 style = when (b.level) { 1 -> MaterialTheme.typography.titleLarge; 2 -> MaterialTheme.typography.titleMedium; else -> MaterialTheme.typography.titleSmall })
             is Block.Para -> Text(annotated(b.text), style = body)

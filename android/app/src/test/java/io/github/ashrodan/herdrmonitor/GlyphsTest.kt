@@ -9,6 +9,9 @@ class GlyphsTest {
         assertEquals("π PANE: omp", Glyphs.label("π  PANE: 󰨞 omp │"))
         assertEquals(null, Glyphs.label(null))
         assertEquals("plain text", Glyphs.label("plain text"))
+        // A spinner frame in a title: every frame gives the same label.
+        assertEquals("π PANE: Install", Glyphs.label("π ⠼ \uDB80\uDF79 PANE: Install"))
+        assertEquals(Glyphs.label("π ⠼ PANE: Install"), Glyphs.label("π ⠏ PANE: Install"))
     }
 
     @Test fun labelKeepsEmojiAndOtherScripts() {

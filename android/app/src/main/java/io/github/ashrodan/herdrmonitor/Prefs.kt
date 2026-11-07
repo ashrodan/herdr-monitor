@@ -78,10 +78,20 @@ class Prefs(context: Context) {
         get() = p.getString("widget", null)
         set(v) = p.edit().putString("widget", v).apply()
 
-    private fun readMap(key: String): Map<String, Any> = try {
-        val o = JSONObject(p.getString(key, "{}")!!)
-        o.keys().asSequence().associateWith { o.get(it) }
-    } catch (e: Exception) { emptyMap() }
+    // Home reads these maps on every rebuild of its list: decode the JSON
+    // only when the stored text changed.
+    private val decoded = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Map<String, Any>>>()
+
+    private fun readMap(key: String): Map<String, Any> {
+        val raw = p.getString(key, "{}")!!
+        decoded[key]?.let { (r, m) -> if (r == raw) return m }
+        val m: Map<String, Any> = try {
+            val o = JSONObject(raw)
+            o.keys().asSequence().associateWith { o.get(it) }
+        } catch (e: Exception) { emptyMap() }
+        decoded[key] = raw to m
+        return m
+    }
 
     private fun writeMap(key: String, m: Map<String, Any>) = p.edit().putString(key, JSONObject(m).toString()).apply()
 }

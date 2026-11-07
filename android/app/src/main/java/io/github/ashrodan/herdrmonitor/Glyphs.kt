@@ -21,7 +21,10 @@ object Glyphs {
 
     // A one-line label (a name, a title, a status message): both kinds go,
     // and the gaps they leave close up.
-    fun label(s: String?): String? = s?.let { strip(it, box = true).replace(Regex("[ \\t]{2,}"), " ").trim() }
+    // Braille patterns go too: TUIs spin them in titles ("⠼ ⠴ ⠦"), ten
+    // times a second, and a label must not change with each frame.
+    fun label(s: String?): String? = s?.let { strip(it, box = true).replace(BRAILLE, "").replace(Regex("[ \\t]{2,}"), " ").trim() }
+    private val BRAILLE = Regex("[\\u2800-\\u28FF]")
 
     // Chat prose: private use glyphs go everywhere; box-drawing goes outside
     // ``` code blocks only (a tree or a table in a code block keeps it).

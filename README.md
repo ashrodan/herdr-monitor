@@ -75,6 +75,12 @@ WebView.
   space's folder (`POST /api/sessions`) and the app opens it.
 - **Agent**: Chat, Text, Commits and Status, and a box to reply, attach an
   image, press dialog keys or stop the agent.
+- **Fast start**: the app keeps the last sessions, PRs and last words it
+  read from each server (in its cache folder, at most a day old). A cold
+  start shows them at once, dimmed, with "Showing sessions from 9:31" until
+  the live list is in. With nothing cached, Home shows placeholder cards.
+  The last eight transcripts stay in memory, so an agent you opened before
+  shows at once.
 - **Offline replies**: a reply that you send with no link to the server goes
   into a queue on the phone. It shows in Chat as "queued". The app sends it
   when the link comes back, in order, per agent. You can delete a queued
@@ -123,6 +129,7 @@ The app needs Android 12 or later. To build it, you need the Android SDK
     ./gradlew assembleDebug         # app/build/outputs/apk/debug/app-debug.apk
     ./gradlew test lint             # unit tests and lint
     ./gradlew connectedDebugAndroidTest   # UI tests (an emulator or a phone)
+    ./gradlew installPerf           # release code (R8), debug key: to measure speed
 
 Install it with a USB cable (USB debugging on):
 
@@ -130,7 +137,9 @@ Install it with a USB cable (USB debugging on):
 
 Or send the APK to the phone (for example with Google Drive or a chat app),
 open it, and allow the install. The debug build is signed with the debug
-key. Release signing is not set up yet.
+key. Release signing is not set up yet. The release build is shrunk with
+R8 (about 4 MB instead of 60 MB for debug). A debug build draws several times
+slower, so measure start-up and frames on the `perf` build.
 
 ### Set it up
 
