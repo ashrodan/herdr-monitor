@@ -91,7 +91,7 @@ object Notifier {
         }
     }
 
-    fun postAgent(c: Context, a: AgentInfo, state: String, ask: Part.Ask?) {
+    fun postAgent(c: Context, a: AgentInfo, state: String, ask: Part.Ask?, quiet: Boolean = false) {
         val question = if (state == "blocked") ask?.questions?.singleOrNull()?.question else null
         val body = question ?: alertBody(a, state)
         val n = Notification.Builder(c, CH_ALERTS)
@@ -101,6 +101,7 @@ object Notifier {
             .setStyle(Notification.BigTextStyle().bigText(body))
             .setContentIntent(openPi(c, a.address))
             .setAutoCancel(true)
+            .setOnlyAlertOnce(quiet)
             .setGroup(GROUP)
             .setCategory(if (state == "blocked") Notification.CATEGORY_MESSAGE else Notification.CATEGORY_STATUS)
             .setColor(colorOf(state))

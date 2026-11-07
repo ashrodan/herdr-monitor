@@ -203,8 +203,12 @@ fun alertTitle(name: String, state: String) = "$name · " + when (state) {
     else -> state
 }
 
-fun alertBody(a: AgentInfo, state: String) = a.msg?.takeIf { it.isNotBlank() }
-    ?: if (state == "blocked") "Waiting at a ${a.kind ?: "dialog"}" else ""
+fun alertBody(a: AgentInfo, state: String) = a.msg?.takeIf { it.isNotBlank() } ?: when (state) {
+    "blocked" -> "Waiting at a ${a.kind ?: "dialog"}"
+    "done" -> "Finished its turn"
+    "error" -> "Stopped with an error"
+    else -> ""
+}
 
 // ---- Widget (like the Summary mod's bar and list) ----
 

@@ -41,9 +41,19 @@ fun Dot(color: Color, size: Dp = 9.dp) {
 
 val STATE_LABEL = mapOf("blocked" to "Needs you", "error" to "Error", "done" to "Done", "working" to "Working", "idle" to "Idle", "finished" to "Finished")
 
-// Just enough Markdown for chat: **bold**, `code`. Code fences are split
+// Just enough Markdown for chat: # headings, **bold**, `code`. Code fences are split
 // out by the caller.
 fun inlineMarkdown(text: String, codeBg: Color): AnnotatedString = buildAnnotatedString {
+    text.split('\n').forEachIndexed { i, raw ->
+        if (i > 0) append('\n')
+        // "## Title": the words, bold.
+        val heading = Regex("^#{1,6}\\s+(.*)").find(raw)?.groupValues?.get(1)
+        if (heading != null) { pushStyle(SpanStyle(fontWeight = FontWeight.Bold)); inline(heading, codeBg); pop() }
+        else inline(raw, codeBg)
+    }
+}
+
+private fun AnnotatedString.Builder.inline(text: String, codeBg: Color) {
     val re = Regex("""\*\*(.+?)\*\*|`([^`]+)`""")
     var at = 0
     for (m in re.findAll(text)) {

@@ -53,6 +53,72 @@ button. On iPhone, follow the steps in the menu (Share → Add to Home Screen),
 then open the app from the Home Screen. iOS sends Web Push only to a
 home-screen app.
 
+## Android app
+
+A native Android app (Kotlin, Jetpack Compose) in [`android/`](android/). It
+talks to this server over its HTTP API. It does not show the web UI in a
+WebView.
+
+- **Screens**: Home (Waiting, Done, Working and PR counts; agents by state;
+  spaces; open PRs), a space (its tabs and terminals), and an agent (Chat,
+  Text, Commits, Status, and a box to reply, attach an image, press dialog
+  keys or stop the agent).
+- **Alerts**: a notification when an agent needs you, is done, or hits an
+  error. It goes away when the agent moves on, for example when you answer
+  it on the Mac. There is one notification per agent.
+- **Widget**: like the Summary mod: Waiting, Done (not seen), Working and PR
+  counts, then the agents that wait, the done agents and the open PRs. Tap a
+  row to open that agent (or the PR). Tap anywhere else to open the app.
+- **Settings**: the server URL, **Find on tailnet** (lists the herdr-monitor
+  servers on your tailnet, with each one's Herdr app, Herdr TUI and hc
+  versions), and the background-alerts switch.
+
+The phone must be on Tailscale, on the same tailnet as the Mac. No Google
+account, Firebase or push service is used: while alerts are on, the app keeps
+one link to the server (`GET /api/agents/stream`) and shows a quiet "Herdr
+monitor connected" notification.
+
+### Build and install
+
+You need the Android SDK (`ANDROID_HOME`) and JDK 17 or later. Android
+Studio is not needed.
+
+    cd android
+    ./gradlew assembleDebug         # app/build/outputs/apk/debug/app-debug.apk
+    ./gradlew test lint             # unit tests and lint
+
+Install it with a USB cable (USB debugging on):
+
+    adb install -r app/build/outputs/apk/debug/app-debug.apk
+
+Or send the APK to the phone (for example with Google Drive or a chat app),
+open it, and allow the install. The debug build is signed with the debug
+key. Release signing is not set up yet.
+
+### Set it up
+
+1. Open the app and allow notifications.
+2. In Settings (the gear), type the server URL, for example
+   `https://<machine>.<tailnet>.ts.net:7400`, or tap **Find on tailnet** and
+   pick a server. The app finds servers through a server it can reach,
+   because an Android app cannot read Tailscale's list of machines.
+3. For alerts on time when the phone sleeps, tap **Run unrestricted**.
+
+### Notification actions
+
+Android shows at most three buttons on a notification.
+
+| Agent | Buttons |
+| --- | --- |
+| Waits at one single-choice question | Its first three options (then Reply). A tap answers the question, like a tap in Chat (`POST /api/terminals/:t/answer`). |
+| Waits at another dialog | **Reply** (types into the dialog with `force`), **Interrupt** (`POST …/interrupt`), **Open** |
+| Done or error | **Reply** (`POST …/send`), **Open** |
+
+A tap on the notification opens that agent in the app. Every button that
+types or presses keys asks you to unlock the phone first. The app sends an
+`Origin` header equal to the server URL, so the server's same-origin check
+applies to it unchanged.
+
 ## What it shows
 
 - **Agents.** Grouped like Herdr's sidebar: Blocked, Error, Done, Working,
@@ -108,12 +174,16 @@ not from this repo.
 
     web/ (React) ── vite build ──> dist/ (served by server.js)
 
+    Android app ── SSE /api/events (screens), /api/agents/stream (alerts)
+                ── /api/info, /api/discover ── lib/herdr.js, lib/agents.js
+
 `hc schema` prints the full `hc` API.
 
 ## Test
 
     npm test           # server and library tests (node:test)
     npm run typecheck  # the UI
+    cd android && ./gradlew test lint   # the Android app
 
 ## License
 

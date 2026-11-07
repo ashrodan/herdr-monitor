@@ -44,6 +44,11 @@ class AlertService : Service() {
     override fun onCreate() {
         super.onCreate()
         prefs = app.prefs
+        // Forget alerts that are no longer on screen (an app update or a
+        // reboot clears them), so the record matches what the user sees.
+        val shown = getSystemService(android.app.NotificationManager::class.java).activeNotifications
+            .filter { it.id == Notifier.ID_AGENT }.mapNotNull { it.tag }.toSet()
+        prefs.posted = prefs.posted.filterKeys { it in shown }
         val n = Notifier.service(this, "Herdr monitor connecting…")
         // The specialUse type exists from Android 14; before that a plain
         // foreground service has no time limit.
@@ -146,15 +151,22 @@ class AlertService : Service() {
         }
     }
 
-    // A blocked agent may wait at a question form: read its chat (a few
-    // seconds at most) so the notification can offer the options.
+    // Post at once. A blocked agent may wait at a question form: Herdr
+    // reports "blocked" before the agent writes the question to its
+    // transcript, so read the chat a few times (about 6 s) and, when the
+    // question shows up, update the alert quietly with its options.
     private suspend fun post(a: AgentInfo, state: String) {
-        val ask = if (state == "blocked") withTimeoutOrNull(5000) {
-            runCatching { Api(prefs.server).chat(a.address, null)?.let { lastUnansweredAsk(it.messages) } }.getOrNull()
-        } else null
-        // It may have moved on while we read.
-        if (prefs.posted[a.address] != state) return
-        Notifier.postAgent(this, agents[a.address] ?: a, state, ask)
+        Notifier.postAgent(this, a, state, null, quiet = false)
+        if (state != "blocked") return
+        repeat(5) { attempt ->
+            if (attempt > 0) delay(1500)
+            val ask = withTimeoutOrNull(5000) {
+                runCatching { Api(prefs.server).chat(a.address, null)?.let { lastUnansweredAsk(it.messages) } }.getOrNull()
+            }
+            // It may have moved on while we read.
+            if (prefs.posted[a.address] != state) return
+            if (ask != null) { Notifier.postAgent(this, agents[a.address] ?: a, state, ask, quiet = true); return }
+        }
     }
 
     private fun loadPrs() {
