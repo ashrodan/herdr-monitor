@@ -13,7 +13,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -173,9 +175,13 @@ fun StatusFilterRow(counts: Counts, selected: Bucket?, onSelect: (Bucket?) -> Un
     val chips = listOf<Pair<Bucket?, String>>(null to "All", Bucket.NeedsYou to "Needs you", Bucket.Working to "Working",
         Bucket.Done to "Done", Bucket.Ready to "Ready", Bucket.Idle to "Idle")
         .filter { (b, _) -> b == null || counts.of(b) > 0 }
-    // A FlowRow, not a scrolling row: at a large font size the chips wrap
-    // to a second line instead of going off screen.
-    FlowRow(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    // One line that scrolls sideways: the chips never wrap onto a second
+    // line. The padding is inside the scroll, so the first chip lines up with
+    // the cards and the last one can scroll clear of the edge.
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         for ((b, label) in chips) {
             FilterChip(
                 selected = selected == b, onClick = { tick(view); onSelect(b) },

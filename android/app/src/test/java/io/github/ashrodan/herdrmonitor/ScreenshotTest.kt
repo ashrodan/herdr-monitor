@@ -32,6 +32,7 @@ import io.github.ashrodan.herdrmonitor.ui.WhereAmIIcon
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import io.github.ashrodan.herdrmonitor.ui.components.QuestionBlock
+import io.github.ashrodan.herdrmonitor.ui.components.StatusFilterRow
 import io.github.ashrodan.herdrmonitor.ui.theme.HerdrTheme
 import io.github.ashrodan.herdrmonitor.ui.theme.ThemePref
 import org.junit.Rule
@@ -120,6 +121,14 @@ class ScreenshotTest {
     }
 
     @Test fun loading() = both { SkeletonSessions() }
+
+    // The filter chips stay on one line, at a phone's width: first the counts
+    // from a real phone (they wrapped before), then with Needs you as well,
+    // so the row runs past the edge and scrolls.
+    @Test fun filterRowOneLine() = both {
+        StatusFilterRow(Counts(37, 0, 3, 4, 3, 27), selected = null) {}
+        StatusFilterRow(Counts(39, 2, 3, 4, 3, 27), selected = Bucket.Working) {}
+    }
 
     // The harness marks, and the space map: the where-am-I button (t2 of
     // three panes, tab 2 of 3) and that tab's card. Fake sessions only.
