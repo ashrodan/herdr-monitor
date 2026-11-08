@@ -71,3 +71,31 @@ test('sessionResult reads the address from either reply shape, and the name fall
   assert.equal(sessionResult({}, params), null);
   assert.equal(sessionResult(null, params), null);
 });
+
+test('withNewTab adds one tab to one space and leaves the rest alone', async () => {
+  const { withNewTab } = await import('../lib/sessions.js');
+  const doc = { spaces: [
+    { id: 'spA', name: 'a', tabs: [{ id: 'tb1', name: '', root: { type: 'row', id: 'tb1', children: [] } }] },
+    { id: 'spB', name: 'b', tabs: [] },
+  ], other: { keep: true } };
+  const before = structuredClone(doc);
+  let n = 0;
+  const next = withNewTab(doc, 'spB', 't42', 'claude', (p) => `${p}${++n}`);
+  assert.deepEqual(doc, before); // the input is not changed
+  assert.deepEqual(next.spaces[0], before.spaces[0]);
+  assert.deepEqual(next.other, { keep: true });
+  assert.deepEqual(next.spaces[1].tabs, [{ id: 'tb1', name: 'claude', root: { children: [{ content: { terminal: 't42' }, id: 'p2', type: 'block' }], id: 'tb1', type: 'row' } }]);
+  assert.equal(withNewTab(doc, 'nope', 't42', 'x', (p) => p), null);
+  assert.equal(withNewTab(null, 'spA', 't42', 'x', (p) => p), null);
+});
+
+test('parseWorktrees reads git worktree list --porcelain', async () => {
+  const { parseWorktrees } = await import('../lib/sessions.js');
+  const text = 'worktree /r\nHEAD abc\nbranch refs/heads/main\n\nworktree /r/.worktrees/x\nHEAD def\nbranch refs/heads/feat/x\n\nworktree /r/.worktrees/d\nHEAD 123\ndetached\n\nworktree /bare\nbare\n';
+  assert.deepEqual(parseWorktrees(text), [
+    { path: '/r', branch: 'main', head: 'abc', detached: false, bare: false },
+    { path: '/r/.worktrees/x', branch: 'feat/x', head: 'def', detached: false, bare: false },
+    { path: '/r/.worktrees/d', branch: null, head: '123', detached: true, bare: false },
+  ]);
+  assert.deepEqual(parseWorktrees(null), []);
+});

@@ -9,9 +9,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { HcConnection, defaultSocket, summarize } from './lib/hc.js';
-import { repoCommits, commitDetail } from './lib/git.js';
+import { repoCommits, commitDetail, tryGit } from './lib/git.js';
 import { buildLayout, repoInfo, terminalsIn } from './lib/sidebar.js';
-import { sessionRequest, sessionResult } from './lib/sessions.js';
+import { sessionRequest, sessionResult, withNewTab, parseWorktrees } from './lib/sessions.js';
 import { prStatus } from './lib/pr.js';
 import { chatFor } from './lib/transcript.js';
 import { loadVapid, Subscriptions, sendPush } from './lib/push.js';
@@ -537,6 +537,25 @@ async function discovered(ports = []) {
 
 export const isDialogKey = (k) => typeof k === 'string' && /^(up|down|left|right|tab|shift\+tab|space|enter|esc|backspace|[a-z0-9])$/.test(k);
 
+// A new session gets a new tab at the end of its space in the Herdr app's
+// layout doc (lib/sessions.js withNewTab). doc.set carries the version read,
+// so a change made in between is never overwritten: read again and retry.
+async function placeInNewTab(spaceId, address, label) {
+  const newId = (prefix) => prefix + crypto.randomBytes(16).toString('hex');
+  for (let i = 0; i < 3; i++) {
+    const { value, version } = await rpc.call('doc.get', { name: 'herdr-app' });
+    const next = withNewTab(value, spaceId, address, label, newId);
+    if (!next) throw new Error('the space is not in the Herdr layout');
+    try {
+      await rpc.call('doc.set', { name: 'herdr-app', value: next, version });
+      return next.spaces.find((s) => s.id === spaceId).tabs.at(-1).id;
+    } catch (err) {
+      if (!/version/i.test(err.message)) throw err;
+    }
+  }
+  throw new Error('the Herdr layout kept changing');
+}
+
 const routes = [
   ['GET', /^\/api\/icons$/, async (req, res) => {
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'max-age=3600' });
@@ -621,11 +640,26 @@ const routes = [
   // prompt as its task. The space must be in the layout; the client never
   // sends a path or an argv (lib/sessions.js).
   ['POST', /^\/api\/sessions$/, async (req, res) => {
-    const r = sessionRequest(await readJson(req), layout);
+    const body = await readJson(req);
+    const r = sessionRequest(body, layout);
     if (!r.ok) return send(res, r.status, { error: r.error });
     const out = sessionResult(await rpc.call('terminal.run', r.params), r.params);
     if (!out) return send(res, 502, { error: 'hc started no terminal' });
-    send(res, 200, out);
+    // The agent runs either way; if the tab cannot be added, say why.
+    let tab = null, placeError;
+    try { tab = await placeInNewTab(body.space, out.address, body.harness); } catch (err) { placeError = err.message; }
+    send(res, 200, { ...out, tab, ...(placeError ? { placeError } : {}) });
+  }],
+  // The git worktrees of a space's repo, and the space each one has in
+  // Herdr (null: none). The repo comes from the layout, never the client.
+  ['GET', /^\/api\/spaces\/([^/]+)\/worktrees$/, async (req, res, [id]) => {
+    const s = layout.find((x) => x.id === id);
+    if (!s) return send(res, 404, { error: 'no such space' });
+    const repo = s.mainRepo || s.repo;
+    if (!repo) return send(res, 200, { repo: null, worktrees: [] });
+    const spaceOf = new Map(layout.filter((x) => x.repo && !x.virtual).map((x) => [x.repo, x.id]));
+    const list = parseWorktrees(await tryGit(repo, 'worktree', 'list', '--porcelain'));
+    send(res, 200, { repo, worktrees: list.map((w) => ({ path: w.path, name: path.basename(w.path), branch: w.branch, detached: w.detached, space: spaceOf.get(w.path) ?? null })) });
   }],
   ['POST', /^\/api\/terminals\/([^/]+)\/send$/, async (req, res, [addr]) => {
     if (!terminalOr404(res, addr)) return;
