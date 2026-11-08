@@ -7,7 +7,7 @@ import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import { AlertCircle, Brain, Check, ChevronRight, Loader2, MessageCircleQuestion, Wrench } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { getJson, post } from '@/api';
+import { getJson, post, termPath } from '@/api';
 
 interface ToolPart { kind: 'tool'; id: string; name: string; summary: string; result: { text: string; error: boolean; truncated: boolean } | null }
 interface TextPart { kind: 'text' | 'thinking'; text: string }
@@ -39,7 +39,7 @@ export function ChatPane({ addr, working, blocked = false, outbox = [], delivere
     setChat(cached ?? null); setErr(null); atBottom.current = true;
     const load = async () => {
       try {
-        const d = await getJson<Chat>(`/api/terminals/${addr}/chat${version.current ? `?v=${encodeURIComponent(version.current)}` : ''}`);
+        const d = await getJson<Chat>(termPath(addr, `chat${version.current ? `?v=${encodeURIComponent(version.current)}` : ''}`));
         if (stop || d.unchanged) return;
         version.current = d.version;
         cache.set(addr, d);
@@ -172,7 +172,7 @@ function Question({ q, addr }: { q: QuestionPart; addr: string | null }) {
   const act = async (key: string, body: object) => {
     if (!addr || busy) return;
     setBusy(key); setNote(null);
-    const r = await post(`/api/terminals/${addr}/answer`, { questions: shape, ...body });
+    const r = await post(termPath(addr, `answer`), { questions: shape, ...body });
     setBusy(null);
     if (!r.ok) { setNote({ text: r.body.error === 'the question form is not on screen' ? 'The form is not on screen. Open Live to answer.' : `Not sent: ${r.body.error}`, err: true }); return false; }
     return true;

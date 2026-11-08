@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
+import { termPath } from '@/api';
 
 const FONT = 'ui-monospace, "SF Mono", Menlo, Consolas, monospace';
 const FONT_SIZE = 13;   // drawn at this size, then scaled to fit the pane
@@ -39,7 +40,7 @@ export function LiveTerminal({ addr, cols, rows }: { addr: string; cols: number;
     } catch { /* no WebGL: the DOM renderer still works, without custom glyphs */ }
     term.current = t;
 
-    const es = new EventSource(`/api/terminals/${addr}/attach`);
+    const es = new EventSource(termPath(addr, `attach`));
     es.onmessage = (e) => { t.write(decode(e.data)); setStatus('live'); };
     es.addEventListener('size', (e) => {
       const d = JSON.parse((e as MessageEvent).data);
