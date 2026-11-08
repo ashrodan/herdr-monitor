@@ -59,12 +59,12 @@ const val PROMPT_MAX = 4000
 // folder (POST /api/sessions) and the app opens it.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun NewSessionSheet(live: Live, onDismiss: () -> Unit, onStarted: (String) -> Unit) {
+fun NewSessionSheet(live: Live, onDismiss: () -> Unit, initialSpace: String? = null, onStarted: (String) -> Unit) {
     val app = LocalContext.current.app
     val view = LocalView.current
     val scope = rememberCoroutineScope()
     val spaces = remember(live.spaces) { live.spaces.filter { !it.virtual } }
-    var space by rememberSaveable { mutableStateOf(spaces.firstOrNull()?.id) }
+    var space by rememberSaveable { mutableStateOf(initialSpace?.takeIf { id -> spaces.any { it.id == id } } ?: spaces.firstOrNull()?.id) }
     var harness by rememberSaveable { mutableStateOf("claude") }
     var prompt by rememberSaveable { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
@@ -107,7 +107,12 @@ fun NewSessionSheet(live: Live, onDismiss: () -> Unit, onStarted: (String) -> Un
                     busy = true; error = null
                     scope.launch {
                         runCatching { withContext(Dispatchers.IO) { app.store.api.startSession(sp, harness, prompt.trim()) } }
-                            .onSuccess { view.performHapticFeedback(HapticFeedbackConstants.CONFIRM); onStarted(it) }
+                            .onSuccess {
+                                view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                                // It runs either way; say so when Herdr has no tab for it.
+                                it.placeError?.let { why -> android.widget.Toast.makeText(app, "Started, but not in a Herdr tab: $why", android.widget.Toast.LENGTH_LONG).show() }
+                                onStarted(it.address)
+                            }
                             .onFailure { view.performHapticFeedback(HapticFeedbackConstants.REJECT); error = "Not started: ${it.message}" }
                         busy = false
                     }

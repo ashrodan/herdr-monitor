@@ -115,6 +115,19 @@ WebView.
 - **Widget** (4x2): the server name, three counts (Needs you, Working,
   PRs) and the top Needs you session with its first answer button. It
   changes when the server sends a change, not on a timer.
+- **Space map**: in a session, the button left of the menu shows where you
+  are: the panes of your tab in miniature, with your pane filled, and one
+  dot per tab, with yours filled. A tap opens the map of the space and its
+  worktrees. Each tab shows its panes where Herdr draws them, with the
+  harness mark, the name and the state of each pane. A tap on a pane opens
+  that session. **New tab** starts an agent in that space, in a new tab at
+  the end of the space in the Herdr app. Git worktrees of the repo that
+  have no space in Herdr are listed under the spaces.
+- **Harness marks**: Claude, Codex, omp and pi show their own marks on the
+  cards, in the rows and in the chat. Sources: Claude from Simple Icons
+  (CC0), Codex from lobe-icons (MIT), pi from pi.dev, omp from omp.sh.
+  Each mark belongs to its owner; the app uses it only to show which
+  harness runs in a session.
 - **Settings**: the server URL, **Find on tailnet** (lists the herdr-monitor
   servers on your tailnet, with each one's Herdr app, Herdr TUI and hc
   versions), the background-alerts switch, Quiet agents and the look.

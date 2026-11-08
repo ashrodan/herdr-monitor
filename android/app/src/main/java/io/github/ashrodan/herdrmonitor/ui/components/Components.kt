@@ -137,14 +137,16 @@ fun StatusBadge(status: Status, size: Dp = 20.dp, ring: Color = Color.Transparen
     }
 }
 
-// 40dp monogram on the space colour, with the status badge bottom-right,
-// ringed in the card colour.
+// 40dp circle on the space colour: the harness mark (Claude, Codex, omp,
+// pi), else the space's letter. The status badge sits bottom-right, ringed
+// in the card colour.
 @Composable
-fun SessionAvatar(letter: String, color: String?, status: Status, cardColor: Color) {
+fun SessionAvatar(letter: String, color: String?, status: Status, cardColor: Color, agent: String? = null) {
     val bg = parseColor(color) ?: MaterialTheme.colorScheme.primaryContainer
     Box(Modifier.size(44.dp)) {
         Box(Modifier.size(40.dp).clip(CircleShape).background(bg.copy(alpha = 0.35f)), contentAlignment = Alignment.Center) {
-            Text(letter, color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            if (io.github.ashrodan.herdrmonitor.ui.harnessIcon(agent) != null) io.github.ashrodan.herdrmonitor.ui.HarnessIcon(agent, 22.dp)
+            else Text(letter, color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
         }
         Box(Modifier.align(Alignment.BottomEnd)) { StatusBadge(status, 20.dp, ring = cardColor) }
     }
@@ -283,7 +285,7 @@ fun SessionCard(
             ) + (s.ask?.quickOptions(3)?.mapIndexed { j, l -> CustomAccessibilityAction("Answer $l") { onAnswer(j, l); true } } ?: emptyList())
         }) {
         Row(Modifier.padding(start = 12.dp, end = 14.dp, top = 14.dp, bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            SessionAvatar(s.letter, s.spaceColor, s.status, bg)
+            SessionAvatar(s.letter, s.spaceColor, s.status, bg, s.agent)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 val weight = if (s.unread) FontWeight.Bold else FontWeight.Normal
                 Row(verticalAlignment = Alignment.CenterVertically) {

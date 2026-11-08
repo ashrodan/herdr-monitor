@@ -26,6 +26,11 @@ import io.github.ashrodan.herdrmonitor.ui.ReplyPort
 import io.github.ashrodan.herdrmonitor.ui.SceneState
 import io.github.ashrodan.herdrmonitor.ui.SkeletonSessions
 import io.github.ashrodan.herdrmonitor.ui.TerminalRow
+import io.github.ashrodan.herdrmonitor.ui.HarnessIcon
+import io.github.ashrodan.herdrmonitor.ui.TabCard
+import io.github.ashrodan.herdrmonitor.ui.WhereAmIIcon
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
 import io.github.ashrodan.herdrmonitor.ui.components.QuestionBlock
 import io.github.ashrodan.herdrmonitor.ui.theme.HerdrTheme
 import io.github.ashrodan.herdrmonitor.ui.theme.ThemePref
@@ -115,4 +120,24 @@ class ScreenshotTest {
     }
 
     @Test fun loading() = both { SkeletonSessions() }
+
+    // The harness marks, and the space map: the where-am-I button (t2 of
+    // three panes, tab 2 of 3) and that tab's card. Fake sessions only.
+    @Test fun harnessMarksAndSpaceMap() = both {
+        Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            for (a in listOf("claude-code", "codex", "omp", "pi", "zsh")) HarnessIcon(a, 28.dp)
+        }
+        val tab = SpaceTab("tb2", "review", true, listOf("t1", "t2", "t3"),
+            PaneSplit(true, listOf(PaneLeaf("t1", 0.5f), PaneSplit(false, listOf(PaneLeaf("t2"), PaneLeaf("t3")), 0.5f))))
+        val space = Space("sp", "herdr-monitor", tabs = listOf(SpaceTab("tb1", "1", false, listOf("t9")), tab, SpaceTab("tb3", "3", false, listOf("t8"))))
+        val live = Live(terminals = mapOf(
+            "t1" to Terminal("t1", name = "server tests", agent = "claude-code", status = "working"),
+            "t2" to Terminal("t2", name = "android app", agent = "codex", status = "blocked"),
+            "t3" to Terminal("t3", agent = "omp", status = "done"),
+        ), spaces = listOf(space))
+        Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            WhereAmIIcon(placeOf(live.terminals["t2"], "t2", live.spaces), "t2", size = 48.dp)
+            TabCard(tab, live, "t2", emptyMap(), onOpen = null)
+        }
+    }
 }

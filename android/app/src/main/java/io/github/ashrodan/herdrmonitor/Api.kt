@@ -120,8 +120,11 @@ class Api(val base: String) {
     fun read(addr: String, lines: Int) = Json.readText(get(terminalPath(addr, "read") + "?lines=$lines"))
 
     // Start one agent in a space (POST /api/sessions). Returns its address.
-    fun startSession(space: String, harness: String, prompt: String): String =
-        Json.started(post("/api/sessions", Json.obj("space" to space, "harness" to harness, "prompt" to prompt)))
+    fun startSession(space: String, harness: String, prompt: String): Started =
+        Json.startedSession(post("/api/sessions", Json.obj("space" to space, "harness" to harness, "prompt" to prompt)))
+
+    // The git worktrees of a space's repo (GET /api/spaces/:id/worktrees).
+    fun worktrees(space: String): List<Worktree> = Json.worktrees(get("/api/spaces/${pathPart(space)}/worktrees"))
 
     fun upload(addr: String, bytes: ByteArray, type: String) = Json.uploadPath(postBytes(terminalPath(addr, "upload"), bytes, type))
 }

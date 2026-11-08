@@ -76,9 +76,26 @@ object Json {
             repo = s.optStringOrNull("repo"), branch = s.optStringOrNull("branch"),
             worktree = s.optBoolean("worktree"), virtual = s.optBoolean("virtual"),
             parent = s.optStringOrNull("parent"), behind = s.optInt("behind"),
-            tabs = s.optJSONArray("tabs").mapObj { t -> SpaceTab(t.getString("id"), Glyphs.label(t.optString("name"))!!, t.optBoolean("named"), t.optJSONArray("terminals").strings()) },
+            tabs = s.optJSONArray("tabs").mapObj { t -> SpaceTab(t.getString("id"), Glyphs.label(t.optString("name"))!!, t.optBoolean("named"), t.optJSONArray("terminals").strings(), pane(t.optJSONObject("tree"))) },
         )
     }
+
+    // {dir, w, kids} or {terminal, w} (lib/sidebar.js paneTree).
+    fun pane(o: JSONObject?): Pane? {
+        if (o == null) return null
+        val w = o.optDouble("w", 1.0).toFloat().takeIf { it > 0f } ?: 1f
+        o.optStringOrNull("terminal")?.let { return PaneLeaf(it, w) }
+        val kids = o.optJSONArray("kids").mapObj { pane(it) }.filterNotNull()
+        return when (kids.size) { 0 -> null; 1 -> kids[0]; else -> PaneSplit(o.optString("dir") != "column", kids, w) }
+    }
+
+    fun worktrees(text: String): List<Worktree> = JSONObject(text).optJSONArray("worktrees").mapObj { w ->
+        Worktree(w.getString("path"), w.optString("name"), w.optStringOrNull("branch"), w.optStringOrNull("space"))
+    }
+
+    // POST /api/sessions: the address, and the tab Herdr shows it in (null
+    // with placeError when the tab could not be added).
+    fun startedSession(text: String): Started = JSONObject(text).let { Started(it.getString("address"), it.optStringOrNull("tab"), it.optStringOrNull("placeError")) }
 
     fun terminals(a: JSONArray?): List<Terminal> = a.mapObj(::terminal)
 

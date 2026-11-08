@@ -1,6 +1,7 @@
 package io.github.ashrodan.herdrmonitor.ui
 
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.github.ashrodan.herdrmonitor.placeOf
 import io.github.ashrodan.herdrmonitor.userTexts
 import io.github.ashrodan.herdrmonitor.Link
 import io.github.ashrodan.herdrmonitor.OutItem
@@ -43,6 +44,7 @@ import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import io.github.ashrodan.herdrmonitor.Item
@@ -176,6 +178,8 @@ fun AgentScreen(
     pageIndex: Int? = null,
     pageCount: Int = 1,
     active: Boolean = true,
+    // Open another terminal (from the space map); null: the map only shows.
+    open: ((String) -> Unit)? = null,
 ) {
     val ctx = LocalContext.current
     val api = remember(live) { ctx.app.store.api }
@@ -187,6 +191,7 @@ fun AgentScreen(
     val t = live.terminals[address]
     val now = rememberNow()
     var menu by remember { mutableStateOf(false) }
+    var map by remember { mutableStateOf(false) }
     var panel by rememberSaveable(address, showTerminalOnOpen) {
         mutableStateOf(if (showTerminalOnOpen) SessionPanel.Terminal else null)
     }
@@ -243,6 +248,8 @@ fun AgentScreen(
         ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, body), null))
     }
 
+    if (map) SpaceMapSheet(live, address, onDismiss = { map = false }, onOpen = open)
+
     Scaffold(contentWindowInsets = WindowInsets(0), topBar = {
         Column(Modifier.statusBarsPadding()) {
             Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -263,6 +270,11 @@ fun AgentScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
+                // Where you are in the space: the tab's panes, yours filled.
+                val place = remember(t, address, live.spaces) { placeOf(t, address, live.spaces) }
+                IconButton(onClick = { map = true }, modifier = Modifier.testTag("space-map-$address").semantics {
+                    contentDescription = place?.let { "Space map. ${it.space.name}, tab ${it.tab.name}" } ?: "Space map"
+                }) { WhereAmIIcon(place, address) }
                 Box {
                     IconButton(onClick = { menu = true }, modifier = Modifier.testTag("session-options-$address")) {
                         Icon(Icons.Default.MoreVert, "Session options")
@@ -442,9 +454,7 @@ private fun ChatTab(api: Api, address: String, blocked: Boolean, working: Boolea
 private fun Prose(p: Item.Prose, agent: String) {
     Column {
         if (p.who) Row(Modifier.padding(bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(18.dp).clip(RoundedCornerShape(6.dp)).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
-                Text(harnessMark(agent), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
-            }
+            HarnessIcon(agent, 18.dp)
             Spacer(Modifier.width(6.dp))
             Text(harnessName(agent), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }

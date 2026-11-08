@@ -45,7 +45,7 @@ fun appUrl(t: Terminal, serverUrl: String): String? {
 
 fun Terminal.isApp() = listen != null && status == null
 
-data class SpaceTab(val id: String, val name: String, val named: Boolean, val terminals: List<String>)
+data class SpaceTab(val id: String, val name: String, val named: Boolean, val terminals: List<String>, val tree: Pane? = null)
 
 data class Space(
     val id: String,

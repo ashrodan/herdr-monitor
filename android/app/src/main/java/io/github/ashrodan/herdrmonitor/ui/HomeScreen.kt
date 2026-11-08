@@ -1,5 +1,7 @@
 package io.github.ashrodan.herdrmonitor.ui
 
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -163,7 +165,8 @@ private fun Empty(text: String) = Text(text, Modifier.padding(horizontal = 16.dp
 @Composable
 fun Glyph(agent: String) {
     Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) {
-        Text(agent.take(1).uppercase(), fontSize = 12.sp, color = Palette.mutedForeground)
+        if (harnessIcon(agent) != null) HarnessIcon(agent, 18.dp)
+        else Text(agent.take(1).uppercase(), fontSize = 12.sp, color = Palette.mutedForeground)
     }
 }
 
@@ -232,6 +235,7 @@ fun SpaceScreen(live: Live, id: String, go: (Route) -> Unit, back: () -> Unit) {
     }
 
     val pager = rememberPagerState(pageCount = { addresses.size })
+    val scope = rememberCoroutineScope()
     LaunchedEffect(addresses) {
         if (pager.currentPage > addresses.lastIndex) pager.scrollToPage(addresses.lastIndex)
     }
@@ -247,6 +251,9 @@ fun SpaceScreen(live: Live, id: String, go: (Route) -> Unit, back: () -> Unit) {
             pageIndex = page,
             pageCount = addresses.size,
             active = pager.currentPage == page,
+            // From the map: a session of this space is a swipe away, any
+            // other opens on its own.
+            open = { a -> val i = addresses.indexOf(a); if (i >= 0) scope.launch { pager.animateScrollToPage(i) } else go(Route.Agent(a)) },
         )
     }
 }
