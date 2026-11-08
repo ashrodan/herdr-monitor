@@ -26,6 +26,10 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.ui.platform.testTag
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -226,7 +230,7 @@ fun HomeScreen(live: Live, go: (Route) -> Unit, selected: String? = null) {
             Scaffold(
                 contentWindowInsets = WindowInsets(0),
                 topBar = {
-                    HomeTopBar(query, { query = it }, searchActive, { searchActive = true },
+                    HomeTopBar(query, { query = it }, searchActive, { searchActive = true; tab = HomeTab.Sessions }, onDone = { closeSearch() },
                         onMenu = { scope.launch { drawer.open() } }, host = shortHost(app.prefs.server),
                         online = online, onHost = { picking = true })
                 },
@@ -257,7 +261,7 @@ fun HomeScreen(live: Live, go: (Route) -> Unit, selected: String? = null) {
                             }
                             LazyColumn(Modifier.fillMaxSize().nestedScroll(collapse), state = list,
                                 contentPadding = PaddingValues(bottom = 96.dp)) {
-                                sessionsList(shown, filter, now, live, selected,
+                                sessionsList(shown, filter, now, live, selected, searching = query.isNotBlank(),
                                     open = { go(Route.Agent(it.address)) }, menu = { menuFor = it },
                                     answer = ::answer, pin = { app.togglePin(it.address) }, stop = { stop(it) },
                                     showIdle = { filter = Bucket.Idle })
@@ -307,6 +311,7 @@ private fun HomeTopBar(
     onQuery: (String) -> Unit,
     searchActive: Boolean,
     onSearch: () -> Unit,
+    onDone: () -> Unit,
     onMenu: () -> Unit,
     host: String,
     online: Boolean,
@@ -324,10 +329,12 @@ private fun HomeTopBar(
         IconButton(onClick = onMenu) { Icon(Icons.Default.Menu, "Open navigation") }
         val searchModifier = if (searchActive) Modifier else Modifier.clickable(onClick = onSearch)
         Row(Modifier.weight(1f).height(52.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceContainerHigh)
-            .then(searchModifier).padding(start = 20.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            .then(searchModifier).testTag("search-pill").padding(start = 20.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.weight(1f)) {
                 if (query.isEmpty()) Text("Ask Herdr", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyLarge)
-                if (searchActive) BasicTextField(query, onQuery, Modifier.fillMaxWidth().focusRequester(focusRequester), singleLine = true,
+                if (searchActive) BasicTextField(query, onQuery, Modifier.fillMaxWidth().focusRequester(focusRequester).testTag("search-field"), singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { onDone() }),
                     textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary))
                 else if (query.isNotEmpty()) Text(query, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyLarge)
@@ -341,12 +348,16 @@ private fun HomeTopBar(
 }
 
 private fun LazyListScope.sessionsList(
-    all: List<Session>, filter: Bucket?, now: Long, live: Live, selected: String?,
+    all: List<Session>, filter: Bucket?, now: Long, live: Live, selected: String?, searching: Boolean,
     open: (Session) -> Unit, menu: (Session) -> Unit, answer: (Session, Int, String) -> Unit,
     pin: (Session) -> Unit, stop: (Session) -> Unit, showIdle: () -> Unit,
 ) {
     // Cards from the cache are dimmed until the live list is in.
     val stale = live.cachedAt != null
+    if (all.isEmpty() && searching) {
+        item(key = "no-match") { SceneState(HerdrScene.AllPenned, "No session matches the search.") }
+        return
+    }
     if (all.isEmpty()) {
         item(key = "empty") {
             when (live.link) {
@@ -375,8 +386,11 @@ private fun LazyListScope.sessionsList(
             group("Working", Bucket.Working)
             group("Done", Bucket.Done)
             group("Ready to review", Bucket.Ready)
+            // A search shows idle matches too: most sessions are idle, and a
+            // match folded under the Idle row could not be opened.
             val idle = all.count { it.bucket == Bucket.Idle }
-            if (idle > 0) item(key = "idle-row", contentType = "idle") { IdleRow(idle, showIdle) }
+            if (searching) group("Idle", Bucket.Idle)
+            else if (idle > 0) item(key = "idle-row", contentType = "idle") { IdleRow(idle, showIdle) }
         }
         Bucket.NeedsYou -> if (all.none { it.bucket == Bucket.NeedsYou }) item(key = "penned") { SceneState(HerdrScene.AllPenned, "Nobody needs you.") }
             else group("Needs you", Bucket.NeedsYou)
