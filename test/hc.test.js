@@ -56,3 +56,27 @@ test('HcConnection matches replies by id, surfaces errors and emits events', asy
   hc.close(); server.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('HcConnection fails a call that gets no reply in time, and close stops at once', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hcmon-'));
+  const sock = path.join(dir, 'hc.sock');
+  const server = net.createServer(() => {}); // never answers
+  await new Promise((r) => server.listen(sock, r));
+  const hc = await new HcConnection(sock, { timeoutMs: 30 }).connect();
+  await assert.rejects(hc.call('terminal.get', {}), (e) => e.timeout === true && /terminal\.get/.test(e.message));
+  assert.equal(hc.pending.size, 0);
+  let closed = false;
+  hc.on('close', () => { closed = true; });
+  const pending = hc.call('terminal.get', {});
+  hc.close();
+  await assert.rejects(pending, /closed/);
+  assert.equal(closed, false); // close() is not "hc went away"
+  server.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('HcConnection.connect rejects when there is no hc, and does not throw an error event', async () => {
+  const sock = path.join(os.tmpdir(), `hcmon-none-${process.pid}.sock`);
+  await assert.rejects(new HcConnection(sock).connect(), /ENOENT/);
+  await new Promise((r) => setTimeout(r, 20)); // an unhandled 'error' would fail the test here
+});

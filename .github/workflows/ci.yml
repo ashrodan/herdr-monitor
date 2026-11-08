@@ -13,3 +13,11 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: npm test
+  bun:
+    # The server also runs on Bun: keep the tests green there too.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: 1.4.3 }
+      - run: bun test ./test/
