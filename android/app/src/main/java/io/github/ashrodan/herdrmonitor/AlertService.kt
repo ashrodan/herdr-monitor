@@ -98,6 +98,7 @@ class AlertService : Service() {
         link?.cancel()
         link = scope.launch {
             val backoff = Backoff()
+            var tooOld = false
             while (isActive && gen == generation) {
                 val api = Api(prefs.server)
                 try {
@@ -105,10 +106,16 @@ class AlertService : Service() {
                     // one line: only this link's generation counts.
                     api.stream("/api/agents/stream", SseParser(onEvent = { if (gen == generation) onEvent(it) }, onComment = { if (gen == generation) heard() }),
                         onOpen = { backoff.reset() }, isCancelled = { gen != generation })
-                } catch (_: Exception) { }
+                    tooOld = false
+                } catch (e: Exception) {
+                    // 404: the server runs code from before the agent stream.
+                    // Say so: retrying cannot fix it, a server update can.
+                    tooOld = (e as? HttpError)?.code == 404
+                }
                 if (gen != generation) return@launch
                 connected = false
-                status("Herdr monitor: no link to ${hostOf(prefs.server)}, retrying")
+                status(if (tooOld) "Herdr monitor: ${hostOf(prefs.server)} has no alert stream. Update and restart the server."
+                    else "Herdr monitor: no link to ${hostOf(prefs.server)}, retrying")
                 pushWidget()
                 delay(backoff.next())
             }

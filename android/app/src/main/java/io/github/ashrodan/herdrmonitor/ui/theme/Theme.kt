@@ -24,7 +24,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import io.github.ashrodan.herdrmonitor.R
 
@@ -117,7 +116,10 @@ private val base = Typography()
 val HerdrTypography = base.copy(
     titleLarge = base.titleLarge.copy(fontSize = 18.sp, lineHeight = 24.sp, fontWeight = FontWeight.Medium),
     titleMedium = base.titleMedium.copy(fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.Normal),
-    bodyLarge = base.bodyLarge.copy(fontSize = 15.5.sp, lineHeight = 1.5.em),
+    // Line heights in sp only: a text field's label blends bodyLarge into
+    // bodySmall, and Compose cannot blend em with sp (it crashed the New
+    // session sheet). 23.sp is about 1.5 times 15.5sp.
+    bodyLarge = base.bodyLarge.copy(fontSize = 15.5.sp, lineHeight = 23.sp),
     bodyMedium = base.bodyMedium.copy(fontSize = 14.5.sp, lineHeight = 20.sp),
     labelLarge = base.labelLarge.copy(fontWeight = FontWeight.SemiBold),
 )
