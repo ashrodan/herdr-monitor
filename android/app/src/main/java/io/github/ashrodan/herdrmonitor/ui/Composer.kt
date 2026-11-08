@@ -113,41 +113,50 @@ fun Composer(
     var text by remember(address) { mutableStateOf("") }
     var note by remember { mutableStateOf<String?>(null) }
     var sending by remember { mutableStateOf(false) }
-    val images = remember(address) { mutableStateListOf<String>() } // uploaded paths
-    val notUploaded = remember(address) { mutableStateListOf<Uri>() }
-    var uploading by remember { mutableStateOf(false) }
+    // Each picked image: its thumbnail here, then the path the server keeps
+    // it at. Removing one drops it from the message (the server copy stays).
+    val attached = remember(address) { mutableStateListOf<Attachment>() }
+    val uploading = attached.any { it.state == AttachState.Uploading }
+    var preview by remember { mutableStateOf<Attachment?>(null) }
     LaunchedEffect(note) { if (note != null && !note!!.startsWith("Not")) { delay(2500); note = null } }
 
-    fun upload(uri: Uri) {
-        uploading = true
+    fun replace(a: Attachment, b: Attachment) { val i = attached.indexOfFirst { it.uri == a.uri }; if (i >= 0) attached[i] = b }
+    fun upload(first: Attachment) {
+        var a = first.copy(state = AttachState.Uploading, error = null)
+        if (attached.none { it.uri == a.uri }) attached.add(a) else replace(first, a)
         scope.launch {
             runCatching {
                 val (type, bytes) = withContext(Dispatchers.IO) {
-                    (ctx.contentResolver.getType(uri) ?: "application/octet-stream") to ctx.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+                    (ctx.contentResolver.getType(a.uri) ?: "application/octet-stream") to ctx.contentResolver.openInputStream(a.uri)!!.use { it.readBytes() }
+                }
+                if (a.thumb == null) {
+                    val t = withContext(Dispatchers.Default) { thumbnail(bytes, 192) }
+                    a = a.copy(thumb = t); replace(a, a)
                 }
                 port.upload(address, bytes, type)
-            }.onSuccess { images.add(it); notUploaded.remove(uri) }
-                .onFailure { if (uri !in notUploaded) notUploaded.add(uri); note = "Not uploaded: ${it.message}" }
-            uploading = false
+            }.onSuccess { path -> if (attached.any { it.uri == a.uri }) replace(a, a.copy(state = AttachState.Ready, path = path)) }
+                .onFailure { e -> replace(a, a.copy(state = AttachState.Failed, error = e.message)); note = "Not uploaded: ${e.message}" }
         }
     }
-    val pick = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> if (uri != null) upload(uri) }
+    val pick = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(MAX_IMAGES)) { uris ->
+        uris.filter { u -> attached.none { it.uri == u } }.take(MAX_IMAGES - attached.size).forEach { upload(Attachment(it)) }
+    }
 
     fun send() {
-        val full = (listOf(text.trim()) + images).filter { it.isNotBlank() }.joinToString(" ")
+        val full = (listOf(text.trim()) + attached.mapNotNull { it.path }).filter { it.isNotBlank() }.joinToString(" ")
         if (full.isBlank() || sending || uploading) return
         // At a dialog, force: the text goes to the dialog (e.g. an "Other" answer).
         val force = blocked
         fun queued(why: String?) {
             outbox.add(port.server, address, full, force, why)
-            text = ""; images.clear()
+            text = ""; attached.clear()
             note = "Queued. It goes when the link is back."
         }
         if (!online) { queued("Offline"); return }
         sending = true
         scope.launch {
             runCatching { port.send(address, full, force) }
-                .onSuccess { view.performHapticFeedback(HapticFeedbackConstants.CONFIRM); text = ""; images.clear(); note = "Sent." }
+                .onSuccess { view.performHapticFeedback(HapticFeedbackConstants.CONFIRM); text = ""; attached.clear(); note = "Sent." }
                 .onFailure { e ->
                     view.performHapticFeedback(HapticFeedbackConstants.REJECT)
                     when (failureOf(e)) {
@@ -168,6 +177,7 @@ fun Composer(
         runCatching { port.interrupt(address) }.onSuccess { view.performHapticFeedback(HapticFeedbackConstants.CONFIRM); note = "Stop key sent." }.onFailure(::failed)
     }
 
+    preview?.let { ImagePreview(it) { preview = null } }
     Surface(color = MaterialTheme.colorScheme.surface) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 10.dp)) {
             val info = when {
@@ -182,22 +192,20 @@ fun Composer(
             if (blocked) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 for ((k, label) in DIALOG_KEYS) AssistChip(onClick = { keys(k) }, label = { Text(label) })
             }
-            if (images.isNotEmpty()) Text("${images.size} image${if (images.size == 1) "" else "s"} attached · tap to remove", style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier.clickable { images.clear() }.padding(4.dp))
-            if (notUploaded.isNotEmpty()) Text("${notUploaded.size} image${if (notUploaded.size == 1) "" else "s"} not uploaded · tap to try again",
-                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.clickable(enabled = !uploading) { notUploaded.toList().forEach(::upload) }.padding(4.dp))
+            if (attached.isNotEmpty()) AttachmentStrip(attached,
+                onOpen = { a -> if (a.state == AttachState.Failed) upload(a) else preview = a },
+                onRemove = { a -> attached.removeAll { it.uri == a.uri } })
             contextActions()
             // One field (Attach inside, on the left) and one button. Field
             // empty while the agent runs: a red square Stop. Text in the
             // field: a round Send. Agent idle and field empty: Send, off.
-            val hasText = text.isNotBlank() || images.isNotEmpty()
+            val hasText = text.isNotBlank() || attached.any { it.path != null }
             val showStop = !hasText && online && (working || blocked)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(Modifier.weight(1f).heightIn(min = 52.dp).clip(RoundedCornerShape(26.dp))
                     .background(MaterialTheme.colorScheme.surfaceContainerHigh).padding(start = 4.dp, end = 16.dp),
                     verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, enabled = !uploading) {
+                    IconButton(onClick = { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, enabled = attached.size < MAX_IMAGES) {
                         Icon(Icons.Default.Add, "Attach an image")
                     }
                     Box(Modifier.weight(1f).padding(vertical = 14.dp)) {

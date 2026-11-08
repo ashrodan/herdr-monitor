@@ -70,7 +70,8 @@ fun HomeListDetail(live: Live, go: (Route) -> Unit) {
                     AgentScreen(live, k.substringAfter('|'), back = { scope.launch { nav.navigateBack() } },
                         showTerminalOnOpen = k.substringBefore('|').toBooleanStrictOrNull() ?: false,
                         showBack = nav.scaffoldValue[ListDetailPaneScaffoldRole.List] != PaneAdaptedValue.Expanded,
-                        open = { a -> scope.launch { nav.navigateTo(ListDetailPaneScaffoldRole.Detail, "false|$a") } })
+                        open = { a -> scope.launch { nav.navigateTo(ListDetailPaneScaffoldRole.Detail, "false|$a") } },
+                        openSpace = { s -> go(Route.SpaceR(s)) })
                 }
             }
         },

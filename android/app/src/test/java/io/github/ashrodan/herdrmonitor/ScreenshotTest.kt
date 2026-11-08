@@ -27,6 +27,9 @@ import io.github.ashrodan.herdrmonitor.ui.SceneState
 import io.github.ashrodan.herdrmonitor.ui.SkeletonSessions
 import io.github.ashrodan.herdrmonitor.ui.TerminalRow
 import io.github.ashrodan.herdrmonitor.ui.HarnessIcon
+import io.github.ashrodan.herdrmonitor.ui.AttachState
+import io.github.ashrodan.herdrmonitor.ui.Attachment
+import io.github.ashrodan.herdrmonitor.ui.AttachmentStrip
 import io.github.ashrodan.herdrmonitor.ui.TabCard
 import io.github.ashrodan.herdrmonitor.ui.WhereAmIIcon
 import androidx.compose.foundation.layout.Arrangement
@@ -128,6 +131,19 @@ class ScreenshotTest {
     @Test fun filterRowOneLine() = both {
         StatusFilterRow(Counts(37, 0, 3, 4, 3, 27), selected = null) {}
         StatusFilterRow(Counts(39, 2, 3, 4, 3, 27), selected = Bucket.Working) {}
+    }
+
+    // Images on a reply: uploading, attached, and one that failed, each
+    // with its remove cross. Grey squares stand in for photos.
+    @Test fun attachmentStrip() = both {
+        val photo = androidx.compose.ui.graphics.ImageBitmap(96, 96).also { b ->
+            androidx.compose.ui.graphics.Canvas(b).drawRect(0f, 0f, 96f, 96f, androidx.compose.ui.graphics.Paint().apply { color = androidx.compose.ui.graphics.Color(0xFF5B7F95) })
+        }
+        AttachmentStrip(listOf(
+            Attachment(android.net.Uri.parse("content://x/1"), AttachState.Uploading, photo),
+            Attachment(android.net.Uri.parse("content://x/2"), AttachState.Ready, photo, "/tmp/a.png"),
+            Attachment(android.net.Uri.parse("content://x/3"), AttachState.Failed, photo, error = "HTTP 500"),
+        ), onOpen = {}, onRemove = {})
     }
 
     // The harness marks, and the space map: the where-am-I button (t2 of

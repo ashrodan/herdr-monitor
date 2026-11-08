@@ -254,6 +254,8 @@ fun SpaceScreen(live: Live, id: String, go: (Route) -> Unit, back: () -> Unit) {
             // From the map: a session of this space is a swipe away, any
             // other opens on its own.
             open = { a -> val i = addresses.indexOf(a); if (i >= 0) scope.launch { pager.animateScrollToPage(i) } else go(Route.Agent(a)) },
+            // This space is already open: only the map closes.
+            openSpace = { s -> if (s != id) go(Route.SpaceR(s)) },
         )
     }
 }

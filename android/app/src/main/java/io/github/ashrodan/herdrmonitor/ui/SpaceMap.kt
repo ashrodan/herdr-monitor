@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -48,6 +49,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -107,7 +109,7 @@ fun WhereAmIIcon(place: Place?, address: String, modifier: Modifier = Modifier, 
 // there. Worktrees of the repo that have no space in Herdr are listed under.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SpaceMapSheet(live: Live, address: String, onDismiss: () -> Unit, onOpen: ((String) -> Unit)?) {
+fun SpaceMapSheet(live: Live, address: String, onDismiss: () -> Unit, onOpen: ((String) -> Unit)?, onSpace: ((String) -> Unit)? = null) {
     val ctx = LocalContext.current
     val t = live.terminals[address]
     val place = remember(t, address, live.spaces) { placeOf(t, address, live.spaces) }
@@ -134,7 +136,8 @@ fun SpaceMapSheet(live: Live, address: String, onDismiss: () -> Unit, onOpen: ((
             }
             items(family, key = { it.id }) { s ->
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SpaceLine(s, here = s.id == place?.space?.id)
+                    // A space in Herdr opens; a repo with no space of its own does not.
+                    SpaceLine(s, here = s.id == place?.space?.id, onClick = onSpace?.takeIf { !s.virtual }?.let { go -> { onDismiss(); go(s.id) } })
                     LazyRow(contentPadding = PaddingValues(horizontal = 24.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         items(s.tabs, key = { it.id }) { tab ->
                             TabCard(tab, live, address, seen, onOpen = onOpen?.let { open -> { a: String -> onDismiss(); open(a) } })
@@ -164,8 +167,9 @@ fun SpaceMapSheet(live: Live, address: String, onDismiss: () -> Unit, onOpen: ((
 }
 
 @Composable
-private fun SpaceLine(s: Space, here: Boolean) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+private fun SpaceLine(s: Space, here: Boolean, onClick: (() -> Unit)?) {
+    Row(Modifier.fillMaxWidth().let { if (onClick != null) it.clickable(onClickLabel = "Open the space", onClick = onClick) else it }
+        .padding(horizontal = 24.dp, vertical = 6.dp).testTag("space-line-${s.id}"), verticalAlignment = Alignment.CenterVertically) {
         if (s.worktree) Spacer(Modifier.width(12.dp))
         SpaceAvatar(s, 20.dp)
         Spacer(Modifier.width(10.dp))
@@ -177,6 +181,7 @@ private fun SpaceLine(s: Space, here: Boolean) {
             Text("You are here", Modifier.padding(horizontal = 8.dp, vertical = 2.dp), style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onPrimaryContainer)
         }
+        if (onClick != null) Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.padding(start = 4.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -187,7 +192,11 @@ fun TabCard(tab: SpaceTab, live: Live, current: String, seen: Map<String, Long>,
     OutlinedCard(Modifier.width(196.dp).testTag("tab-${tab.id}"),
         border = BorderStroke(if (hereTab) 2.dp else 1.dp, if (hereTab) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant)) {
         Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Tab ${tab.name}", style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            // The tab's name opens its first session that still runs.
+            val first = tab.terminals.firstOrNull { it in live.terminals }
+            Text("Tab ${tab.name}", Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp))
+                .let { m -> if (onOpen != null && first != null) m.clickable(onClickLabel = "Open the tab") { onOpen(first) } else m }
+                .padding(vertical = 4.dp), style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             BoxWithConstraints(Modifier.fillMaxWidth().height(112.dp)) {
                 val W = maxWidth
                 val H = maxHeight

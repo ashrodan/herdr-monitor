@@ -180,6 +180,8 @@ fun AgentScreen(
     active: Boolean = true,
     // Open another terminal (from the space map); null: the map only shows.
     open: ((String) -> Unit)? = null,
+    // Open a space (from the space map); null: spaces do not open.
+    openSpace: ((String) -> Unit)? = null,
 ) {
     val ctx = LocalContext.current
     val api = remember(live) { ctx.app.store.api }
@@ -248,7 +250,7 @@ fun AgentScreen(
         ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, body), null))
     }
 
-    if (map) SpaceMapSheet(live, address, onDismiss = { map = false }, onOpen = open)
+    if (map) SpaceMapSheet(live, address, onDismiss = { map = false }, onOpen = open, onSpace = openSpace)
 
     Scaffold(contentWindowInsets = WindowInsets(0), topBar = {
         Column(Modifier.statusBarsPadding()) {

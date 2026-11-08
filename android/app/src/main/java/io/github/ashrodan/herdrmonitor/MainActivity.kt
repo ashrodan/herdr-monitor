@@ -137,8 +137,10 @@ class MainActivity : ComponentActivity() {
             composable(Nav.SETTINGS) { SettingsScreen(back) }
             composable(Nav.SPACE) { e -> SpaceScreen(live(), e.arguments?.getString("id").orEmpty(), go, back) }
             composable(Nav.AGENT, arguments = listOf(navArgument("terminal") { type = NavType.BoolType; defaultValue = false })) { e ->
+                // The space map opens sessions and spaces from here too.
                 AgentScreen(live(), e.arguments?.getString("address").orEmpty(), back,
-                    showTerminalOnOpen = e.arguments?.getBoolean("terminal") ?: false)
+                    showTerminalOnOpen = e.arguments?.getBoolean("terminal") ?: false,
+                    open = { a -> go(Route.Agent(a)) }, openSpace = { s -> go(Route.SpaceR(s)) })
             }
         }
     }
