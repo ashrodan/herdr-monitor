@@ -92,11 +92,11 @@ fun AlertsScreen(back: () -> Unit) {
             Fact("Agents", "${counts.needsYou} need you · ${counts.working} working · ${counts.failed} failed · ${counts.finished} finished")
 
             HorizontalDivider(color = Palette.border)
-            Toggle("Background alerts", "One link to the server, a silent overview of active agents, and the widget.", alerts) { on ->
+            Toggle("Background alerts", "One link to the server, one silent agent summary, and the widget.", alerts) { on ->
                 alerts = on; prefs.alerts = on
                 if (on) AlertService.start(ctx) else AlertService.stop(ctx)
             }
-            Toggle("Quiet agents", "Only Needs you and alert-health notifications. No overview, Running or Finished.", quiet) { on ->
+            Toggle("Quiet agents", "The summary says only how many agents need you, with no Working or Done lines. Needs you and Alert health still notify.", quiet) { on ->
                 quiet = on; setQuiet(ctx, on)
             }
 
@@ -130,7 +130,7 @@ fun AlertsScreen(back: () -> Unit) {
     }
 }
 
-private val CHANNELS = listOf(Notifier.CH_NEEDS to "Needs you", Notifier.CH_RUNNING to "Running", Notifier.CH_FINISHED to "Finished", Notifier.CH_HEALTH to "Alert health")
+private val CHANNELS = listOf(Notifier.CH_NEEDS to "Needs you", Notifier.CH_SUMMARY to "Agent summary", Notifier.CH_HEALTH to "Alert health")
 
 fun importanceLabel(i: Int?): String = when (i) {
     null -> "Missing"

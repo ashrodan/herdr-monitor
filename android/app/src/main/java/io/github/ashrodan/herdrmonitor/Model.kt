@@ -99,7 +99,8 @@ data class AgentInfo(
 )
 
 val GROUPS = listOf("blocked" to "Blocked", "error" to "Error", "done" to "Done", "working" to "Working", "idle" to "Idle")
-val ALERT_STATES = setOf("blocked", "done", "error")
+// The states that post their own notification. Done is in the summary only.
+val ALERT_STATES = setOf("blocked", "error")
 
 // "Done" turns into "idle" once someone looked at the agent after it
 // finished: on the Mac (seen_ms) or on this phone (localSeen).

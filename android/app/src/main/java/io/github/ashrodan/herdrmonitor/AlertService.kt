@@ -34,9 +34,10 @@ class AlertService : Service() {
     @Volatile private var connected = false
     private var widgetJob: Job? = null
     // The open question of each blocked agent (for the widget's answer
-    // button), and one job per working agent for its running notification.
+    // button).
     private val asks = ConcurrentHashMap<String, Part.Ask>()
-    private val running = ConcurrentHashMap<String, Job>()
+    // Herdr itself runs on the Mac (the stream's "connected").
+    @Volatile private var herdrUp = true
     private lateinit var prefs: Prefs
     // The server the records above are for.
     private var server: String? = null
@@ -58,11 +59,15 @@ class AlertService : Service() {
         // A health alert left from before: a recovery must still clear it.
         if (getSystemService(android.app.NotificationManager::class.java).activeNotifications.any { it.id == Notifier.ID_HEALTH }) healthKey = "?"
         app.health.value = Health.Connecting
-        val n = Notifier.service(this, "Herdr monitor connecting…")
+        // The agent summary is the foreground service's notification: one
+        // routine notification, not two.
+        val v = summaryNow()
+        lastSummary = v.sig
+        val n = Notifier.summary(this, v)
         // The specialUse type exists from Android 14; before that a plain
         // foreground service has no time limit.
-        if (Build.VERSION.SDK_INT >= 34) startForeground(Notifier.ID_SERVICE, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-        else startForeground(Notifier.ID_SERVICE, n)
+        if (Build.VERSION.SDK_INT >= 34) startForeground(Notifier.ID_SUMMARY, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        else startForeground(Notifier.ID_SUMMARY, n)
         getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(net)
         scope.launch { while (isActive) { loadPrs(); delay(300_000) } }
     }
@@ -70,7 +75,7 @@ class AlertService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (!prefs.alerts) { stopSelf(); return START_NOT_STICKY }
         if (intent?.action == ACTION_RECONNECT || link?.isActive != true) reconnect()
-        else if (intent?.action == ACTION_PINS) scope.launch { resyncRunning() }
+        else if (intent?.action == ACTION_REFRESH) refreshSummary()
         return START_STICKY
     }
 
@@ -80,15 +85,9 @@ class AlertService : Service() {
         scope.cancel()
         connected = false
         Widget.save(this, widgetFor(false))
-        for (a in running.keys) Notifier.cancelRunning(this, a)
-        Notifier.postOverview(this, null)
         // Alerts off: nothing to warn about.
         setHealth(Health.Off, notify = false)
         super.onDestroy()
-    }
-
-    private fun status(text: String) {
-        getSystemService(android.app.NotificationManager::class.java).notify(Notifier.ID_SERVICE, Notifier.service(this, text))
     }
 
     // The health alert on screen (its cause key), so a repeated failure
@@ -99,7 +98,7 @@ class AlertService : Service() {
     // notification, and the health alert.
     private fun setHealth(h: Health, notify: Boolean = true) {
         app.health.value = h
-        if (notify) status("Herdr monitor: " + healthLine(h))
+        if (notify) refreshSummary()
         when (val step = planHealth(healthKey, h, System.currentTimeMillis())) {
             null -> {}
             is HealthStep.Post -> { healthKey = step.alert.key; Notifier.postHealth(this, step.alert) }
@@ -107,11 +106,28 @@ class AlertService : Service() {
         }
     }
 
-    // The overview and the counts, from what the stream said. Quiet
-    // agents: no overview (Needs you alerts stay).
-    private fun refreshOverview() {
+    // What the summary shows, from the stream only (no transcript reads).
+    private fun summaryNow(): SummaryView {
         val now = agents.values.map { it.copy(state = it.stateOf(prefs.localSeen)) }
-        Notifier.postOverview(this, if (prefs.quiet) null else overviewOf(now))
+        return summaryView(summaryOf(now, prefs.quiet), app.health.value, shortHost(prefs.server), herdrUp)
+    }
+
+    // The last summary posted. A new one only when what it shows changes:
+    // not for heartbeats or an unchanged snapshot, so a summary the user
+    // swiped away (Android 14+) comes back only with news.
+    @Volatile private var lastSummary: String? = null
+
+    private fun refreshSummary() {
+        val v = summaryNow()
+        if (v.sig == lastSummary) return
+        lastSummary = v.sig
+        Notifier.postSummary(this, v)
+    }
+
+    // The summary and the counts, from what the stream said.
+    private fun refreshOverview() {
+        refreshSummary()
+        val now = agents.values.map { it.copy(state = it.stateOf(prefs.localSeen)) }
         app.alertCounts.value = AlertCounts(
             needsYou = now.count { it.state == "blocked" }, working = now.count { it.state == "working" },
             failed = now.count { it.state == "error" }, finished = now.count { it.state == "done" },
@@ -166,7 +182,6 @@ class AlertService : Service() {
     // goes, and so do their notifications. The new server's posted record
     // matches the screen again (nothing of it is on screen).
     private fun forgetServer() {
-        for (a in running.keys.toList()) stopRunning(a)
         agents.clear()
         asks.clear()
         app.serviceStates.clear()
@@ -185,17 +200,15 @@ class AlertService : Service() {
         when (e.event) {
             "snapshot" -> {
                 connected = true
+                herdrUp = o.optBoolean("connected", true)
                 // A valid snapshot: the link works (this clears a health alert).
                 setHealth(Health.Connected(shortHost(prefs.server), System.currentTimeMillis()), notify = false)
-                status(if (o.optBoolean("connected", true)) "Herdr monitor connected" else "Herdr monitor connected (Herdr is not running)")
                 val list = Json.agents(o.optJSONArray("agents"))
                 val since = prefs.listenedMs.takeIf { it > 0 } ?: System.currentTimeMillis()
                 agents.clear()
                 list.forEach { agents[it.address] = it }
                 val addresses = prefs.posted.keys + agents.keys
                 for (a in addresses) apply(planAlert(a, prefs.posted[a], agents[a], prefs.localSeen, since))
-                for (a in running.keys - agents.keys) stopRunning(a)
-                list.forEach { syncRunning(it) }
                 app.serviceStates.clear()
                 list.forEach { app.serviceStates[it.address] = it.state }
                 refreshOverview()
@@ -208,7 +221,6 @@ class AlertService : Service() {
                 app.serviceStates[a.address] = a.state
                 if (a.state != "blocked") asks.remove(a.address)
                 apply(planAlert(a.address, prefs.posted[a.address], a, prefs.localSeen))
-                syncRunning(a)
                 refreshOverview()
             }
             "removed" -> {
@@ -217,10 +229,9 @@ class AlertService : Service() {
                 app.serviceStates.remove(a)
                 asks.remove(a)
                 apply(planAlert(a, prefs.posted[a], null))
-                stopRunning(a)
                 refreshOverview()
             }
-            "connection" -> status(if (o.optBoolean("connected")) "Herdr monitor connected" else "Herdr monitor connected (Herdr is not running)")
+            "connection" -> { herdrUp = o.optBoolean("connected"); refreshSummary() }
         }
         heard()
         pushWidget()
@@ -235,8 +246,7 @@ class AlertService : Service() {
             }
             is AlertAction.Post -> {
                 prefs.posted = prefs.posted + (action.agent.address to action.state)
-                // Quiet agents: the state is kept (so turning quiet off
-                // does not replay it), but only Needs you alerts.
+                // Only Needs you posts (planAlert plans nothing else).
                 if (mayAlert(action.state, prefs.quiet)) scope.launch { post(action.agent, action.state) }
             }
         }
@@ -247,7 +257,7 @@ class AlertService : Service() {
     // transcript, so read the chat a few times (about 6 s) and, when the
     // question shows up, update the alert quietly with its options.
     private suspend fun post(a: AgentInfo, state: String) {
-        Notifier.postAgent(this, a, state, null, quiet = false, pr = prFor(a))
+        Notifier.postAgent(this, a, state, null, quiet = false)
         if (state != "blocked") return
         repeat(5) { attempt ->
             if (attempt > 0) delay(1500)
@@ -263,43 +273,6 @@ class AlertService : Service() {
                 return
             }
         }
-    }
-
-    // The PR of the agent's space, from the overview (matched by the
-    // space name in the agent's name, the only link the stream gives).
-    private fun prFor(a: AgentInfo): Pr? = prs.firstOrNull { a.name.startsWith(it.spaceName) }?.pr
-
-    // The pins changed: look again at the agents the service knows, with no
-    // new link. Unpinned ones first, so their places free up for the pinned.
-    private fun resyncRunning() {
-        agents.values.sortedBy { wantsRunning(it.state, prefs.quiet, it.address in prefs.pinned) }.forEach(::syncRunning)
-    }
-
-    // A pinned working agent gets a silent running notification: its
-    // current step and stage, read from its transcript every 15 s while it
-    // works. At most MAX_RUNNING at once. Quiet agents: none.
-    private fun syncRunning(a: AgentInfo) {
-        if (!wantsRunning(a.state, prefs.quiet, a.address in prefs.pinned)) { stopRunning(a.address); return }
-        if (running[a.address]?.isActive == true || running.size >= MAX_RUNNING) return
-        running[a.address] = scope.launch {
-            Notifier.postRunning(this@AlertService, a, null, null)
-            while (isActive) {
-                val now = agents[a.address]
-                if (now == null || !wantsRunning(now.state, prefs.quiet, a.address in prefs.pinned)) break
-                val chat = withTimeoutOrNull(8000) { runCatching { Api(prefs.server).chat(a.address, null) }.getOrNull() }
-                if (agents[a.address]?.state != "working" || prefs.quiet || a.address !in prefs.pinned) break
-                val msgs = chat?.messages.orEmpty()
-                Notifier.postRunning(this@AlertService, now, currentStep(msgs), if (chat?.available == true) progressStage(msgs) else null)
-                delay(15_000)
-            }
-            running.remove(a.address)
-            Notifier.cancelRunning(this@AlertService, a.address)
-        }
-    }
-
-    private fun stopRunning(address: String) {
-        running.remove(address)?.cancel()
-        Notifier.cancelRunning(this, address)
     }
 
     private fun widgetFor(connected: Boolean) =
@@ -321,7 +294,8 @@ class AlertService : Service() {
 
     companion object {
         const val ACTION_RECONNECT = "io.github.ashrodan.herdrmonitor.RECONNECT"
-        const val ACTION_PINS = "io.github.ashrodan.herdrmonitor.PINS"
+        // Draw the summary again (Quiet agents changed, or a Done was seen).
+        const val ACTION_REFRESH = "io.github.ashrodan.herdrmonitor.REFRESH"
 
         fun start(c: Context, reconnect: Boolean = false) = start(c, if (reconnect) ACTION_RECONNECT else null)
 

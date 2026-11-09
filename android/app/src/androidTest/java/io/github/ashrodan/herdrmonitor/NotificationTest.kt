@@ -16,7 +16,8 @@ import org.junit.Before
 import org.junit.Test
 
 // The notifications as Android holds them (activeNotifications), with fake
-// agents only. Nothing is sent to a server: no action is fired. The shade
+// agents only. One routine notification (the agent summary) plus one per
+// agent that needs you. Nothing is sent to a server: no action is fired. The shade
 // is never opened.
 class NotificationTest {
     private val inst = InstrumentationRegistry.getInstrumentation()
@@ -35,12 +36,23 @@ class NotificationTest {
     @After fun tearDown() = clear()
 
     private fun clear() {
-        for (a in listOf("fake-1", "fake-2")) Notifier.cancelAgent(c, a)
-        Notifier.postOverview(c, null)
+        for (a in listOf("fake-1", "fake-2", "legacy")) Notifier.cancelAgent(c, a)
+        nm.cancel(Notifier.ID_SUMMARY)
         Notifier.cancelHealth(c)
         nm.cancel(Notifier.TAG_TEST, Notifier.ID_TEST)
         Thread.sleep(200)
     }
+
+    private fun activeId(id: Int): Notification? {
+        repeat(20) {
+            nm.activeNotifications.firstOrNull { it.tag == null && it.id == id }?.let { return it.notification }
+            Thread.sleep(100)
+        }
+        return null
+    }
+
+    private fun summary(vararg agents: AgentInfo, quiet: Boolean = false) =
+        summaryView(summaryOf(agents.toList(), quiet), Health.Connected("mac", 1), "mac")
 
     private fun active(tag: String, id: Int): Notification? {
         repeat(20) {
@@ -60,12 +72,70 @@ class NotificationTest {
 
     private fun ask(vararg options: String) = Part.Ask("q", listOf(Question("Pick", "Which one?", false, options.map { Option(it, "") })), false)
 
-    @Test fun channelsAndImportance() {
+    @Test fun threeChannelsOnly() {
         assertEquals(NotificationManager.IMPORTANCE_HIGH, nm.getNotificationChannel(Notifier.CH_NEEDS).importance)
-        assertEquals(NotificationManager.IMPORTANCE_LOW, nm.getNotificationChannel(Notifier.CH_RUNNING).importance)
-        assertEquals(NotificationManager.IMPORTANCE_DEFAULT, nm.getNotificationChannel(Notifier.CH_FINISHED).importance)
+        val sum = nm.getNotificationChannel(Notifier.CH_SUMMARY)
+        assertEquals(NotificationManager.IMPORTANCE_LOW, sum.importance)
+        assertEquals("Agent summary", sum.name.toString())
         assertEquals(NotificationManager.IMPORTANCE_DEFAULT, nm.getNotificationChannel(Notifier.CH_HEALTH).importance)
-        assertEquals(NotificationManager.IMPORTANCE_MIN, nm.getNotificationChannel(Notifier.CH_SERVICE).importance)
+        for (old in listOf("finished", "service", "alerts")) assertNull(old, nm.getNotificationChannel(old))
+    }
+
+    // An update from the Notification V2 build: its Running, group summary,
+    // overview and Finished notifications go, and so do the old channels.
+    @Test fun upgradeCleansUpLegacyNotifications() {
+        nm.createNotificationChannel(android.app.NotificationChannel("finished", "Finished", NotificationManager.IMPORTANCE_DEFAULT))
+        val old = { ch: String -> Notification.Builder(c, ch).setSmallIcon(R.drawable.ic_stat_herdr).setContentTitle("old").build() }
+        nm.notify("legacy", 3, old(Notifier.CH_SUMMARY))
+        nm.notify("host:x", 4, old(Notifier.CH_SUMMARY))
+        nm.notify("overview", 6, old(Notifier.CH_SUMMARY))
+        nm.notify("legacy", Notifier.ID_AGENT, old("finished"))
+        assertNotNull(active("overview", 6))
+        Notifier.channels(c)
+        assertTrue(gone("legacy", 3)); assertTrue(gone("host:x", 4)); assertTrue(gone("overview", 6))
+        assertTrue(gone("legacy", Notifier.ID_AGENT))
+        assertNull(nm.getNotificationChannel("finished"))
+    }
+
+    // One routine notification: the summary, on the service's id, as the
+    // group summary of this server's group.
+    @Test fun theSummaryIsTheOnlyRoutineNotification() {
+        Notifier.postSummary(c, summary(fake("w", "working", "bash: ls"), fake("d", "done", "PR is green")))
+        val n = activeId(Notifier.ID_SUMMARY)!!
+        assertEquals(Notifier.CH_SUMMARY, n.channelId)
+        assertTrue(n.flags and Notification.FLAG_GROUP_SUMMARY != 0)
+        assertTrue(n.flags and Notification.FLAG_ONGOING_EVENT != 0)
+        assertEquals(Notifier.group(c), n.group)
+        assertEquals("1 working · 1 done", n.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+        val lines = n.extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)!!.map { it.toString() }
+        assertEquals(listOf("Fake w · Working: bash: ls", "Fake d · Done: PR is green"), lines)
+        // Working and Done have no notification of their own.
+        assertEquals(listOf(Notifier.ID_SUMMARY), nm.activeNotifications.map { it.id })
+    }
+
+    @Test fun quietSummary() {
+        Notifier.postSummary(c, summary(fake("b", "blocked"), fake("w", "working"), quiet = true))
+        val n = activeId(Notifier.ID_SUMMARY)!!
+        assertEquals("Quiet agents · 1 needs you", n.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+        assertTrue(n.extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES).isNullOrEmpty())
+    }
+
+    // Blocked: one Needs you child in the summary's group. Resolved: the
+    // child goes, the summary stays. No group Android made itself.
+    @Test fun needsYouIsAChildOfTheSummary() {
+        Notifier.postSummary(c, summary(fake("fake-1", "blocked")))
+        Notifier.postAgent(c, fake("fake-1", "blocked", "Allow?"), "blocked", null)
+        Notifier.postAgent(c, fake("fake-2", "error", "boom"), "error", null)
+        Notifier.postTest(c)
+        val child = active("fake-1", Notifier.ID_AGENT)!!
+        assertEquals(Notifier.group(c), child.group)
+        assertTrue(child.flags and Notification.FLAG_GROUP_SUMMARY == 0)
+        Thread.sleep(1500) // let Android group what it would group
+        val ids = nm.activeNotifications.map { it.tag to it.id }.toSet()
+        assertEquals(setOf(null to Notifier.ID_SUMMARY, "fake-1" to Notifier.ID_AGENT, "fake-2" to Notifier.ID_AGENT, Notifier.TAG_TEST to Notifier.ID_TEST), ids)
+        Notifier.cancelAgent(c, "fake-1")
+        assertTrue(gone("fake-1", Notifier.ID_AGENT))
+        assertNotNull(activeId(Notifier.ID_SUMMARY))
     }
 
     @Test fun needsYouHasContextAndInlineReply() {
@@ -99,18 +169,6 @@ class NotificationTest {
         assertNotEquals(a.actions.last().actionIntent, b.actions.last().actionIntent)
     }
 
-    @Test fun overviewListsAllStatesInOrder() {
-        val ov = overviewOf(listOf(fake("w", "working", "bash: ls"), fake("b", "blocked", "Allow?"), fake("e", "error", "boom")))
-        Notifier.postOverview(c, ov)
-        val n = active(Notifier.TAG_OVERVIEW, Notifier.ID_OVERVIEW)!!
-        assertEquals(Notifier.CH_RUNNING, n.channelId)
-        assertEquals("1 needs you · 1 failed · 1 working", n.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
-        val lines = n.extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)!!.map { it.toString() }
-        assertEquals(listOf("Fake b · Needs you: Allow?", "Fake e · Failed: boom", "Fake w · Working: bash: ls"), lines)
-        Notifier.postOverview(c, null)
-        assertTrue(gone(Notifier.TAG_OVERVIEW, Notifier.ID_OVERVIEW))
-    }
-
     @Test fun healthAlertPostsAndCancels() {
         val step = planHealth(null, Health.ServerTooOld("mac"), 0) as HealthStep.Post
         Notifier.postHealth(c, step.alert)
@@ -131,8 +189,9 @@ class NotificationTest {
     }
 
     @Test fun ids() {
-        val ids = listOf(Notifier.ID_AGENT, Notifier.ID_SERVICE, Notifier.ID_RUNNING, Notifier.ID_SUMMARY, Notifier.ID_HEALTH, Notifier.ID_OVERVIEW, Notifier.ID_TEST)
+        val ids = listOf(Notifier.ID_AGENT, Notifier.ID_SUMMARY, Notifier.ID_HEALTH, Notifier.ID_TEST)
         assertEquals(ids.size, ids.toSet().size)
+        assertTrue(ids.none { it in Notifier.LEGACY_IDS })
     }
 
     // org.json is real only on a device, so the stream parse is tested here.

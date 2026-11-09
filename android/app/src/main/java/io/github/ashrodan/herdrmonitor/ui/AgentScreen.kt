@@ -142,6 +142,7 @@ import io.github.ashrodan.herdrmonitor.Part
 import io.github.ashrodan.herdrmonitor.PrStatus
 import io.github.ashrodan.herdrmonitor.age
 import io.github.ashrodan.herdrmonitor.app
+import io.github.ashrodan.herdrmonitor.AlertService
 import io.github.ashrodan.herdrmonitor.appUrl
 import io.github.ashrodan.herdrmonitor.displayName
 import io.github.ashrodan.herdrmonitor.isAgent
@@ -213,7 +214,8 @@ fun AgentScreen(
     // user has not swiped to.
     LaunchedEffect(address, t?.status, active) {
         if (!active) return@LaunchedEffect
-        if (t?.status == "done") ctx.app.prefs.markSeen(address)
+        // Seen here: the Done leaves the agent summary.
+        if (t?.status == "done") { ctx.app.prefs.markSeen(address); AlertService.start(ctx, AlertService.ACTION_REFRESH) }
         Notifier.cancelAgent(ctx, address)
         ctx.app.prefs.markOpened(address)
     }

@@ -80,40 +80,67 @@ fun planHealth(shownKey: String?, h: Health, now: Long): HealthStep? {
 fun subtextOf(a: AgentInfo, host: String?): String? =
     listOfNotNull(a.spaceName, a.harness, host).filter { it.isNotBlank() }.distinct().joinToString(" · ").ifEmpty { null }
 
-// ---- Overview of active agents ----
+// ---- The agent summary ----
 
+// The one routine notification (it is also the foreground service's): the
+// counts and up to five agents, Needs you first, then Failed, Working and
+// Done. Done is only an unseen one: once seen on the Mac or this phone its
+// effective state is idle, and it leaves the summary.
 const val OVERVIEW_LINES = 5
-private val ACTIVE_ORDER = listOf("blocked", "error", "working")
+private val SUMMARY_ORDER = listOf("blocked", "error", "working", "done")
 
 data class Overview(val title: String, val lines: List<String>, val more: Int) {
     val sig get() = (listOf(title) + lines + more.toString()).joinToString("\u0000")
 }
 
-// One line per active agent, blocked first, then error, then working; the
-// newest change first within a state. null: no active agent.
-fun overviewOf(agents: Collection<AgentInfo>): Overview? {
-    val active = agents.filter { it.state in ACTIVE_ORDER }
-        .sortedWith(compareBy<AgentInfo> { ACTIVE_ORDER.indexOf(it.state) }.thenByDescending { it.changedMs ?: 0 })
-    if (active.isEmpty()) return null
-    val n = { s: String -> active.count { it.state == s } }
+// agents: with their effective state. Quiet agents: only how many need
+// you, no Working or Done lines.
+fun summaryOf(agents: Collection<AgentInfo>, quiet: Boolean = false): Overview {
+    val shown = agents.filter { it.state in SUMMARY_ORDER }
+        .sortedWith(compareBy<AgentInfo> { SUMMARY_ORDER.indexOf(it.state) }.thenByDescending { it.changedMs ?: 0 })
+    val n = { s: String -> shown.count { it.state == s } }
+    if (quiet) {
+        val need = n("blocked") + n("error")
+        return Overview("Quiet agents · $need need${if (need == 1) "s" else ""} you", emptyList(), 0)
+    }
+    if (shown.isEmpty()) return Overview("No active agents", emptyList(), 0)
     val parts = listOfNotNull(
         n("blocked").takeIf { it > 0 }?.let { "$it need${if (it == 1) "s" else ""} you" },
         n("error").takeIf { it > 0 }?.let { "$it failed" },
         n("working").takeIf { it > 0 }?.let { "$it working" },
+        n("done").takeIf { it > 0 }?.let { "$it done" },
     )
-    val title = if (parts.size == 1 && n("working") == active.size) "${active.size} agent${if (active.size == 1) "" else "s"} working" else parts.joinToString(" · ")
-    val lines = active.take(OVERVIEW_LINES).map(::overviewLine)
-    return Overview(title, lines, active.size - lines.size)
+    val lines = shown.take(OVERVIEW_LINES).map(::overviewLine)
+    return Overview(parts.joinToString(" · "), lines, shown.size - lines.size)
 }
 
 fun overviewLine(a: AgentInfo): String {
-    val what = when (a.state) {
-        "blocked" -> a.msg?.takeIf { it.isNotBlank() } ?: "waiting at a ${a.kind ?: "dialog"}"
-        "error" -> a.msg?.takeIf { it.isNotBlank() } ?: "stopped with an error"
-        else -> a.msg?.takeIf { it.isNotBlank() } ?: "working"
+    val msg = a.msg?.takeIf { it.isNotBlank() }
+    val (mark, what) = when (a.state) {
+        "blocked" -> "Needs you" to (msg ?: "waiting at a ${a.kind ?: "dialog"}")
+        "error" -> "Failed" to (msg ?: "stopped with an error")
+        "done" -> "Done" to (msg ?: "finished its turn")
+        else -> "Working" to (msg ?: "working")
     }
-    val mark = when (a.state) { "blocked" -> "Needs you"; "error" -> "Failed"; else -> "Working" }
     return "${a.name} · $mark: $what".take(120)
+}
+
+// The summary as a notification shows it. While the link is not
+// connected, the title says why (the counts may be old).
+data class SummaryView(val title: String, val text: String?, val lines: List<String>, val sub: String) {
+    val sig get() = (listOf(title, text ?: "", sub) + lines).joinToString("\u0000")
+}
+
+fun summaryView(ov: Overview, h: Health, host: String, herdrUp: Boolean = true): SummaryView {
+    val connected = h is Health.Connected
+    val title = if (connected) ov.title else healthLine(h)
+    val lines = ov.lines + listOfNotNull(if (ov.more > 0) "+${ov.more} more" else null)
+    val text = when {
+        !connected -> ov.title
+        !herdrUp -> "Herdr is not running on $host"
+        else -> ov.lines.firstOrNull()
+    }
+    return SummaryView(title, text, lines, host)
 }
 
 // ---- Actions ----
@@ -124,19 +151,16 @@ sealed interface Act {
     data object Reply : Act
     data object Open : Act
     data object Stop : Act
-    data object OpenPr : Act
-    data object View : Act
 }
 
 const val MAX_QUICK = 2
 
+// Only Needs you has its own notification:
 // blocked at one single-choice question: up to two answers, then Reply;
-// blocked otherwise: Reply, Open, Stop; error: Open, Reply;
-// done: Open PR (when there is one), View, Reply.
-fun actionPlan(state: String, quick: List<String>?, hasPr: Boolean): List<Act> = when (state) {
+// blocked otherwise: Reply, Open, Stop; error: Open, Reply.
+fun actionPlan(state: String, quick: List<String>?): List<Act> = when (state) {
     "blocked" -> if (!quick.isNullOrEmpty()) quick.take(MAX_QUICK).mapIndexed { j, l -> Act.Answer(j, l) } + Act.Reply
         else listOf(Act.Reply, Act.Open, Act.Stop)
-    "done" -> listOfNotNull(Act.OpenPr.takeIf { hasPr }, Act.View, Act.Reply)
     else -> listOf(Act.Open, Act.Reply)
 }
 

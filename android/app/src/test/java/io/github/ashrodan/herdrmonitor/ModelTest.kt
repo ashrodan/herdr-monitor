@@ -23,12 +23,18 @@ class ModelTest {
         val p = planAlert("t1", null, agent("blocked")) as AlertAction.Post
         assertEquals("blocked", p.state)
         assertNull(planAlert("t1", "blocked", agent("blocked", msg = "new msg")))
-        assertEquals("done", (planAlert("t1", "blocked", agent("done")) as AlertAction.Post).state)
+        // Done is in the summary only: a blocked alert goes, no Done alert comes.
+        assertEquals(AlertAction.Cancel("t1"), planAlert("t1", "blocked", agent("done")))
+        assertEquals(AlertAction.Cancel("t1"), planAlert("t1", "error", agent("done")))
+        assertNull(planAlert("t1", null, agent("done")))
+        assertNull(planAlert("t1", null, agent("done", changed = 600), since = 500))
+        assertTrue(planAlert("t1", null, agent("error")) is AlertAction.Post)
         assertNull(planAlert("t1", null, agent("working")))
     }
 
     @Test fun planAlertCancelsWhenTheAgentMovesOnOrGoes() {
         assertEquals(AlertAction.Cancel("t1"), planAlert("t1", "blocked", agent("working")))
+        // A Done alert left from an older build goes.
         assertEquals(AlertAction.Cancel("t1"), planAlert("t1", "done", agent("done", seen = 100)))
         assertEquals(AlertAction.Cancel("t1"), planAlert("t1", "done", null))
         assertNull(planAlert("t1", null, null))

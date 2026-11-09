@@ -70,7 +70,8 @@ class QuietTile : TileService() {
 // goes off, so working agents get their running notification again.
 fun setQuiet(c: Context, on: Boolean) {
     c.app.prefs.quiet = on
-    if (on) Notifier.cancelQuiet(c) else AlertService.start(c, reconnect = true)
+    // The summary shows the new mode; Needs you alerts are the same.
+    AlertService.start(c, AlertService.ACTION_REFRESH)
     runCatching { TileService.requestListeningState(c, ComponentName(c, QuietTile::class.java)) }
 }
 

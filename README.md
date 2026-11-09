@@ -118,28 +118,29 @@ WebView.
   The splash shows the collie on wheat, or on pine in dark mode. The
   notification and tile icons are the white collie head. Sessions and Spaces
   have sheep and paddock glyphs, and empty and offline Home show a scene.
-- **Notifications**, on four channels. Agent alerts are grouped by server:
-  - **Needs you** (high): an agent asks a question or stopped with an
-    error. Up to two answer buttons, and Reply is always there.
-  - **Running** (low, silent): one **overview** of all active agents of the
-    server: a title such as "1 needs you · 4 working", then up to five
-    lines (Needs you first, then Failed, then Working) and "+N more".
-    A pinned session also gets its own notification while it works (at
-    most three; pin a session from its long-press menu), with its current
-    step and a **Stop** button. A four-stage bar (Plan, Edit, Verify, PR);
-    the app guesses the stage from the agent's tool calls, because the
-    server does not report one.
-  - **Finished**: the result line, **Open PR** (when the space has one),
-    **View session** and Reply.
-  - **Alert health**: alerts cannot work. One notification per cause: the
-    server is too old (it has no `/api/agents/stream`), the server refused
-    the link (HTTP 401 or 403), or the link was down for 5 minutes or more.
-    **Open alert setup** and **Retry**. It goes away when the link works
-    again.
-  Each agent notification shows its space, its harness and the server
-  under the title, when the server sends them. An alert goes away when the
-  agent moves on, for example when you answer it on the Mac. An answer
-  from a notification shows as "Sent" on the Home card.
+- **Notifications**: one ongoing **Agent summary**, and a notification of
+  its own only for an agent that needs you. Three channels:
+  - **Agent summary** (low, silent): the one routine notification. It is
+    also the notification Android needs while the app keeps its link. A
+    title such as "1 needs you · 4 working · 2 done", then up to five
+    agents (Needs you, Failed, Working, Done) and "+N more". Done shows
+    here only, and only until you see that agent on the Mac or the phone.
+    While the link is down, the title says why. A tap opens Home. If you
+    swipe it away, it comes back only when what it shows changes.
+  - **Needs you** (high): one per agent that asks a question or stopped
+    with an error, grouped under the summary. Up to two answer buttons,
+    and Reply is always there. It goes away when the agent moves on, for
+    example when you answer it on the Mac.
+  - **Alert health** (default): only when alerts cannot work: the server is
+    too old (it has no `/api/agents/stream`), the server refused the link
+    (HTTP 401 or 403), the link was down for 5 minutes or more, or Android
+    did not start the alert service. **Open alert setup** and **Retry**. It
+    goes away when the link works again.
+  Working and Done agents have no notification of their own, and there is
+  no per-session progress notification (a pin only orders the list in the
+  app). Each Needs you notification shows its space, its harness and the
+  server under the title, when the server sends them. An answer from a
+  notification shows as "Sent" on the Home card.
 - **Alerts screen** (**Alerts** in the drawer): the link's state
   (Connected, Connecting, old server, refused, or offline), the server, the
   last event, the agent counts, background alerts and Quiet agents,
@@ -150,8 +151,8 @@ WebView.
   server.
 - **Quick settings tiles**: **Herdr** shows "2 need you" (or "4 working");
   a tap opens Sessions filtered to Needs you. **Quiet agents**: when on,
-  only Needs you and Alert health notify: no overview, Running or
-  Finished.
+  the summary says only "Quiet agents · N need you", with no Working or
+  Done lines. Needs you and Alert health still notify.
 - **Widget** (4x2): the server name, three counts (Needs you, Working,
   PRs) and the top Needs you session with its first answer button. It
   changes when the server sends a change, not on a timer.
@@ -174,8 +175,8 @@ WebView.
 
 The phone must be on Tailscale, on the same tailnet as the Mac. No Google
 account, Firebase or push service is used: while alerts are on, the app keeps
-one link to the server (`GET /api/agents/stream`) and shows a quiet "Herdr
-monitor connected" notification. Each agent on the stream has its address,
+one link to the server (`GET /api/agents/stream`) and shows the silent agent
+summary. Each agent on the stream has its address,
 name, state, status kind and message, its change times, and its context:
 `harness`, `space_id`, `space_name` and `branch`. A change to any of these,
 except the title, sends an event.
@@ -260,8 +261,6 @@ Android shows at most three buttons on a notification.
 | Waits at one single-choice question | Its first two options, then **Reply**. A tap answers the question, like a tap in Chat (`POST /api/terminals/:t/answer`). |
 | Waits at another dialog | **Reply** (types into the dialog with `force`), **Open**, **Stop** (`POST …/interrupt`) |
 | Error | **Open**, **Reply** (`POST …/send`) |
-| Done | **Open PR** (when there is one), **View session**, **Reply** |
-| Working | **Stop** (`POST …/interrupt`) |
 
 Reply is an inline reply (Android's reply action). When a reply cannot go,
 the notification says **Reply queued** (it goes when the link is back) or

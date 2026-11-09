@@ -117,7 +117,7 @@ fun SettingsScreen(back: () -> Unit) {
             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Alerts in the background", style = MaterialTheme.typography.titleSmall)
-                    Text("Keeps one link to the server and shows a quiet \"connected\" notification. Also keeps the widget current.",
+                    Text("Keeps one link to the server and shows one silent agent summary. Also keeps the widget current.",
                         style = MaterialTheme.typography.bodySmall, color = Palette.mutedForeground)
                 }
                 Switch(alerts, { on ->
@@ -128,7 +128,7 @@ fun SettingsScreen(back: () -> Unit) {
             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Quiet agents", style = MaterialTheme.typography.titleSmall)
-                    Text("Only Needs you alerts: no Running or Finished notifications. The Quiet agents tile does the same.",
+                    Text("The agent summary says only how many agents need you. Needs you alerts stay. The Quiet agents tile does the same.",
                         style = MaterialTheme.typography.bodySmall, color = Palette.mutedForeground)
                 }
                 Switch(quiet, { on -> quiet = on; setQuiet(ctx, on) })
