@@ -14,7 +14,32 @@ test('agentOf: only terminals that report a status', () => {
   assert.equal(agentOf({ address: 't1', status: { app: 'claude' } }, 'x'), null);
   assert.deepEqual(agentOf(term('t1', 'blocked', { kind: 'permission', msg: 'Run ls?' }), 'app'), {
     address: 't1', name: 'app', state: 'blocked', kind: 'permission', msg: 'Run ls?', changed_ms: 5, seen_ms: null,
+    harness: null, space_id: null, space_name: null, branch: null,
   });
+});
+
+test('agentOf: context from the terminal and its space, not from the name', () => {
+  const a = agentOf(term('t1', 'working', { t: { agent: 'claude', space: 'sp1' } }), 'app · review', { name: 'herdr-monitor', branch: 'feat/x' });
+  assert.equal(a.harness, 'claude');
+  assert.equal(a.space_id, 'sp1');
+  assert.equal(a.space_name, 'herdr-monitor');
+  assert.equal(a.branch, 'feat/x');
+});
+
+test('diff: a context change counts, title churn still does not', () => {
+  const feed = new AgentFeed();
+  let sp = { name: 'app', branch: 'main' };
+  const ts = [term('t1', 'working', { t: { agent: 'claude', space: 'sp1' } })];
+  const spaceOf = () => sp;
+  feed.diff(ts, nameOf, spaceOf);
+  ts[0].title = 'other title';
+  assert.deepEqual(feed.diff(ts, nameOf, spaceOf), [], 'title churn');
+  sp = { name: 'app', branch: 'feat/y' };
+  const out = feed.diff(ts, nameOf, spaceOf);
+  assert.equal(out.length, 1, 'branch counts');
+  assert.equal(out[0][1].branch, 'feat/y');
+  ts[0].space = 'sp2';
+  assert.equal(feed.diff(ts, nameOf, spaceOf).length, 1, 'space counts');
 });
 
 test('snapshot lists the agents and skips shells', () => {

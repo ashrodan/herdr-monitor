@@ -90,6 +90,12 @@ data class AgentInfo(
     val msg: String?,
     val changedMs: Long?,
     val seenMs: Long?,
+    // Context, when the server sends it (newer servers): the harness, the
+    // space and its branch. Never parsed from the name.
+    val harness: String? = null,
+    val spaceId: String? = null,
+    val spaceName: String? = null,
+    val branch: String? = null,
 )
 
 val GROUPS = listOf("blocked" to "Blocked", "error" to "Error", "done" to "Done", "working" to "Working", "idle" to "Idle")

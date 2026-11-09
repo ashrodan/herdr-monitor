@@ -207,7 +207,7 @@ fun HomeScreen(live: Live, go: (Route) -> Unit, selected: String? = null) {
         }, onSpace = { id -> scope.launch { drawer.close() }; go(Route.SpaceR(id)) },
             onHost = { scope.launch { drawer.close() }; picking = true },
             onSettings = { scope.launch { drawer.close() }; go(Route.Settings) },
-            onNotifications = { notificationSettings(ctx) })
+            onNotifications = { scope.launch { drawer.close() }; go(Route.Alerts) })
     }) {
         NavigationSuiteScaffold(layoutType = navSuiteType(), navigationSuiteItems = {
             item(selected = tab == HomeTab.Sessions, onClick = { tab = HomeTab.Sessions; filter = null },
@@ -476,7 +476,7 @@ private fun HerdrDrawer(
                     selected = false, onClick = { onSpace(s.id) })
             }
             HorizontalDivider(Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant)
-            NavigationDrawerItem(label = { Text("Notifications") }, icon = { Icon(Icons.Default.Notifications, null) }, selected = false, onClick = onNotifications)
+            NavigationDrawerItem(label = { Text("Alerts") }, icon = { Icon(Icons.Default.Notifications, null) }, selected = false, onClick = onNotifications)
             NavigationDrawerItem(label = { Text("Settings") }, icon = { Icon(Icons.Default.Settings, null) }, selected = false, onClick = onSettings)
             Spacer(Modifier.height(24.dp))
         }

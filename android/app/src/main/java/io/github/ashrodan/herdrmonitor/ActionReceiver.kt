@@ -23,7 +23,7 @@ class ActionReceiver : BroadcastReceiver() {
             val force = intent.getBooleanExtra(EXTRA_FORCE, false)
             val label = when {
                 what == REPLY -> "Reply"
-                what == INTERRUPT -> "Interrupt"
+                what == INTERRUPT -> "Stop"
                 else -> "Answer"
             }
             try {
@@ -54,10 +54,10 @@ class ActionReceiver : BroadcastReceiver() {
                     // in the app for Send again or Delete.
                     val f = failureOf(e)
                     c.app.outbox.add(server, address, text, force, why, stateAfter(f))
-                    val where = if (f == Failure.Retry) "Queued in the app" else "Kept in the app"
-                    Notifier.postFailure(c, address, label, "$why. $where.")
+                    val where = if (f == Failure.Retry) "It goes when the link is back." else "Open the app to send it again or delete it."
+                    Notifier.postFailure(c, address, replyFailureTitle(f), "$why. $where")
                 } else {
-                    Notifier.postFailure(c, address, label, why)
+                    Notifier.postFailure(c, address, "$label not sent", why)
                 }
             } finally {
                 pending.finish()

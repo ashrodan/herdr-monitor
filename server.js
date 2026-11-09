@@ -37,6 +37,7 @@ const HC_BIN = process.env.HC_BIN || 'hc';
 const monitor = new Monitor({ socket: SOCKET, herdrDir: HERDR_DIR });
 const { terminals } = monitor;
 const nameOf = (t) => monitor.nameOf(t);
+const spaceOf = (t) => monitor.layout.find((s) => s.id === t.space) ?? null;
 monitor.on('log', (m) => console.log(m));
 monitor.on('event', broadcast);
 monitor.on('state', onStateChange);
@@ -65,7 +66,7 @@ function scheduleAgents() {
 }
 function syncAgents() {
   agentsQueued = false;
-  for (const [event, data] of agentFeed.diff(terminals.values(), nameOf)) agentClients.send(sseFrame(event, data));
+  for (const [event, data] of agentFeed.diff(terminals.values(), nameOf, spaceOf)) agentClients.send(sseFrame(event, data));
 }
 
 // hc machines and tailnet names, for apps on other machines (dai/t1).
@@ -324,7 +325,7 @@ const routes = [
   ['GET', /^\/api\/events$/, (req, res) => clients.open(req, res, sseFrame('snapshot', monitor.snapshot()))],
   ['GET', /^\/api\/agents\/stream$/, (req, res) => {
     syncAgents(); // the clients already here get any pending change first
-    agentClients.open(req, res, sseFrame('snapshot', { connected: monitor.connected, agents: AgentFeed.snapshot(terminals.values(), nameOf) }));
+    agentClients.open(req, res, sseFrame('snapshot', { connected: monitor.connected, agents: AgentFeed.snapshot(terminals.values(), nameOf, spaceOf) }));
   }],
   ['GET', /^\/api\/terminals\/([^/]+)\/attach$/, (req, res, [addr]) => {
     const t = terminalOr404(res, addr); if (!t) return;

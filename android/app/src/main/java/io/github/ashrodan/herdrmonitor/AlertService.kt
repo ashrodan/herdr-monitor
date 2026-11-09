@@ -55,6 +55,9 @@ class AlertService : Service() {
         val shown = getSystemService(android.app.NotificationManager::class.java).activeNotifications
             .filter { it.id == Notifier.ID_AGENT }.mapNotNull { it.tag }.toSet()
         prefs.posted = prefs.posted.filterKeys { it in shown }
+        // A health alert left from before: a recovery must still clear it.
+        if (getSystemService(android.app.NotificationManager::class.java).activeNotifications.any { it.id == Notifier.ID_HEALTH }) healthKey = "?"
+        app.health.value = Health.Connecting
         val n = Notifier.service(this, "Herdr monitor connecting…")
         // The specialUse type exists from Android 14; before that a plain
         // foreground service has no time limit.
@@ -78,11 +81,41 @@ class AlertService : Service() {
         connected = false
         Widget.save(this, widgetFor(false))
         for (a in running.keys) Notifier.cancelRunning(this, a)
+        Notifier.postOverview(this, null)
+        // Alerts off: nothing to warn about.
+        setHealth(Health.Off, notify = false)
         super.onDestroy()
     }
 
     private fun status(text: String) {
         getSystemService(android.app.NotificationManager::class.java).notify(Notifier.ID_SERVICE, Notifier.service(this, text))
+    }
+
+    // The health alert on screen (its cause key), so a repeated failure
+    // posts nothing new and a recovery cancels it.
+    @Volatile private var healthKey: String? = null
+
+    // One place for the link's health: the app state, the Connection
+    // notification, and the health alert.
+    private fun setHealth(h: Health, notify: Boolean = true) {
+        app.health.value = h
+        if (notify) status("Herdr monitor: " + healthLine(h))
+        when (val step = planHealth(healthKey, h, System.currentTimeMillis())) {
+            null -> {}
+            is HealthStep.Post -> { healthKey = step.alert.key; Notifier.postHealth(this, step.alert) }
+            HealthStep.Cancel -> { healthKey = null; Notifier.cancelHealth(this) }
+        }
+    }
+
+    // The overview and the counts, from what the stream said. Quiet
+    // agents: no overview (Needs you alerts stay).
+    private fun refreshOverview() {
+        val now = agents.values.map { it.copy(state = it.stateOf(prefs.localSeen)) }
+        Notifier.postOverview(this, if (prefs.quiet) null else overviewOf(now))
+        app.alertCounts.value = AlertCounts(
+            needsYou = now.count { it.state == "blocked" }, working = now.count { it.state == "working" },
+            failed = now.count { it.state == "error" }, finished = now.count { it.state == "done" },
+            lastEventMs = System.currentTimeMillis())
     }
 
     // The network changed, the server changed, or the link dropped: start a
@@ -98,26 +131,33 @@ class AlertService : Service() {
         link?.cancel()
         link = scope.launch {
             val backoff = Backoff()
-            var tooOld = false
+            // The first failure since the link last worked: an outage
+            // alerts only after OFFLINE_ALERT_MS.
+            var failingSince = 0L
+            setHealth(Health.Connecting)
             while (isActive && gen == generation) {
                 val api = Api(prefs.server)
+                var code: Int? = null
+                var reason = "the link closed"
                 try {
                     // After a reconnect the old read can still hand over
                     // one line: only this link's generation counts.
                     api.stream("/api/agents/stream", SseParser(onEvent = { if (gen == generation) onEvent(it) }, onComment = { if (gen == generation) heard() }),
-                        onOpen = { backoff.reset() }, isCancelled = { gen != generation })
-                    tooOld = false
+                        onOpen = { backoff.reset(); failingSince = 0L }, isCancelled = { gen != generation })
                 } catch (e: Exception) {
                     // 404: the server runs code from before the agent stream.
-                    // Say so: retrying cannot fix it, a server update can.
-                    tooOld = (e as? HttpError)?.code == 404
+                    // Retrying cannot fix that; a server update can.
+                    code = (e as? HttpError)?.code
+                    reason = e.message?.take(120) ?: e.javaClass.simpleName
                 }
                 if (gen != generation) return@launch
                 connected = false
-                status(if (tooOld) "Herdr monitor: ${hostOf(prefs.server)} has no alert stream. Update and restart the server."
-                    else "Herdr monitor: no link to ${hostOf(prefs.server)}, retrying")
+                val now = System.currentTimeMillis()
+                if (failingSince == 0L) failingSince = now
+                val wait = backoff.next()
+                setHealth(healthOfFailure(shortHost(prefs.server), code, reason, failingSince, now + wait))
                 pushWidget()
-                delay(backoff.next())
+                delay(wait)
             }
         }
     }
@@ -145,6 +185,8 @@ class AlertService : Service() {
         when (e.event) {
             "snapshot" -> {
                 connected = true
+                // A valid snapshot: the link works (this clears a health alert).
+                setHealth(Health.Connected(shortHost(prefs.server), System.currentTimeMillis()), notify = false)
                 status(if (o.optBoolean("connected", true)) "Herdr monitor connected" else "Herdr monitor connected (Herdr is not running)")
                 val list = Json.agents(o.optJSONArray("agents"))
                 val since = prefs.listenedMs.takeIf { it > 0 } ?: System.currentTimeMillis()
@@ -156,6 +198,7 @@ class AlertService : Service() {
                 list.forEach { syncRunning(it) }
                 app.serviceStates.clear()
                 list.forEach { app.serviceStates[it.address] = it.state }
+                refreshOverview()
                 // The link is up: send replies that waited in the outbox.
                 app.flushOutbox()
             }
@@ -166,6 +209,7 @@ class AlertService : Service() {
                 if (a.state != "blocked") asks.remove(a.address)
                 apply(planAlert(a.address, prefs.posted[a.address], a, prefs.localSeen))
                 syncRunning(a)
+                refreshOverview()
             }
             "removed" -> {
                 val a = o.optString("address")
@@ -174,6 +218,7 @@ class AlertService : Service() {
                 asks.remove(a)
                 apply(planAlert(a, prefs.posted[a], null))
                 stopRunning(a)
+                refreshOverview()
             }
             "connection" -> status(if (o.optBoolean("connected")) "Herdr monitor connected" else "Herdr monitor connected (Herdr is not running)")
         }
@@ -284,7 +329,15 @@ class AlertService : Service() {
             if (!c.app.prefs.alerts) return
             val i = Intent(c, AlertService::class.java)
             if (action != null) i.action = action
-            runCatching { c.startForegroundService(i) }
+            // Android can refuse (a background start, a restricted app): say
+            // so in the Alerts screen and with a health alert, not silently.
+            try { c.startForegroundService(i) } catch (e: Exception) {
+                val why = e.message?.take(120) ?: e.javaClass.simpleName
+                android.util.Log.w("HerdrAlerts", "alert service did not start: $why")
+                val h = Health.NotRunning(why)
+                c.app.health.value = h
+                healthAlert(h, System.currentTimeMillis())?.let { runCatching { Notifier.postHealth(c, it) } }
+            }
         }
 
         fun stop(c: Context) { c.stopService(Intent(c, AlertService::class.java)) }

@@ -36,6 +36,10 @@ class App : Application() {
     val digests = MutableStateFlow<Map<String, Digest>>(emptyMap())
     val sent = MutableStateFlow<Map<String, SentMark>>(emptyMap())
     val pins = MutableStateFlow<Set<String>>(emptySet())
+    // The alert link's health and the counts the service last saw, for
+    // the Alerts screen.
+    val health = MutableStateFlow<Health>(Health.Off)
+    val alertCounts = MutableStateFlow(AlertCounts())
     // The last few transcripts read, so reopening an agent is instant.
     val chats = ChatCache(8)
 
@@ -131,6 +135,17 @@ fun openAgentIntent(context: Context, address: String?): Intent =
         if (address != null) data = agentUri(address)
         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
     }
+
+data class AlertCounts(val needsYou: Int = 0, val working: Int = 0, val failed: Int = 0, val finished: Int = 0, val lastEventMs: Long = 0)
+
+// herdrmonitor://alerts: the in-app Alerts screen (from a health alert).
+val ALERTS_URI: Uri = Uri.parse("herdrmonitor://alerts")
+fun isAlertsLink(uri: Uri?) = uri?.scheme == "herdrmonitor" && uri.host == "alerts"
+fun alertsIntent(context: Context): Intent = Intent(context, MainActivity::class.java).apply {
+    action = Intent.ACTION_VIEW
+    data = ALERTS_URI
+    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+}
 
 fun addressFrom(uri: Uri?): String? =
     if (uri?.scheme == "herdrmonitor" && uri.host == "agent") uri.pathSegments.firstOrNull() else null

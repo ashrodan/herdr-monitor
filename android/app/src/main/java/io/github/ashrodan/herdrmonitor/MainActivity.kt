@@ -32,6 +32,7 @@ import androidx.navigation.compose.rememberNavController
 import io.github.ashrodan.herdrmonitor.ui.AgentScreen
 import io.github.ashrodan.herdrmonitor.ui.HomeListDetail
 import io.github.ashrodan.herdrmonitor.ui.SettingsScreen
+import io.github.ashrodan.herdrmonitor.ui.AlertsScreen
 import io.github.ashrodan.herdrmonitor.ui.SpaceScreen
 import io.github.ashrodan.herdrmonitor.ui.theme.HerdrTheme
 import io.github.ashrodan.herdrmonitor.ui.theme.isDark
@@ -39,6 +40,7 @@ import io.github.ashrodan.herdrmonitor.ui.theme.isDark
 sealed interface Route {
     data object Home : Route
     data object Settings : Route
+    data object Alerts : Route
     data class SpaceR(val id: String) : Route
     data class Agent(val address: String, val terminal: Boolean = false) : Route
 }
@@ -48,11 +50,13 @@ sealed interface Route {
 object Nav {
     const val HOME = "home"
     const val SETTINGS = "settings"
+    const val ALERTS = "alerts"
     const val SPACE = "space/{id}"
     const val AGENT = "agent/{address}?terminal={terminal}"
     fun path(r: Route): String = when (r) {
         Route.Home -> HOME
         Route.Settings -> SETTINGS
+        Route.Alerts -> ALERTS
         is Route.SpaceR -> "space/${Uri.encode(r.id)}"
         is Route.Agent -> "agent/${Uri.encode(r.address)}?terminal=${r.terminal}"
     }
@@ -69,7 +73,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        if (savedInstanceState == null) { pending = addressFrom(intent?.data); needsYou(intent?.data) }
+        if (savedInstanceState == null) { pending = addressFrom(intent?.data); needsYou(intent?.data); toAlerts = isAlertsLink(intent?.data) }
         // Ask the first time, and again only while Android still lets the
         // app ask (one denial). After "Don't allow" twice, asking only opens
         // and shuts the system screen on every start, which slows it.
@@ -96,7 +100,11 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         addressFrom(intent.data)?.let { pending = it }
         needsYou(intent.data)
+        if (isAlertsLink(intent.data)) toAlerts = true
     }
+
+    // A health alert or the Connection notification: the Alerts screen.
+    private var toAlerts by mutableStateOf(false)
 
     // The Herdr tile: Sessions, filtered to Needs you.
     private var toHome by mutableStateOf(false)
@@ -132,9 +140,16 @@ class MainActivity : ComponentActivity() {
             nav.popBackStack(Nav.HOME, inclusive = false)
             toHome = false
         }
+        LaunchedEffect(nav, toAlerts) {
+            if (!toAlerts) return@LaunchedEffect
+            nav.currentBackStackEntryFlow.first()
+            nav.navigate(Nav.ALERTS) { popUpTo(Nav.HOME); launchSingleTop = true }
+            toAlerts = false
+        }
         NavHost(nav, startDestination = Nav.HOME) {
             composable(Nav.HOME) { HomeListDetail(live(), go) }
             composable(Nav.SETTINGS) { SettingsScreen(back) }
+            composable(Nav.ALERTS) { AlertsScreen(back) }
             composable(Nav.SPACE) { e -> SpaceScreen(live(), e.arguments?.getString("id").orEmpty(), go, back) }
             composable(Nav.AGENT, arguments = listOf(navArgument("terminal") { type = NavType.BoolType; defaultValue = false })) { e ->
                 // The space map opens sessions and spaces from here too.

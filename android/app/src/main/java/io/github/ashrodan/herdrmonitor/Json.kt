@@ -103,6 +103,8 @@ object Json {
         address = o.getString("address"), name = Glyphs.label(o.optString("name", o.getString("address")))!!, state = o.optString("state", "idle"),
         kind = o.optStringOrNull("kind"), msg = Glyphs.label(o.optStringOrNull("msg")),
         changedMs = o.optLongOrNull("changed_ms"), seenMs = o.optLongOrNull("seen_ms"),
+        harness = o.optStringOrNull("harness"), spaceId = o.optStringOrNull("space_id"),
+        spaceName = Glyphs.label(o.optStringOrNull("space_name")), branch = o.optStringOrNull("branch"),
     )
 
     fun agents(a: JSONArray?) = a.mapObj(::agent)
