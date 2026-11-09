@@ -128,7 +128,7 @@ WebView.
     While the link is down, the title says why. A tap opens Home. If you
     swipe it away, it comes back only when what it shows changes.
   - **Needs you** (high): one per agent that asks a question or stopped
-    with an error, grouped under the summary. Up to two answer buttons,
+    with an error, as its own card. Up to two answer buttons,
     and Reply is always there. It goes away when the agent moves on, for
     example when you answer it on the Mac.
   - **Alert health** (default): only when alerts cannot work: the server is

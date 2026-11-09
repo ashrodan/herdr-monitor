@@ -19,8 +19,9 @@ import org.json.JSONObject
 //  - Needs you (high): one per agent that is blocked or failed (tag = its
 //    address, so a new state replaces the old one).
 //  - Alert health (default): only when alerts cannot work at all.
-// The summary is the group summary of the server's group, and each Needs
-// you notification is a child, so Android does not add a group of its own.
+// The summary has no group. As a group summary, Android 16 removed it
+// when the last child in its group went (found on a Pixel), and it is the
+// foreground service's notification, so it must stand alone.
 object Notifier {
     const val CH_NEEDS = "needs_you"
     // The stored id stays "running", so a user's setting for it survives.
@@ -62,8 +63,6 @@ object Notifier {
     }
 
     private fun nm(c: Context) = c.getSystemService(NotificationManager::class.java)
-    // One group per host.
-    fun group(c: Context) = "host:" + hostOf(c.app.prefs.server)
     private fun icon(c: Context) = Icon.createWithResource(c, R.drawable.ic_stat_herdr)
 
     // Request codes must differ per agent and action, or Android reuses the
@@ -154,7 +153,6 @@ object Notifier {
             .setContentIntent(openPi(c, a.address))
             .setAutoCancel(true)
             .setOnlyAlertOnce(quiet)
-            .setGroup(group(c))
             .setCategory(if (state == "blocked") Notification.CATEGORY_MESSAGE else Notification.CATEGORY_ERROR)
             .setColor(colorOf(state))
             .setWhen(a.changedMs ?: System.currentTimeMillis())
@@ -181,7 +179,6 @@ object Notifier {
             .setContentIntent(openPi(c, address))
             .setActions(openAction(c, address))
             .setAutoCancel(true)
-            .setGroup(group(c))
             .setOnlyAlertOnce(true)
             .build()
         nm(c).notify(address, ID_AGENT, n)
@@ -189,8 +186,7 @@ object Notifier {
 
     fun cancelAgent(c: Context, address: String) = nm(c).cancel(address, ID_AGENT)
 
-    // The agent summary. Silent and ongoing; the group summary of this
-    // server's group (children alert, it does not). Tap: Home.
+    // The agent summary. Silent, ongoing, in no group. Tap: Home.
     fun summary(c: Context, v: SummaryView): Notification {
         val style = Notification.InboxStyle().setBigContentTitle(v.title).setSummaryText(v.sub)
         v.lines.forEach { style.addLine(it) }
@@ -201,9 +197,6 @@ object Notifier {
             .setSubText(v.sub)
             .setStyle(style)
             .setColor(c.getColor(R.color.herdr_notification_accent))
-            .setGroup(group(c))
-            .setGroupSummary(true)
-            .setGroupAlertBehavior(Notification.GROUP_ALERT_CHILDREN)
             .setOnlyAlertOnce(true)
             .setOngoing(true)
             .setShowWhen(false)
@@ -219,7 +212,6 @@ object Notifier {
         PendingIntent.getActivity(c, code("alerts", what), alertsIntent(c), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
     // The health alert: one per cause (the caller dedupes with its key).
-    // Not in the server's group: it is about the link, not an agent.
     fun postHealth(c: Context, a: HealthAlert) {
         val retry = PendingIntent.getService(c, code("health", "retry"),
             Intent(c, AlertService::class.java).setAction(AlertService.ACTION_RECONNECT), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -232,7 +224,6 @@ object Notifier {
             .setCategory(Notification.CATEGORY_ERROR)
             .setContentIntent(alertsPi(c, "health"))
             .setOnlyAlertOnce(true)
-            .setGroup("health")
             .setActions(
                 Notification.Action.Builder(icon(c), "Open alert setup", alertsPi(c, "setup")).build(),
                 Notification.Action.Builder(icon(c), "Retry", retry).build(),
@@ -243,8 +234,8 @@ object Notifier {
 
     fun cancelHealth(c: Context) = nm(c).cancel(TAG_HEALTH, ID_HEALTH)
 
-    // A local test: checks permission, channel and style, in the same group
-    // as a real Needs you alert. It names no agent and has no action that
+    // A local test: checks permission, channel and style, like a real Needs
+    // you alert. It names no agent and has no action that
     // types, presses keys or stops anything.
     fun postTest(c: Context) {
         val text = "This is a test from the Alerts screen. No agent was contacted."
@@ -257,7 +248,6 @@ object Notifier {
             .setColor(colorOf("blocked"))
             .setContentIntent(alertsPi(c, "test"))
             .setAutoCancel(true)
-            .setGroup(group(c))
             .build()
         nm(c).notify(TAG_TEST, ID_TEST, n)
     }

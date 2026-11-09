@@ -97,15 +97,15 @@ class NotificationTest {
         assertNull(nm.getNotificationChannel("finished"))
     }
 
-    // One routine notification: the summary, on the service's id, as the
-    // group summary of this server's group.
+    // One routine notification: the summary, on the service's id, in no
+    // group.
     @Test fun theSummaryIsTheOnlyRoutineNotification() {
         Notifier.postSummary(c, summary(fake("w", "working", "bash: ls"), fake("d", "done", "PR is green")))
         val n = activeId(Notifier.ID_SUMMARY)!!
         assertEquals(Notifier.CH_SUMMARY, n.channelId)
-        assertTrue(n.flags and Notification.FLAG_GROUP_SUMMARY != 0)
+        assertTrue(n.flags and Notification.FLAG_GROUP_SUMMARY == 0)
         assertTrue(n.flags and Notification.FLAG_ONGOING_EVENT != 0)
-        assertEquals(Notifier.group(c), n.group)
+        assertNull(n.group)
         assertEquals("1 working · 1 done", n.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
         val lines = n.extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)!!.map { it.toString() }
         assertEquals(listOf("Fake w · Working: bash: ls", "Fake d · Done: PR is green"), lines)
@@ -120,21 +120,40 @@ class NotificationTest {
         assertTrue(n.extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES).isNullOrEmpty())
     }
 
-    // Blocked: one Needs you child in the summary's group. Resolved: the
-    // child goes, the summary stays. No group Android made itself.
-    @Test fun needsYouIsAChildOfTheSummary() {
+    // The Pixel case: the summary was a group summary, and Android removed
+    // it when the one Needs you alert in its group went. Now: blocked posts
+    // one standalone Needs you; resolved, it goes and the summary stays.
+    @Test fun theSummaryOutlivesTheLastNeedsYou() {
         Notifier.postSummary(c, summary(fake("fake-1", "blocked")))
         Notifier.postAgent(c, fake("fake-1", "blocked", "Allow?"), "blocked", null)
-        Notifier.postAgent(c, fake("fake-2", "error", "boom"), "error", null)
-        Notifier.postTest(c)
         val child = active("fake-1", Notifier.ID_AGENT)!!
-        assertEquals(Notifier.group(c), child.group)
-        assertTrue(child.flags and Notification.FLAG_GROUP_SUMMARY == 0)
-        Thread.sleep(1500) // let Android group what it would group
-        val ids = nm.activeNotifications.map { it.tag to it.id }.toSet()
-        assertEquals(setOf(null to Notifier.ID_SUMMARY, "fake-1" to Notifier.ID_AGENT, "fake-2" to Notifier.ID_AGENT, Notifier.TAG_TEST to Notifier.ID_TEST), ids)
+        assertNull(child.group)
+        Thread.sleep(1000)
+        assertEquals(setOf(null to Notifier.ID_SUMMARY, "fake-1" to Notifier.ID_AGENT), nm.activeNotifications.map { it.tag to it.id }.toSet())
         Notifier.cancelAgent(c, "fake-1")
         assertTrue(gone("fake-1", Notifier.ID_AGENT))
+        Thread.sleep(1500)
+        assertNotNull(activeId(Notifier.ID_SUMMARY))
+        // The same with the test alert, once.
+        Notifier.postTest(c)
+        assertNotNull(active(Notifier.TAG_TEST, Notifier.ID_TEST))
+        nm.cancel(Notifier.TAG_TEST, Notifier.ID_TEST)
+        assertTrue(gone(Notifier.TAG_TEST, Notifier.ID_TEST))
+        Thread.sleep(1500)
+        assertNotNull(activeId(Notifier.ID_SUMMARY))
+    }
+
+    // Several Needs you at once (Android may bundle them): the summary
+    // stays, and stays after they all go.
+    @Test fun theSummaryOutlivesSeveralNeedsYou() {
+        Notifier.postSummary(c, summary(fake("fake-1", "blocked"), fake("fake-2", "error")))
+        Notifier.postAgent(c, fake("fake-1", "blocked", "Allow?"), "blocked", null)
+        Notifier.postAgent(c, fake("fake-2", "error", "boom"), "error", null)
+        Thread.sleep(1500)
+        assertNotNull(activeId(Notifier.ID_SUMMARY))
+        Notifier.cancelAgent(c, "fake-1"); Notifier.cancelAgent(c, "fake-2")
+        assertTrue(gone("fake-2", Notifier.ID_AGENT))
+        Thread.sleep(1500)
         assertNotNull(activeId(Notifier.ID_SUMMARY))
     }
 
@@ -149,7 +168,6 @@ class NotificationTest {
         val reply = n.actions.first()
         assertEquals(1, reply.remoteInputs.size)
         assertEquals(Notification.Action.SEMANTIC_ACTION_REPLY, reply.semanticAction)
-        assertTrue(n.group.startsWith("host:"))
     }
 
     @Test fun aThreeOptionQuestionStillHasReply() {
