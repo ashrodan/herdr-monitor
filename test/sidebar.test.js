@@ -74,10 +74,11 @@ test('buildLayout names, colours, nests worktrees and adds a header row', () => 
   assert.equal(by.ess.color, ANSI.ansi3);
   assert.equal(by.eba.parent, 'repo:/home/u/dev/ess');
   assert.equal(by.notes.parent, null);
-  assert.deepEqual(by['~'].tabs, [
+  assert.deepEqual(by['~'].tabs.map(({ tree, ...t }) => t), [
     { id: 'a', name: '1', named: false, terminals: ['t1'] },
     { id: 'b', name: 'Claude Code', named: true, terminals: ['t2', 't3'] },
   ]);
+  assert.deepEqual(by['~'].tabs[0].tree, { terminal: 't1', w: 1 });
 });
 
 test('repoInfo reads a main repo and a linked worktree', async () => {
@@ -100,4 +101,40 @@ test('repoInfo reads a main repo and a linked worktree', async () => {
   assert.equal(w.branch, 'feature');
   assert.equal(await repoInfo(os.tmpdir(), { fresh: true }), null);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('sessionFolder: the space folder; a local cwd only when inside it; never a remote path', async () => {
+  const { sessionFolder } = await import('../lib/sidebar.js');
+  assert.equal(sessionFolder('/u/app', 't1', '/u/app/web'), '/u/app/web');   // local, inside
+  assert.equal(sessionFolder('/u/app', 't1', '/u/app'), '/u/app');
+  assert.equal(sessionFolder('/u/app', 't1', '/u/other'), '/u/app');         // local, outside
+  assert.equal(sessionFolder('/u/app', 't1', '/u/app-2'), '/u/app');         // a prefix is not inside
+  assert.equal(sessionFolder('/u/app', 'dai/t1', '/u/app/web'), '/u/app');   // remote
+  assert.equal(sessionFolder(null, 'dai/t1', '/home/x'), null);
+  assert.equal(sessionFolder(null, 't1', '/u/x'), '/u/x');
+  assert.equal(sessionFolder(null, undefined, null), null);
+  assert.equal(sessionFolder('/u/app', 't1', 'relative'), '/u/app');
+});
+
+test('paneTree keeps splits, directions and weights', async () => {
+  const { paneTree } = await import('../lib/sidebar.js');
+  const root = { type: 'row', children: [
+    { type: 'block', size: { weight: 0.6 }, content: { terminal: 't1' } },
+    { type: 'column', size: { weight: 0.4 }, children: [block('t2'), { type: 'block', content: {} }, block('t3')] },
+  ] };
+  assert.deepEqual(paneTree(root), { dir: 'row', w: 1, kids: [
+    { terminal: 't1', w: 0.6 },
+    { dir: 'column', w: 0.4, kids: [{ terminal: 't2', w: 1 }, { terminal: 't3', w: 1 }] },
+  ] });
+  // A container with one pane is that pane; an empty tab has no tree.
+  assert.deepEqual(paneTree({ type: 'row', children: [block('t9')] }), { terminal: 't9', w: 1 });
+  assert.equal(paneTree({ type: 'row', children: [] }), null);
+  assert.equal(paneTree(null), null);
+});
+
+test('buildLayout gives each tab its pane tree', () => {
+  const doc = { spaces: [space('sp1', 'a', '/x', [tab('tb1', '', { type: 'column', children: [block('t1'), block('t2')] })])] };
+  const [s] = buildLayout({ doc, terminals: [], home: HOME });
+  assert.equal(s.tabs[0].tree.dir, 'column');
+  assert.deepEqual(s.tabs[0].tree.kids.map((k) => k.terminal), ['t1', 't2']);
 });

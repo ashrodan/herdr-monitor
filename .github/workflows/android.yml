@@ -1,0 +1,30 @@
+name: Android
+# The Android app builds only when the app or this workflow changes.
+on:
+  push:
+    branches: [main]
+    paths: ['android/**', '.github/workflows/android.yml']
+  pull_request:
+    paths: ['android/**', '.github/workflows/android.yml']
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run: { working-directory: android }
+    steps:
+      - uses: actions/checkout@v4
+      # The Paparazzi Gradle plugin needs a Java 21 runtime. The app code
+      # still compiles to Java 17 bytecode.
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - uses: gradle/actions/setup-gradle@v4
+      # Unit tests, screenshot tests, lint and a debug APK. The UI tests
+      # (connectedDebugAndroidTest) need a device, so they do not run here.
+      - run: ./gradlew --console=plain test lint assembleDebug
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-reports
+          path: |
+            android/app/build/reports
+            android/app/build/paparazzi/failures

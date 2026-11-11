@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="288dp"
+    android:height="288dp"
+    android:viewportWidth="288"
+    android:viewportHeight="288">
+    <group android:translateX="64" android:translateY="66" android:scaleX="1.6" android:scaleY="1.6">
+        <path
+            android:pathData="M4,94 A46,24 0 1,0 96,94 A46,24 0 1,0 4,94 Z"
+            android:fillColor="@color/herdr_coat" />
+        <path
+            android:pathData="M20 100 C18 80 28 66 40 64 L60 64 C72 66 82 80 80 100 Z"
+            android:fillColor="@color/herdr_white" />
+        <path
+            android:pathData="M23 32 C17 20 19 9 26 3 C34 9 41 17 44 26 Z"
+            android:fillColor="@color/herdr_coat" />
+        <path
+            android:pathData="M 77 32 C 83 20 81 9 74 3 C 66 9 59 17 56 26 Z"
+            android:fillColor="@color/herdr_coat" />
+        <path
+            android:pathData="M26 3 C30.5 4.5 35 8.5 36.5 13.5 C32 13.5 28 9.5 26 3 Z"
+            android:fillColor="@color/herdr_coat_hi" />
+        <path
+            android:pathData="M 74 3 C 69.5 4.5 65 8.5 63.5 13.5 C 68 13.5 72 9.5 74 3 Z"
+            android:fillColor="@color/herdr_coat_hi" />
+        <path
+            android:pathData="M22,45 A28,26 0 1,0 78,45 A28,26 0 1,0 22,45 Z"
+            android:fillColor="@color/herdr_coat" />
+        <path
+            android:pathData="M47 21 C48.6 19.6 51.4 19.6 53 21 L55 40 C62 46 67 55 65 64 C61 72 39 72 35 64 C33 55 38 46 45 40 Z"
+            android:fillColor="@color/herdr_white" />
+        <path
+            android:pathData="M43.5 54 C43.5 50 56.5 50 56.5 54 C56.5 58 52.5 61 50 61 C47.5 61 43.5 58 43.5 54 Z"
+            android:fillColor="@color/herdr_coat" />
+        <path
+            android:pathData="M45.2,52.6 A2.2,1.1 0 1,0 49.6,52.6 A2.2,1.1 0 1,0 45.2,52.6 Z"
+            android:fillColor="@color/herdr_coat_hi" />
+        <path
+            android:pathData="M47.2,67.4 A2.8,1.8 0 1,0 52.8,67.4 A2.8,1.8 0 1,0 47.2,67.4 Z"
+            android:fillColor="@color/herdr_tongue" />
+        <path
+            android:pathData="M50 61 V64.6 M50 64.6 C47.6 67 44.6 66.6 42.6 64.6 M50 64.6 C52.4 67 55.4 66.6 57.4 64.6"
+            android:strokeColor="@color/herdr_coat"
+            android:strokeWidth="1.6"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <path
+            android:pathData="M33.7,41 a4.3,4.3 0 1,0 8.6,0 a4.3,4.3 0 1,0 -8.6,0 Z"
+            android:fillColor="@color/herdr_eye" />
+        <path
+            android:pathData="M35.6,41.4 a2.4,2.4 0 1,0 4.8,0 a2.4,2.4 0 1,0 -4.8,0 Z"
+            android:fillColor="@color/herdr_coat" />
+        <path
+            android:pathData="M35.95,40 a0.95,0.95 0 1,0 1.9,0 a0.95,0.95 0 1,0 -1.9,0 Z"
+            android:fillColor="@color/herdr_white" />
+        <path
+            android:pathData="M57.7,41 a4.3,4.3 0 1,0 8.6,0 a4.3,4.3 0 1,0 -8.6,0 Z"
+            android:fillColor="@color/herdr_eye" />
+        <path
+            android:pathData="M59.6,41.4 a2.4,2.4 0 1,0 4.8,0 a2.4,2.4 0 1,0 -4.8,0 Z"
+            android:fillColor="@color/herdr_coat" />
+        <path
+            android:pathData="M59.95,40 a0.95,0.95 0 1,0 1.9,0 a0.95,0.95 0 1,0 -1.9,0 Z"
+            android:fillColor="@color/herdr_white" />
+        <path
+            android:pathData="M30 73 C40 80 60 80 70 73"
+            android:strokeColor="@color/herdr_collar"
+            android:strokeWidth="5"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <path
+            android:pathData="M44.4,81 a5.6,5.6 0 1,0 11.2,0 a5.6,5.6 0 1,0 -11.2,0 Z"
+            android:fillColor="@color/herdr_collar" />
+        <path
+            android:pathData="M48.2 78.6 l3 2.4 l-3 2.4"
+            android:strokeColor="@color/herdr_coat"
+            android:strokeWidth="1.6"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+    </group>
+</vector>
