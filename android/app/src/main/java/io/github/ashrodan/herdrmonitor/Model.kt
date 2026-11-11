@@ -312,3 +312,48 @@ fun shortHost(url: String): String {
     return if (Regex("^[\\d.]+$").matches(host) || host.contains(':')) host else host.substringBefore('.')
 }
 fun portOf(url: String): Int = runCatching { java.net.URI(url).let { if (it.port != -1) it.port else if (it.scheme == "https") 443 else 80 } }.getOrDefault(-1)
+
+// ---- Machines (GET /api/machines, lib/herdr.js machineList) ----
+
+// One machine of the tailnet, as the server in use sees it.
+//   hcName: the server's hc reaches it; its terminals have the address
+//           "<hcName>/t1", and the phone works with them through the server.
+//   server: a herdr-monitor of its own runs there (a URL the phone can use).
+data class Machine(
+    val name: String,
+    val os: String? = null,
+    val self: Boolean = false,
+    val online: Boolean = false,
+    val tailnet: Boolean = true,
+    val hcName: String? = null,
+    val hcState: String? = null,
+    val hcVersion: String? = null,
+    val server: String? = null,
+    val terminals: Int = 0,
+    val agents: Int = 0,
+) {
+    val short get() = name.substringBefore('.')
+    val linked get() = hcName != null && hcState == "connected"
+}
+
+private fun count(n: Int, word: String) = "$n $word" + if (n == 1) "" else "s"
+
+// What the phone can do with a machine, in one line. via: the short name of
+// the server in use (the row cuts a long line at its end, so counts stay short).
+fun machineLine(m: Machine, via: String): String = when {
+    m.self -> "This server · " + count(m.terminals, "terminal")
+    m.linked -> "Through hc on $via · " +
+        if (m.terminals == 0) "no terminals" else count(m.terminals, "terminal") + if (m.agents > 0) ", " + count(m.agents, "agent") else ""
+    m.hcName != null -> "hc on $via: ${m.hcState ?: "not connected"}"
+    m.server != null -> "Has its own herdr-monitor"
+    !m.online -> "Offline"
+    else -> "Online · no Herdr link"
+}
+
+// The live terminals of a machine that the server reaches through hc:
+// agents first, then by address.
+fun machineTerminals(m: Machine, terminals: Collection<Terminal>): List<Terminal> {
+    val prefix = (m.hcName ?: return emptyList()) + "/"
+    return terminals.filter { !it.finished && it.address.startsWith(prefix) }
+        .sortedWith(compareBy({ !it.isAgent() }, { it.address }))
+}
