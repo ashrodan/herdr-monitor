@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseTranscript, toolSummary, projectSlug, sessionFor, chatFor, readTail } from '../lib/transcript.js';
+import { parseTranscript, toolSummary, projectSlug, sessionFor, chatFor, readTail, remoteChatFor } from '../lib/transcript.js';
+import { execFile } from 'node:child_process';
 
 const rows = [
   { type: 'attachment', attachment: { type: 'hook_success' } },
@@ -123,4 +124,37 @@ test('questions from AskUserQuestion and ask become question parts', () => {
   assert.equal(o[0].parts[0].kind, 'question');
   assert.equal(o[0].parts[0].questions[0].multi, true);
   assert.equal(o[0].parts[0].result.text, 'User chose: A');
+});
+
+test('remoteChatFor: reads the session of a pid with one script, and not again when nothing changed', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hcmon-remote-'));
+  const id = '11111111-2222-3333-4444-555555555555';
+  fs.mkdirSync(path.join(dir, 'sessions'));
+  fs.mkdirSync(path.join(dir, 'projects', 'p'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'sessions', '4242.json'), JSON.stringify({ pid: 4242, sessionId: id, cwd: '/w/app' }));
+  fs.writeFileSync(path.join(dir, 'sessions', '13.json'), JSON.stringify({ pid: 13, sessionId: '22222222-2222-3333-4444-555555555555' }));
+  fs.writeFileSync(path.join(dir, 'projects', 'p', `${id}.jsonl`), rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
+  // Stands in for `hc exec --on <machine>`: runs the same argv here.
+  const sent = [];
+  const exec = (argv) => new Promise((resolve, reject) => {
+    sent.push(argv);
+    execFile(argv[0], argv.slice(1), { env: { ...process.env, CLAUDE_CONFIG_DIR: dir } }, (err, out) => (err ? reject(err) : resolve(out)));
+  });
+
+  const chat = await remoteChatFor('box', 4242, { exec });
+  assert.equal(chat.available, true);
+  assert.equal(chat.messages.length, 5);
+  assert.equal(chat.machine, 'box');
+  assert.match(chat.version, /^\d+:\d+$/);
+  assert.equal(await remoteChatFor('box', 4242, { exec }), chat);   // the same version: no new body
+  assert.equal(sent[1].at(-1), chat.version);                        // the script got the version it has
+  assert.equal(sent[1].at(-2), '4242');
+
+  assert.equal((await remoteChatFor('box', 9999, { exec })).available, false);            // no session file
+  assert.match((await remoteChatFor('box', 13, { exec })).reason, /transcript .* not found/);
+  assert.equal((await remoteChatFor('box', -1, { exec })).available, false);
+  assert.equal(sent.length, 4);                                                           // a bad pid runs nothing
+  const down = await remoteChatFor('box', 7, { exec: async () => { throw new Error('machine box is not connected'); } });
+  assert.match(down.reason, /Could not read the session on box: machine box is not connected/);
+  fs.rmSync(dir, { recursive: true, force: true });
 });

@@ -11,7 +11,7 @@ import { defaultSocket } from './lib/hc.js';
 import { repoCommits, commitDetail, tryGit } from './lib/git.js';
 import { sessionRequest, sessionResult, withNewTab, parseWorktrees } from './lib/sessions.js';
 import { prStatus } from './lib/pr.js';
-import { chatFor } from './lib/transcript.js';
+import { chatFor, remoteChatFor } from './lib/transcript.js';
 import { loadVapid, Subscriptions, sendPush, configDir } from './lib/push.js';
 import { answerKeys, currentQuestion } from './lib/answer.js';
 import { AgentFeed, sseFrame } from './lib/agents.js';
@@ -341,7 +341,10 @@ const routes = [
   }],
   ['GET', /^\/api\/terminals\/([^/]+)\/chat$/, async (req, res, [addr], url) => {
     const t = terminalOr404(res, addr); if (!t) return;
-    const chat = await chatFor(t.pid);
+    // A terminal on an hc machine ("dai/t1"): its pid and its transcript are
+    // on that machine, never in this machine's files.
+    const slash = t.address.indexOf('/');
+    const chat = slash < 0 ? await chatFor(t.pid) : await remoteChatFor(t.address.slice(0, slash), t.pid, { hcBin: HC_BIN });
     // The page polls: answer "no change" without the body when it has this version.
     if (chat.available && url.searchParams.get('v') === chat.version) return send(res, 200, { unchanged: true, version: chat.version });
     send(res, 200, chat);
