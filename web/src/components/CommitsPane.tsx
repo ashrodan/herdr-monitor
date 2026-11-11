@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
-import { getJson } from '@/api';
+import { getJson, termPath } from '@/api';
 import { ago } from '@/model';
 import type { CommitDetail, Commits } from '@/types';
 
@@ -11,14 +11,14 @@ export function CommitsPane({ addr }: { addr: string }) {
   useEffect(() => {
     let stop = false;
     setD(null); setOpen(null);
-    getJson<Commits>(`/api/terminals/${addr}/commits`).then((x) => !stop && setD(x)).catch((e) => !stop && setD({ error: e.message }));
+    getJson<Commits>(termPath(addr, `commits`)).then((x) => !stop && setD(x)).catch((e) => !stop && setD({ error: e.message }));
     return () => { stop = true; };
   }, [addr]);
 
   const toggle = async (sha: string) => {
     if (open?.sha === sha) { setOpen(null); return; }
     setOpen({ sha });
-    try { const detail = await getJson<CommitDetail>(`/api/terminals/${addr}/commits/${sha}`); setOpen((o) => (o?.sha === sha ? { sha, detail } : o)); }
+    try { const detail = await getJson<CommitDetail>(termPath(addr, `commits/${sha}`)); setOpen((o) => (o?.sha === sha ? { sha, detail } : o)); }
     catch { setOpen((o) => (o?.sha === sha ? { sha, error: 'Commit is not in the local clone yet (git fetch to see it).' } : o)); }
   };
 
