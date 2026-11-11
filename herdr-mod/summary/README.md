@@ -4,11 +4,18 @@ What needs you across every space, inside Herdr. It is the native version of
 herdr-monitor's Overview.
 
 - **Bar** (status row): how many agents are waiting, done (not seen) and
-  working, and how many PRs are open. Click a count to open the panel on that
+  working, how many web apps run, and how many PRs are open. Click a count to open the panel on that
   list; click it again to close the panel.
 - **Panel** (right panel): the four tiles, then the lists.
   - Agents: space · tab, and for Claude Code agents the latest recap (Claude's
     away summary, else its last reply). Click a row to show the agent.
+  - Running apps: each web app that runs in a space, on this Mac or on a
+    remote machine, with its port, program (vite, next, …) and tailnet URL.
+    Click a row to show its space (and the app's terminal, when a pane
+    shows it); Open opens the URL; Copy copies it. An app that listens on
+    `localhost` only shows "This machine only" and a **Share** button (see
+    below). When a shared Vite app refuses the tailnet host name, the row says
+    so: add `server.allowedHosts: ['.ts.net']` to its Vite config.
   - Open PRs: every open PR in the repos of the open spaces (worktrees of one
     repo count once), with repo, branch, author, draft or review state, and a
     dot when checks fail (red) or run (amber). Click a row to open it on GitHub.
@@ -43,8 +50,35 @@ The first goes in the status row, the second in the `panel-body` stack.
 | --- | --- |
 | `summary.open` | open the panel |
 | `summary.toggle` | open or close the panel |
-| `summary.all` / `.waiting` / `.done` / `.working` / `.prs` | open the panel on that list |
-| `summary.refresh` | reload PRs and recaps now |
+| `summary.all` / `.waiting` / `.done` / `.working` / `.apps` / `.prs` | open the panel on that list |
+| `summary.refresh` | reload PRs, apps and recaps now |
+
+## How apps are found
+
+1. One scan per machine that has a space (`sh`, via `exec … {on}`): the TCP
+   listeners (`lsof` on macOS, `ss` on Linux), and for each process its
+   `HC_TERMINAL_ID`, folder and command line (one `ps -E` / `lsof` call on
+   macOS, `/proc` on Linux). Also `tailscale status` (the machine's tailnet
+   name) and `tailscale serve status`.
+2. A listener belongs to a space when its terminal is in a pane of that
+   space, else when its folder is inside the space's folder or a pane's
+   folder (home folders never count). Container port forwarders (OrbStack,
+   Docker) are left out.
+3. Only those listeners are probed: `curl` GET `/` with a 2 s limit. An app
+   is a port that answers with `text/html`. A second request with the tailnet
+   name as `Host` finds dev servers that refuse other host names.
+4. The URL: the Tailscale Serve URL when one proxies to the port, else
+   `http://<machine>.<tailnet>.ts.net:<port>` when the app listens on all
+   addresses or the tailnet address, else none ("This machine only").
+
+## What writes
+
+| Action | When | Command |
+| --- | --- | --- |
+| Share | a click on Share | `tailscale serve --bg --https=<port> http://127.0.0.1:<port>` (`[::1]` for an IPv6-only app), on the app's machine; on Linux it tries `sudo -n` when the plain command fails |
+
+To stop sharing: `tailscale serve --https=<port> off`. Tailscale Serve
+reaches your tailnet only; the mod never uses Funnel.
 
 ## Cost
 
@@ -60,4 +94,7 @@ The first goes in the status row, the second in the `panel-body` stack.
   does not redraw the window.
 - Hidden copies do no work: the panel loads recaps and catches up on PRs only
   when it is on screen (in the panel, or as a pane in the tab on screen).
-- Nothing in it writes: no actions on PRs or agents.
+- Apps: one scan per machine every minute (the bar does it; about 1 s of
+  CPU on a Mac with 50 listeners, 0.15 s on Linux), shared as
+  `summary.apps`. Only the listeners of the spaces are probed.
+- The only write is Share (above). No actions on PRs or agents.
