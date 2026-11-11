@@ -112,6 +112,8 @@ class App : Application() {
         pins.value = prefs.pinned
         // Flush when the app's link comes up, and every 15 s while replies wait.
         scope.launch { store.live.map { it.link }.distinctUntilChanged().collect { if (it == Link.Online) flushOutbox() } }
+        // A reply held at a dialog goes when the dialog is answered.
+        scope.launch { store.live.map { l -> l.terminals.values.count { it.status == "blocked" } }.distinctUntilChanged().collect { flushOutbox() } }
         scope.launch {
             while (true) {
                 delay(15_000)

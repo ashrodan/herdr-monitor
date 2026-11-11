@@ -7,7 +7,9 @@ import java.util.UUID
 import kotlin.coroutines.cancellation.CancellationException
 import java.util.concurrent.atomic.AtomicBoolean
 
-// A reply typed while the link was down, or whose POST /send failed. It is
+// Every reply goes through here, so the field clears at the tap and the
+// send runs in the background (the server takes about 1 s for each one).
+// A reply typed while the link was down, or whose POST /send failed, is
 // sent later, in order. Interrupts, key presses and image bytes never queue:
 // they are live.
 data class OutItem(
@@ -39,6 +41,12 @@ object OutState {
 // A send that fails for a reason that can pass (link, 5xx) is tried this many
 // times; then the item is FAILED, so it cannot block its address for ever.
 const val MAX_ATTEMPTS = 5
+
+// Why an item waits although the link is up.
+const val HELD_AT_DIALOG = "waits until the dialog is answered"
+
+// The word on a waiting item's bubble: on its way now, or held for later.
+fun OutItem.waitingLabel() = if (attempts == 0 && lastError == null) "Sending…" else "Queued"
 
 enum class Failure {
     // The server answered 4xx (no such terminal, bad text, busy): sending the
@@ -117,32 +125,56 @@ class Outbox(
     // Send what waits for this server; items of other servers stay. send(item,
     // force) throws on failure. isBlocked tells whether an agent is at a
     // dialog now. Returns the number of items sent.
+    //
+    // A reply typed while the agent works goes at once: the harness keeps it
+    // in its own queue until the turn ends. A reply typed for the prompt (not
+    // for a dialog) waits while the agent is at a dialog, because the text
+    // would go into the dialog.
+    //
+    // An item added while a flush runs is sent by that flush: it looks again
+    // before it ends, and once more after it lets go.
     suspend fun flush(server: String, isBlocked: (String) -> Boolean, send: suspend (OutItem, Boolean) -> Unit): Int {
-        if (!flushing.compareAndSet(false, true)) return 0
+        val seen = HashSet<String>()
+        fun fresh() = _items.value.any { it.server == server && it.state == OutState.WAITING && it.id !in seen }
         var sent = 0
-        try {
-            fun waiting(it: OutItem) = it.server == server && it.state == OutState.WAITING
-            val addresses = _items.value.filter(::waiting).map { it.address }.distinct()
-            for (address in addresses) {
-                while (true) {
-                    val head = _items.value.firstOrNull { waiting(it) && it.address == address } ?: break
-                    try {
-                        send(head, head.force && isBlocked(address))
-                    } catch (e: Exception) {
-                        if (e is CancellationException) throw e
-                        val why = e.message ?: e.javaClass.simpleName
-                        val attempts = head.attempts + 1
-                        val state = stateAfter(failureOf(e)).let { if (it == OutState.WAITING && attempts >= MAX_ATTEMPTS) OutState.FAILED else it }
-                        update { list -> list.map { if (it.id == head.id) it.copy(attempts = attempts, lastError = why, state = state) else it } }
-                        if (state == OutState.WAITING) break
-                        continue
-                    }
-                    remove(head.id)
-                    sent++
-                }
+        while (true) {
+            if (!flushing.compareAndSet(false, true)) return sent
+            try {
+                while (fresh()) sent += pass(server, seen, isBlocked, send)
+            } finally {
+                flushing.set(false)
             }
-        } finally {
-            flushing.set(false)
+            if (!fresh()) return sent
+        }
+    }
+
+    private suspend fun pass(server: String, seen: MutableSet<String>, isBlocked: (String) -> Boolean, send: suspend (OutItem, Boolean) -> Unit): Int {
+        var sent = 0
+        fun waiting(it: OutItem) = it.server == server && it.state == OutState.WAITING
+        val addresses = _items.value.filter(::waiting).map { it.address }.distinct()
+        for (address in addresses) {
+            while (true) {
+                val head = _items.value.firstOrNull { waiting(it) && it.address == address } ?: break
+                seen.addAll(_items.value.filter { waiting(it) && it.address == address }.map { it.id })
+                val blocked = isBlocked(address)
+                if (blocked && !head.force) {
+                    update { list -> list.map { if (it.id == head.id) it.copy(lastError = HELD_AT_DIALOG) else it } }
+                    break
+                }
+                try {
+                    send(head, head.force && blocked)
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    val why = e.message ?: e.javaClass.simpleName
+                    val attempts = head.attempts + 1
+                    val state = stateAfter(failureOf(e)).let { if (it == OutState.WAITING && attempts >= MAX_ATTEMPTS) OutState.FAILED else it }
+                    update { list -> list.map { if (it.id == head.id) it.copy(attempts = attempts, lastError = why, state = state) else it } }
+                    if (state == OutState.WAITING) break
+                    continue
+                }
+                remove(head.id)
+                sent++
+            }
         }
         return sent
     }

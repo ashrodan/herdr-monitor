@@ -85,7 +85,13 @@ fun LazyListScope.machinesList(ctx: Context, live: Live, machines: List<Machine>
     for (m in machines) {
         val other = m.server?.takeIf { !m.self }
         item(key = "machine-${m.name}") {
-            MachineRow(m, via, onClick = other?.let { url -> { useServer(ctx, url) } }, action = other?.let { "Use" })
+            // A tap: the machine's sessions (through hc), or its own server.
+            val sessions = m.hcName?.takeIf { n -> m.linked && live.terminals.values.any { !it.finished && it.address.startsWith("$n/") } }
+            MachineRow(m, via, onClick = when {
+                sessions != null -> { { go(Route.MachineR(sessions)) } }
+                other != null -> { { useServer(ctx, other) } }
+                else -> null
+            }, action = when { sessions != null -> "Open ›"; other != null -> "Use"; else -> null })
         }
         if (m.self) continue
         items(machineTerminals(m, live.terminals.values), key = { "mt-${it.address}" }) { t ->

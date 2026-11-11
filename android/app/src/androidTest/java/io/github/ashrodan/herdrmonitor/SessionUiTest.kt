@@ -3,6 +3,7 @@ package io.github.ashrodan.herdrmonitor
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextClearance
@@ -88,7 +89,7 @@ class SessionUiTest {
         rule.onNodeWithTag("space-session-pager").performTouchInput { swipeLeft() }
         rule.waitForIdle()
         rule.onNodeWithText("Second agent").assertIsDisplayed()
-        rule.onNodeWithText("Swipe sessions · 2 of 2").assertIsDisplayed()
+        rule.onNodeWithContentDescription("Session 2 of 2. Swipe to change.").assertIsDisplayed()
 
         rule.onNodeWithTag("session-options-second").performClick()
         rule.onNodeWithText("Raw terminal").assertIsDisplayed()

@@ -65,6 +65,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.ashrodan.herdrmonitor.ui.theme.Mono
 import io.github.ashrodan.herdrmonitor.Link
+import io.github.ashrodan.herdrmonitor.Machine
+import io.github.ashrodan.herdrmonitor.machineTerminals
 import io.github.ashrodan.herdrmonitor.Live
 import io.github.ashrodan.herdrmonitor.OverviewPr
 import io.github.ashrodan.herdrmonitor.Route
@@ -234,6 +236,14 @@ fun SpaceScreen(live: Live, id: String, go: (Route) -> Unit, back: () -> Unit) {
         return
     }
 
+    SessionPager(live, addresses, go, back, space = id)
+}
+
+// Sessions side by side: a swipe changes the session, and dots under the
+// title show which one is on screen. space: the space they belong to, when
+// they share one.
+@Composable
+fun SessionPager(live: Live, addresses: List<String>, go: (Route) -> Unit, back: () -> Unit, space: String? = null, rawTerminal: Boolean = false) {
     val pager = rememberPagerState(pageCount = { addresses.size })
     val scope = rememberCoroutineScope()
     LaunchedEffect(addresses) {
@@ -251,13 +261,36 @@ fun SpaceScreen(live: Live, id: String, go: (Route) -> Unit, back: () -> Unit) {
             pageIndex = page,
             pageCount = addresses.size,
             active = pager.currentPage == page,
-            // From the map: a session of this space is a swipe away, any
+            showTerminalOnOpen = rawTerminal,
+            // From the map: a session of this pager is a swipe away, any
             // other opens on its own.
             open = { a -> val i = addresses.indexOf(a); if (i >= 0) scope.launch { pager.animateScrollToPage(i) } else go(Route.Agent(a)) },
             // This space is already open: only the map closes.
-            openSpace = { s -> if (s != id) go(Route.SpaceR(s)) },
+            openSpace = { s -> if (s != space) go(Route.SpaceR(s)) },
         )
     }
+}
+
+// A machine that the server reaches through hc, opened from the Machines
+// list: its agent sessions, a swipe apart. With no agent there, its first
+// terminal as a raw terminal.
+@Composable
+fun MachineScreen(live: Live, name: String, go: (Route) -> Unit, back: () -> Unit) {
+    val all = remember(name, live.terminals) { machineTerminals(Machine(name, hcName = name), live.terminals.values) }
+    val agents = remember(all) { all.filter { it.isAgent() && !it.isApp() }.map { it.address } }
+    val addresses = agents.ifEmpty { all.take(1).map { it.address } }
+    if (addresses.isEmpty()) {
+        // Its last terminal ended, or the link is not up yet.
+        Scaffold(containerColor = Palette.background) { pad ->
+            Column(Modifier.fillMaxSize().padding(pad)) {
+                IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+                ConnectionLine(live)
+                Empty(if (live.link == Link.Online) "No terminals on $name." else "Connecting…")
+            }
+        }
+        return
+    }
+    SessionPager(live, addresses, go, back, rawTerminal = agents.isEmpty())
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

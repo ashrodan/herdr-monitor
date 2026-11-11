@@ -67,6 +67,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -310,18 +311,14 @@ fun AgentScreen(
                     }
                 }
             }
-            if (pageIndex != null && pageCount > 1) {
-                Text("Swipe sessions · ${pageIndex + 1} of $pageCount", Modifier.fillMaxWidth().padding(bottom = 6.dp)
-                    .testTag("space-page-indicator"), textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+            if (pageIndex != null && pageCount > 1) PageDots(pageIndex, pageCount)
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         }
     }, bottomBar = {
         val offline = live.link != Link.Online
         when {
             t != null && !t.finished -> Composer(port, ctx.app.outbox, address, online = !offline, blocked, t.kind,
-                working = working, harness = t.agent, contextActions = contextActions)
+                working = working, harness = t.agent, contextActions = contextActions, flush = ctx.app::flushOutbox)
             t == null && offline -> Composer(port, ctx.app.outbox, address, online = false, blocked = false, kind = null, working = false)
             t != null -> SessionActionsBar(contextActions)
         }
@@ -756,5 +753,25 @@ private fun NoChat(text: String, queued: List<OutItem>, error: Boolean = false) 
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(text, color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
         if (queued.isNotEmpty()) QueuedReplies(queued, onRetry = { ctx.app.outbox.retry(it.id); ctx.app.flushOutbox() }) { ctx.app.outbox.remove(it.id) }
+    }
+}
+
+// Where you are among the sessions a swipe reaches: one dot for each, the
+// one on screen filled. It shows only when a swipe is possible. More than
+// 12 sessions: a count, because the dots would not fit.
+@Composable
+fun PageDots(index: Int, count: Int) {
+    val label = "Session ${index + 1} of $count. Swipe to change."
+    Row(Modifier.fillMaxWidth().padding(bottom = 8.dp).testTag("space-page-indicator").semantics(mergeDescendants = true) { contentDescription = label },
+        horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+        if (count > 12) {
+            Text("${index + 1} of $count", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            return@Row
+        }
+        for (i in 0 until count) {
+            val on = i == index
+            Box(Modifier.padding(horizontal = 3.dp).size(if (on) 8.dp else 6.dp).clip(CircleShape)
+                .then(if (on) Modifier.background(MaterialTheme.colorScheme.primary) else Modifier.border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)))
+        }
     }
 }
