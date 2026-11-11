@@ -63,6 +63,7 @@ import io.github.ashrodan.herdrmonitor.Failure
 import io.github.ashrodan.herdrmonitor.OutItem
 import io.github.ashrodan.herdrmonitor.OutState
 import io.github.ashrodan.herdrmonitor.Outbox
+import io.github.ashrodan.herdrmonitor.waitingLabel
 import io.github.ashrodan.herdrmonitor.failureOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -90,9 +91,9 @@ class ApiPort(private val api: Api) : ReplyPort {
 
 private val DIALOG_KEYS = listOf("up" to "↑", "down" to "↓", "enter" to "⏎", "esc" to "Esc", "tab" to "Tab", "1" to "1", "2" to "2", "3" to "3")
 
-// The reply bar. A reply goes out at once when the link is up; if the link
-// is down, or the send fails, it goes to the outbox and is sent later, in
-// order. Either way the field clears. Interrupts and keys are live: they
+// The reply bar. Every reply goes to the outbox and the field clears at the
+// tap. With the link up the outbox sends it at once, in order; with the link
+// down, or after a send that failed, it goes later. Interrupts and keys are live: they
 // never queue. Images upload first; an image that does not upload stays
 // here to try again.
 @Composable
@@ -106,13 +107,15 @@ fun Composer(
     working: Boolean,
     harness: String? = null,
     contextActions: @Composable () -> Unit = {},
+    // Sends the outbox outside this screen, so a send still ends when the
+    // screen closes. null (tests): the composer sends it through the port.
+    flush: (() -> Unit)? = null,
 ) {
     val ctx = LocalContext.current
     val view = LocalView.current
     val scope = rememberCoroutineScope()
     var text by remember(address) { mutableStateOf("") }
     var note by remember { mutableStateOf<String?>(null) }
-    var sending by remember { mutableStateOf(false) }
     // Each picked image: its thumbnail here, then the path the server keeps
     // it at. Removing one drops it from the message (the server copy stays).
     val attached = remember(address) { mutableStateListOf<Attachment>() }
@@ -144,32 +147,19 @@ fun Composer(
 
     fun send() {
         val full = (listOf(text.trim()) + attached.mapNotNull { it.path }).filter { it.isNotBlank() }.joinToString(" ")
-        if (full.isBlank() || sending || uploading) return
-        // At a dialog, force: the text goes to the dialog (e.g. an "Other" answer).
-        val force = blocked
-        fun queued(why: String?) {
-            outbox.add(port.server, address, full, force, why)
-            text = ""; attached.clear()
-            note = "Queued. It goes when the link is back."
-        }
-        if (!online) { queued("Offline"); return }
-        sending = true
-        scope.launch {
-            runCatching { port.send(address, full, force) }
-                .onSuccess { view.performHapticFeedback(HapticFeedbackConstants.CONFIRM); text = ""; attached.clear(); note = "Sent." }
-                .onFailure { e ->
-                    view.performHapticFeedback(HapticFeedbackConstants.REJECT)
-                    when (failureOf(e)) {
-                        // It can pass (no link, a 5xx): it goes later.
-                        Failure.Retry -> queued(e.message ?: e.javaClass.simpleName)
-                        // The server said no; the text stays here to change.
-                        Failure.Refused -> note = "Not sent: ${e.message}"
-                        // It may have arrived: never send it again by itself.
-                        Failure.MaybeSent -> note = "Not confirmed: no answer from the server. Look in the chat before you send it again."
-                    }
-                }
-            sending = false
-        }
+        if (full.isBlank() || uploading) return
+        // The reply goes to the outbox and the field clears at once: the send
+        // takes about 1 s on the server, and the next reply must not wait for
+        // it. At a dialog, force: the text goes to the dialog (e.g. an "Other"
+        // answer). A reply that fails stays in the chat as a bubble, with
+        // "Send again" and delete.
+        outbox.add(port.server, address, full, force = blocked, error = if (online) null else "Offline")
+        text = ""; attached.clear()
+        view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+        if (!online) { note = "Queued. It goes when the link is back."; return }
+        note = null
+        if (flush != null) flush()
+        else scope.launch { outbox.flush(port.server, { a -> a == address && blocked }) { item, force -> port.send(item.address, item.text, force) } }
     }
     fun failed(e: Throwable) { view.performHapticFeedback(HapticFeedbackConstants.REJECT); note = "Not sent: ${e.message}" }
     fun keys(k: String) = scope.launch { runCatching { port.keys(address, listOf(k)) }.onFailure(::failed) }
@@ -221,15 +211,15 @@ fun Composer(
                 val corner by animateDpAsState(if (showStop) 16.dp else 26.dp, if (reduced) snap() else spring(), label = "corner")
                 val bg by animateColorAsState(when {
                     showStop -> MaterialTheme.colorScheme.errorContainer
-                    hasText && !sending && !uploading -> MaterialTheme.colorScheme.primary
+                    hasText && !uploading -> MaterialTheme.colorScheme.primary
                     else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
                 }, if (reduced) snap() else spring(), label = "bg")
                 val fg = when {
                     showStop -> MaterialTheme.colorScheme.onErrorContainer
-                    hasText && !sending && !uploading -> MaterialTheme.colorScheme.onPrimary
+                    hasText && !uploading -> MaterialTheme.colorScheme.onPrimary
                     else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
                 }
-                val enabled = if (showStop) true else hasText && !sending && !uploading
+                val enabled = if (showStop) true else hasText && !uploading
                 Box(Modifier.size(52.dp).clip(RoundedCornerShape(corner)).background(bg)
                     .clickable(enabled = enabled, role = Role.Button) { if (showStop) interrupt() else send() }
                     .testTag(if (showStop) "composer-stop" else "composer-send")
@@ -258,7 +248,7 @@ fun QueuedBubble(item: OutItem, onRetry: ((OutItem) -> Unit)? = null, onDelete: 
     val label = when (item.state) {
         OutState.FAILED -> "Not sent"
         OutState.UNCONFIRMED -> "Not confirmed, look in the chat"
-        else -> "Queued"
+        else -> item.waitingLabel()
     }
     BoxWithConstraints(Modifier.fillMaxWidth().testTag("queued-${item.id}").semantics(mergeDescendants = true) {}) {
         val w = maxWidth * 0.85f

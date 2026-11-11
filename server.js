@@ -11,11 +11,11 @@ import { defaultSocket } from './lib/hc.js';
 import { repoCommits, commitDetail, tryGit } from './lib/git.js';
 import { sessionRequest, sessionResult, withNewTab, parseWorktrees } from './lib/sessions.js';
 import { prStatus } from './lib/pr.js';
-import { chatFor } from './lib/transcript.js';
+import { chatFor, remoteChatFor } from './lib/transcript.js';
 import { loadVapid, Subscriptions, sendPush, configDir } from './lib/push.js';
 import { answerKeys, currentQuestion } from './lib/answer.js';
 import { AgentFeed, sseFrame } from './lib/agents.js';
-import { herdrInfo, discover, tailnetPeers } from './lib/herdr.js';
+import { herdrInfo, discover, tailnetPeers, machineList } from './lib/herdr.js';
 import { Monitor, parseStore } from './lib/monitor.js';
 import { Hub } from './lib/hub.js';
 import { Overview, reposOf } from './lib/overview.js';
@@ -75,6 +75,7 @@ async function loadMachines() {
   let machines;
   try { machines = JSON.parse(out).machines || []; } catch { machines = []; }
   monitor.setMachines(machines, tailnetPeers(await tailscaleStatus()));
+  return machines;
 }
 
 // ---- Web Push ----
@@ -320,6 +321,12 @@ const routes = [
     const ports = (url.searchParams.get('ports') || '').split(',').map(Number).filter((n) => Number.isInteger(n) && n > 0 && n < 65536).slice(0, 3);
     send(res, 200, await discovered(ports));
   }],
+  // Every tailnet machine, with what this server can do there (lib/herdr.js
+  // machineList). The servers come from the last /api/discover, when one ran.
+  ['GET', /^\/api\/machines$/, async (req, res) => {
+    const [status, hcMachines] = await Promise.all([tailscaleStatus(), loadMachines()]);
+    send(res, 200, { machines: machineList({ status, hcMachines, servers: (discoverCache?.value ?? await discovered()).servers, terminals: monitor.snapshot().terminals }), at: Date.now() });
+  }],
   ['GET', /^\/api\/health$/, (req, res) => send(res, 200, { ok: true, connected: monitor.connected, socket: SOCKET, terminals: terminals.size, clients: clients.size + agentClients.size, dropped: clients.dropped + agentClients.dropped })],
   ['GET', /^\/api\/terminals$/, (req, res) => send(res, 200, monitor.snapshot())],
   ['GET', /^\/api\/events$/, (req, res) => clients.open(req, res, sseFrame('snapshot', monitor.snapshot()))],
@@ -334,7 +341,10 @@ const routes = [
   }],
   ['GET', /^\/api\/terminals\/([^/]+)\/chat$/, async (req, res, [addr], url) => {
     const t = terminalOr404(res, addr); if (!t) return;
-    const chat = await chatFor(t.pid);
+    // A terminal on an hc machine ("dai/t1"): its pid and its transcript are
+    // on that machine, never in this machine's files.
+    const slash = t.address.indexOf('/');
+    const chat = slash < 0 ? await chatFor(t.pid) : await remoteChatFor(t.address.slice(0, slash), t.pid, { hcBin: HC_BIN });
     // The page polls: answer "no change" without the body when it has this version.
     if (chat.available && url.searchParams.get('v') === chat.version) return send(res, 200, { unchanged: true, version: chat.version });
     send(res, 200, chat);

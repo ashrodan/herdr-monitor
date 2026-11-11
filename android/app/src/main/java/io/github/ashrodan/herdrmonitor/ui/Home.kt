@@ -159,6 +159,7 @@ fun HomeScreen(live: Live, go: (Route) -> Unit, selected: String? = null) {
     LifecycleEventEffect(Lifecycle.Event.ON_PAUSE) { closeSearch() }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { closeSearch() }
     var picking by remember { mutableStateOf(false) }
+    val machines = rememberMachines(app.prefs.server)
     var newSession by remember { mutableStateOf(false) }
     var menuFor by remember { mutableStateOf<Session?>(null) }
     val drawer = rememberDrawerState(DrawerValue.Closed)
@@ -277,6 +278,7 @@ fun HomeScreen(live: Live, go: (Route) -> Unit, selected: String? = null) {
                         }
                         HomeTab.Spaces -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 6.dp, end = 6.dp, bottom = 24.dp)) {
                             spacesList(ctx, live, go)
+                            machinesList(ctx, live, machines, now, go)
                         }
                     }
                 }

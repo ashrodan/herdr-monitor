@@ -21,6 +21,7 @@ import com.android.resources.NightMode
 import io.github.ashrodan.herdrmonitor.ui.ActivityCard
 import io.github.ashrodan.herdrmonitor.ui.Composer
 import io.github.ashrodan.herdrmonitor.ui.HerdrScene
+import io.github.ashrodan.herdrmonitor.ui.MachineRow
 import io.github.ashrodan.herdrmonitor.ui.PrRow
 import io.github.ashrodan.herdrmonitor.ui.ReplyPort
 import io.github.ashrodan.herdrmonitor.ui.SceneState
@@ -164,5 +165,19 @@ class ScreenshotTest {
             WhereAmIIcon(placeOf(live.terminals["t2"], "t2", live.spaces), "t2", size = 48.dp)
             TabCard(tab, live, "t2", emptyMap(), onOpen = null)
         }
+    }
+
+    // The Machines list: this server, a machine reached through hc with one
+    // of its sessions below it, one with its own server, one with no Herdr
+    // link, and one that is offline.
+    @Test fun machines() = both {
+        MachineRow(Machine("studio-mac.t.ts.net", "macOS", self = true, online = true, server = "https://x:7400", terminals = 50, agents = 6), "studio-mac")
+        MachineRow(Machine("dev-box.t.ts.net", "linux", online = true, hcName = "dev-box", hcState = "connected", hcVersion = "0.1.16", terminals = 2, agents = 1), "studio-mac")
+        androidx.compose.foundation.layout.Box(Modifier.padding(start = 20.dp)) {
+            TerminalRow(Terminal("dev-box/t18", agent = "claude-code", status = "done", changedMs = now - 600_000), "feat-inventory", "~/shop-dbt", "done", now) {}
+        }
+        MachineRow(Machine("build-box.t.ts.net", "linux", online = true, server = "https://build-box.t.ts.net:7400"), "studio-mac", onClick = {}, action = "Use")
+        MachineRow(Machine("lab-box.t.ts.net", "linux", online = true), "studio-mac")
+        MachineRow(Machine("tablet.t.ts.net", "iOS"), "studio-mac")
     }
 }

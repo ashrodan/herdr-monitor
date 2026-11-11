@@ -33,6 +33,7 @@ import io.github.ashrodan.herdrmonitor.ui.AgentScreen
 import io.github.ashrodan.herdrmonitor.ui.HomeListDetail
 import io.github.ashrodan.herdrmonitor.ui.SettingsScreen
 import io.github.ashrodan.herdrmonitor.ui.AlertsScreen
+import io.github.ashrodan.herdrmonitor.ui.MachineScreen
 import io.github.ashrodan.herdrmonitor.ui.SpaceScreen
 import io.github.ashrodan.herdrmonitor.ui.theme.HerdrTheme
 import io.github.ashrodan.herdrmonitor.ui.theme.isDark
@@ -43,6 +44,8 @@ sealed interface Route {
     data object Alerts : Route
     data class SpaceR(val id: String) : Route
     data class Agent(val address: String, val terminal: Boolean = false) : Route
+    // A machine the server reaches through hc, by its hc name ("dai").
+    data class MachineR(val name: String) : Route
 }
 
 // Navigation Compose routes. Addresses and space ids hold "/", so they are
@@ -52,12 +55,14 @@ object Nav {
     const val SETTINGS = "settings"
     const val ALERTS = "alerts"
     const val SPACE = "space/{id}"
+    const val MACHINE = "machine/{name}"
     const val AGENT = "agent/{address}?terminal={terminal}"
     fun path(r: Route): String = when (r) {
         Route.Home -> HOME
         Route.Settings -> SETTINGS
         Route.Alerts -> ALERTS
         is Route.SpaceR -> "space/${Uri.encode(r.id)}"
+        is Route.MachineR -> "machine/${Uri.encode(r.name)}"
         is Route.Agent -> "agent/${Uri.encode(r.address)}?terminal=${r.terminal}"
     }
 }
@@ -151,6 +156,7 @@ class MainActivity : ComponentActivity() {
             composable(Nav.SETTINGS) { SettingsScreen(back) }
             composable(Nav.ALERTS) { AlertsScreen(back) }
             composable(Nav.SPACE) { e -> SpaceScreen(live(), e.arguments?.getString("id").orEmpty(), go, back) }
+            composable(Nav.MACHINE) { e -> MachineScreen(live(), e.arguments?.getString("name").orEmpty(), go, back) }
             composable(Nav.AGENT, arguments = listOf(navArgument("terminal") { type = NavType.BoolType; defaultValue = false })) { e ->
                 // The space map opens sessions and spaces from here too.
                 AgentScreen(live(), e.arguments?.getString("address").orEmpty(), back,

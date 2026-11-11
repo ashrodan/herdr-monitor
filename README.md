@@ -169,6 +169,21 @@ WebView.
   (CC0), Codex from lobe-icons (MIT), pi from pi.dev, omp from omp.sh.
   Each mark belongs to its owner; the app uses it only to show which
   harness runs in a session.
+- **Replies**: a reply leaves the field at the tap and shows in the chat as
+  "Sending…" until the transcript has it. Replies go in order, one at a
+  time (the server takes about 1 s for each). A reply typed while the agent
+  works goes at once, and the harness keeps it in its own queue. A reply for
+  the prompt waits while the agent is at a dialog. A reply that failed stays
+  as a bubble with **Send again** and delete.
+- **Dots under the title**: one for each session a swipe reaches, the one on
+  screen filled. No dots: no swipe there.
+- **Machines** (at the end of the Spaces tab, and in the server list): every
+  machine of your tailnet, online or not. A machine that the server reaches
+  through `hc` (`hc machine ls`) shows its terminals. A tap on the machine
+  opens its agent sessions, a swipe apart; a tap on a terminal opens that one,
+  through the server in use. That machine needs no herdr-monitor. A machine
+  with its own herdr-monitor has **Use**. The others show as online or
+  offline only.
 - **Settings**: the server URL, **Find on tailnet** (lists the herdr-monitor
   servers on your tailnet, with each one's Herdr app, Herdr TUI and hc
   versions), the background-alerts switch, Quiet agents and the look.
@@ -335,7 +350,7 @@ not from this repo.
     web/ (React) ── vite build ──> dist/ (served by server.js)
 
     Android app ── SSE /api/events (screens), /api/agents/stream (alerts)
-                ── /api/info, /api/discover ── lib/herdr.js, lib/agents.js
+                ── /api/info, /api/discover, /api/machines ── lib/herdr.js, lib/agents.js
 
 `hc schema` prints the full `hc` API.
 

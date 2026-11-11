@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { discover, parseVersion, plistVersion, tailnetPeers } from '../lib/herdr.js';
+import { discover, machineList, parseVersion, plistVersion, tailnetPeers } from '../lib/herdr.js';
 
 test('parseVersion', () => {
   assert.equal(parseVersion('hc 0.1.18\n'), '0.1.18');
@@ -63,4 +63,25 @@ test('discover: an older server without /api/info is found by its /api/health', 
     : url.endsWith('/api/health') ? { ok: true } : null;
   const { servers } = await discover({ status: STATUS, port: 7400, self: null, fetchJson });
   assert.deepEqual(servers.map((s) => [s.name, s.older, s.herdr]), [['box.tail1.ts.net', true, null]]);
+});
+
+test('machineList: every tailnet machine, with hc, server and terminal counts', () => {
+  const rows = machineList({
+    status: STATUS,
+    hcMachines: [{ name: 'dai', host: 'box', state: 'connected', version: '0.1.16' }, { name: 'far', host: 'far-box', state: 'lost' }],
+    servers: [{ url: 'https://mac.tail1.ts.net:7400', name: 'mac.tail1.ts.net', self: true }],
+    terminals: [
+      { address: 't1', state: 'live', status: { state: 'working' } },
+      { address: 't2', state: 'live' },
+      { address: 't3', state: 'finished' },
+      { address: 'dai/t1', state: 'live', status: { state: 'done' } },
+      { address: 'gone/t1', state: 'live' },
+    ],
+  });
+  assert.deepEqual(rows.map((r) => r.name), ['mac.tail1.ts.net', 'box.tail1.ts.net', 'ipad.tail1.ts.net', 'far-box']);
+  assert.deepEqual(rows[0], { name: 'mac.tail1.ts.net', os: 'macOS', self: true, online: true, tailnet: true, hc: null, server: 'https://mac.tail1.ts.net:7400', terminals: 2, agents: 1 });
+  assert.deepEqual(rows[1], { name: 'box.tail1.ts.net', os: 'linux', self: false, online: true, tailnet: true, hc: { name: 'dai', state: 'connected', version: '0.1.16' }, server: null, terminals: 1, agents: 1 });
+  assert.equal(rows[2].online, false);
+  assert.deepEqual(rows[3], { name: 'far-box', os: null, self: false, online: false, tailnet: false, hc: { name: 'far', state: 'lost', version: null }, server: null, terminals: 0, agents: 0 });
+  assert.deepEqual(machineList({ status: null }), []);
 });
