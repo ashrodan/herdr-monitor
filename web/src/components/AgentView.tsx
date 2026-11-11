@@ -3,7 +3,7 @@ import { ArrowUp, ImagePlus, Loader2, X, GitCommitHorizontal, GitPullRequest, Sq
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
-import { getJson, post } from '@/api';
+import { getJson, post, termPath } from '@/api';
 import { uploadImage } from '@/upload';
 import type { Live } from '@/live';
 import { markSeen, rawStateOf } from '@/model';
@@ -36,7 +36,7 @@ export function AgentView({ live, addr, tab }: { live: Live; addr: string; tab: 
   useEffect(() => {
     setPr(null);
     let stop = false;
-    getJson<PrStatus>(`/api/terminals/${addr}/status`).then((d) => { if (!stop) setPr(d); }).catch(() => {});
+    getJson<PrStatus>(termPath(addr, `status`)).then((d) => { if (!stop) setPr(d); }).catch(() => {});
     return () => { stop = true; };
   }, [addr]);
 
@@ -141,7 +141,7 @@ function OutputPane({ addr, working, stateKey }: { addr: string; working: boolea
     const el = ref.current;
     const atBottom = !el || el.scrollHeight - el.scrollTop - el.clientHeight < 40;
     try {
-      const r = await getJson<{ text?: string; error?: string }>(`/api/terminals/${addr}/read?lines=${withHistory ? 300 : 0}`);
+      const r = await getJson<{ text?: string; error?: string }>(termPath(addr, `read?lines=${withHistory ? 300 : 0}`));
       setText(r.text ?? r.error ?? '');
     } catch (err) { setText(`Could not read: ${(err as Error).message}`); }
     finally { busy.current = false; setLoadingHistory(false); }
@@ -222,15 +222,18 @@ function Composer({ addr, blocked, finished, kind, exitCode, onSent }: { addr: s
     // At a dialog, force: the text goes to the dialog (e.g. an "Other" answer).
     // Image paths follow the text; Claude Code and omp read an image from its path.
     const text = [value.trim(), ...ready.map((i) => i.path)].filter(Boolean).join(' ');
-    const r = await post(`/api/terminals/${addr}/send`, blocked ? { text, force: true } : { text });
+    const r = await post(termPath(addr, `send`), blocked ? { text, force: true } : { text });
     setSending(false);
     if (r.ok) {
-      onSent?.(text); setValue(''); setNote({ text: 'Sent.' });
+      // started false: hc typed it, but the agent did not start a turn within
+      // a few seconds (null means it does not report status, so nobody knows).
+      onSent?.(text); setValue('');
+      setNote(r.body.started === false ? { text: 'Typed, but the agent did not start. Check Live.', tone: 'err' } : { text: 'Sent.' });
       setImages((l) => { l.forEach((i) => URL.revokeObjectURL(i.url)); return []; });
     } else setNote({ text: `Not sent: ${r.body.error}`, tone: 'err' });
   };
   const interrupt = async () => {
-    const r = await post(`/api/terminals/${addr}/interrupt`);
+    const r = await post(termPath(addr, `interrupt`));
     setNote(r.ok ? { text: 'Stop key sent.' } : { text: `Interrupt failed: ${r.body.error}`, tone: 'err' });
   };
   // Keep focus (and so the keyboard) in the box when a button is tapped.

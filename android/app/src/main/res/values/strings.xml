@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Herdr Monitor</string>
+    <string name="widget_name">Herdr agents</string>
+    <string name="widget_description">Waiting, done and working agents, and open PRs</string>
+</resources>

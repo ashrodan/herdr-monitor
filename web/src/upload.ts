@@ -2,6 +2,8 @@
 // The server hands each to hc, which keeps it beside the agent's terminal and
 // returns its path; the reply carries the path (Claude Code and omp read it).
 
+import { termPath } from './api';
+
 const MAX_SIDE = 2000;                 // longest side after shrinking
 const MAX_BYTES = 3.5 * 1024 * 1024;   // Claude refuses images over ~5 MB
 const KEEP = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
@@ -22,7 +24,7 @@ export async function prepare(file: Blob): Promise<Blob> {
 
 export async function uploadImage(addr: string, file: Blob): Promise<string> {
   const body = await prepare(file);
-  const res = await fetch(`/api/terminals/${addr}/upload`, { method: 'POST', headers: { 'content-type': body.type || 'application/octet-stream' }, body });
+  const res = await fetch(termPath(addr, `upload`), { method: 'POST', headers: { 'content-type': body.type || 'application/octet-stream' }, body });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.path) throw new Error(data.error || `HTTP ${res.status}`);
   return data.path as string;
