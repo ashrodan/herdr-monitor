@@ -298,6 +298,65 @@ applies to it unchanged.
 Program icons come from your Herdr install (`~/.config/herdr-app/icons`),
 not from this repo.
 
+## MCP endpoint
+
+The server is also an MCP server, for an assistant that coordinates your
+agents (for example, a Grok bot on your tailnet). It uses Streamable HTTP
+on the same port:
+
+| URL | Scope |
+| --- | --- |
+| `/mcp` | Every space: triage, hand out work, follow up |
+| `/mcp/spaces/<name or id>` | One space: the tools act only on its agents |
+
+A client sends `Authorization: Bearer <token>` with each request. The token
+is in `~/.config/herdr-monitor/mcp-token` (made on first start, mode 600),
+or set `HERDR_MCP_TOKEN` (32 characters or more). To replace the token,
+delete the file and restart the server. `HERDR_MCP=0` turns the endpoint off.
+
+Over Tailscale Serve, the URL is `https://<machine>.<tailnet>.ts.net:7400/mcp`.
+The client must be on your tailnet: a hosted client outside it cannot
+reach the endpoint. Do not use Tailscale Funnel; it puts the endpoint on
+the internet.
+
+For a Grok remote connector: transport Streamable HTTP, the URL above, header
+`Authorization`, value `Bearer <token>`. Put the token in the connector's
+credential field, never in a chat.
+
+### Tools
+
+| Tool | Does |
+| --- | --- |
+| `herdr_overview` | Start here (board only): every agent, the ones that need you first |
+| `herdr_space` | One space: folder, branch, tabs, agents and programs; git worktrees |
+| `herdr_read` | An agent's last messages and any question it waits on; or its screen |
+| `herdr_send` | Type a message into an agent and press Enter |
+| `herdr_answer` | Answer a question form (option numbers) or a dialog (keys) |
+| `herdr_wait` | Wait until an agent stops working (default 20 s; a timeout is a check-in) |
+| `herdr_start` | Start `claude` or `omp` in a space's folder, in a new tab |
+| `herdr_interrupt` | Press the stop key in an agent |
+| `herdr_prs` | Open PRs, with checks and why each cannot merge |
+| `herdr_guide` | The workflows (the skills below), for clients without skills support |
+
+Each result ends with what to do next. The server's `instructions` tell
+a client which tool to call first.
+
+### Skills, resources and change notifications
+
+- **Skills** (the MCP Skills extension, SEP-2640): `skills/list`,
+  `skills/get`, and the files as `skill://` resources. `herdr-coordinate`
+  is for work across spaces; `herdr-space` is for work in one space. They
+  live in `mcp/skills/`.
+- **`herdr://agents`**: the agents in the scope and their state, as JSON.
+- **Change notifications** (MCP 2026-07-28): `subscriptions/listen` with
+  `resourceSubscriptions: ["herdr://agents"]` opens an SSE stream. Each
+  `notifications/resources/updated` means an agent started, stopped, or
+  changed state (a title change alone sends nothing). Read the resource
+  again. Older clients (2025-03-26 to 2025-11-25) get the tools and
+  resources but no notifications; they poll `herdr_overview`.
+
+The endpoint keeps no sessions and has no GET stream (GET answers 405).
+
 ## Safety
 
 - The server listens on 127.0.0.1 only. There is no login. For access from
@@ -313,6 +372,11 @@ not from this repo.
   the dialog with `force`. Otherwise `terminal.send` is called
   without `force`, so hc refuses to type into an agent that just became
   blocked.
+- The MCP endpoint needs the bearer token for every request, and refuses a
+  request with an `Origin` header that is not this host. Its tools can do
+  what the page can do (read, send, answer, start, stop). A space endpoint
+  refuses agents of other spaces. Anyone with the token controls your
+  agents: keep it out of chats, screenshots and commits.
 - `POST /api/sessions` (New session) starts only `claude` or `omp`, in the
   folder of a space that already exists. The client sends a space id, a
   harness name and the task text. It cannot send a path or a command. The
@@ -333,6 +397,10 @@ not from this repo.
                                  └─ lib/push.js ── Web Push (VAPID, aes128gcm)
 
     web/ (React) ── vite build ──> dist/ (served by server.js)
+
+    MCP client ── POST /mcp, /mcp/spaces/<space> ── lib/mcp.js (protocol)
+                                 ├─ lib/mcp-herdr.js (tools, herdr://agents, changes)
+                                 └─ lib/mcp-skills.js ── mcp/skills/*/SKILL.md
 
     Android app ── SSE /api/events (screens), /api/agents/stream (alerts)
                 ── /api/info, /api/discover ── lib/herdr.js, lib/agents.js

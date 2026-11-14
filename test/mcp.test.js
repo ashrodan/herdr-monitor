@@ -100,6 +100,10 @@ test('modern server/discover, version and header errors', async () => {
   assert.equal(d.body.result.resultType, 'complete');
   assert.deepEqual(d.body.result.supportedVersions.slice(0, 2), [MODERN, '2025-11-25']);
   assert.equal(d.body.result._meta['io.modelcontextprotocol/serverInfo'].name, 'test');
+  const tl = await modern('tools/list');
+  assert.equal(tl.body.result.cacheScope, 'private');
+  assert.equal(typeof tl.body.result.ttlMs, 'number');
+  assert.equal((await legacy('tools/list')).body.result.ttlMs, undefined);
 
   const v = await post({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: { _meta: { ...meta, 'io.modelcontextprotocol/protocolVersion': '2027-01-01' } } });
   assert.equal(v.status, 400);
@@ -290,6 +294,8 @@ test('stateOf, chatText, isDialogKey, frontMatter, bearerOk', () => {
   assert.equal(stateOf({ state: 'finished' }), 'exited');
   assert.equal(stateOf({ state: 'live', status: null }), 'running');
   assert.equal(stateOf({ state: 'live', reported: true }), 'idle');
+  assert.equal(stateOf({ state: 'live', status: { state: 'done' }, changed_ms: 10, seen_ms: 5 }), 'done');
+  assert.equal(stateOf({ state: 'live', status: { state: 'done' }, changed_ms: 10, seen_ms: 12 }), 'idle');
   assert.match(chatText(CHAT.messages, 1), /^\[assistant 10:01\]/);
   assert.equal(isDialogKey('shift+tab'), true);
   assert.equal(isDialogKey('ctrl+c'), false);
