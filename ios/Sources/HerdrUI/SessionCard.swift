@@ -71,7 +71,7 @@ struct SpacesList: View {
 
     var body: some View {
         let live = model.live
-        List(selection: $selection) {
+        List {
             if live.spaces.isEmpty {
                 ContentUnavailableView(live.link == .online ? "No spaces" : "Connecting to Herdr…", systemImage: "square.grid.2x2").listRowSeparator(.hidden)
             }
@@ -150,7 +150,9 @@ struct SpacesList: View {
             let w = whereOf(t, live.spaces)
             TerminalRow(terminal: t, name: t.name ?? (w.tabNamed ? w.tabName : nil) ?? harnessName(t.agent), detail: t.msg ?? t.title, mark: t.mark(model.localSeen), now: now)
                 .padding(.leading, s.parent == nil ? 0 : 8)
-                .tag(t.address)
+                .contentShape(Rectangle())
+                .onTapGesture { selection = t.address }
+                .accessibilityAddTraits(.isButton)
                 .listRowBackground(selection == t.address ? Color.accentColor.opacity(0.16) : Color.clear)
         }
         ForEach(apps) { t in

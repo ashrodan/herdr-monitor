@@ -16,7 +16,12 @@ public struct RootView: View {
             if model.server.isEmpty {
                 OnboardingView()
             } else {
-                NavigationSplitView(columnVisibility: $columns) {
+                // On a narrow width one column shows: the session when one is
+                // open, else the list. Back to the list closes the session.
+                let compact = Binding<NavigationSplitViewColumn>(
+                    get: { model.selected != nil ? .detail : .sidebar },
+                    set: { if $0 == .sidebar { model.selected = nil } })
+                NavigationSplitView(columnVisibility: $columns, preferredCompactColumn: compact) {
                     HomeView()
                         .navigationSplitViewColumnWidth(min: 300, ideal: 340, max: 420)
                 } detail: {

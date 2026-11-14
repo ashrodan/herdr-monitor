@@ -77,7 +77,10 @@ struct HomeView: View {
         let shown = all.filter { matches($0, query: query) }
         let searching = !query.trimmingCharacters(in: .whitespaces).isEmpty
         let filter = model.filter
-        List(selection: selection) {
+        // No List(selection:): the system's selected look turns every text
+        // white and hides the status colours. The row is a tap target, and
+        // the open session gets a light tint.
+        List {
             Section {
                 FilterChips(counts: counts, filter: filter) { model.filter = $0 }
                     .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 0))
@@ -103,7 +106,9 @@ struct HomeView: View {
                             Section {
                                 ForEach(rows) { s in
                                     SessionCard(session: s, now: now, stale: model.live.cachedAt != nil, answer: { j, l in answer(s, j, l) })
-                                        .tag(s.address)
+                                        .contentShape(Rectangle())
+                                        .onTapGesture { selection.wrappedValue = s.address }
+                                        .accessibilityAction(named: "Open") { selection.wrappedValue = s.address }
                                         .selectedRow(selection.wrappedValue == s.address)
                                         .contextMenu { menu(s) }
                                         .swipeActions(edge: .leading) {

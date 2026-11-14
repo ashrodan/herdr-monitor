@@ -26,17 +26,21 @@ final class ScreenshotTests: XCTestCase {
         add(a)
     }
 
-    // The screen's picture is always portrait. In landscape (these tests use
-    // landscapeLeft) the top of the interface is at the picture's right
-    // edge: turn it a quarter turn counter-clockwise.
+    // A landscape picture can come out on its side in two ways: the image
+    // carries an orientation that the PNG writer drops, or the pixels are
+    // portrait. Draw it again so the pixels themselves are upright.
     private func upright(_ image: UIImage) -> UIImage {
-        guard landscape, image.size.width < image.size.height else { return image }
-        let size = CGSize(width: image.size.height, height: image.size.width)
+        let turn = landscape && image.size.width < image.size.height
+        let size = turn ? CGSize(width: image.size.height, height: image.size.width) : image.size
         let format = UIGraphicsImageRendererFormat()
         format.scale = image.scale
         return UIGraphicsImageRenderer(size: size, format: format).image { c in
-            c.cgContext.translateBy(x: 0, y: size.height)
-            c.cgContext.rotate(by: -.pi / 2)
+            if turn {
+                // These tests use landscapeLeft: the interface's top is at
+                // the picture's right edge. A quarter turn counter-clockwise.
+                c.cgContext.translateBy(x: 0, y: size.height)
+                c.cgContext.rotate(by: -.pi / 2)
+            }
             image.draw(at: .zero)
         }
     }
