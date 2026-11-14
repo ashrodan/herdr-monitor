@@ -123,6 +123,21 @@ You need Xcode 16 or later (from the App Store) and an Apple ID.
    tailnet. The app sends an `Origin` header equal to the server URL, so
    the server's same-origin check applies to it unchanged.
 
+### Without Xcode
+
+iOS runs only signed apps, so there is no install without a signature. CI
+builds the app for a device but does not sign it (the `ios-unsigned-ipa`
+artifact of each run). A sideload tool signs that file with your Apple ID
+and installs it on the connected iPad:
+
+    gh run download <run-id> -n ios-unsigned-ipa
+
+Open `HerdrMonitor-unsigned.ipa` in the tool (for example Sideloadly or
+AltStore), pick the iPad and sign in. These are other people's tools and
+they get your Apple ID password; use an app-specific Apple ID if that is a
+concern. The 7-day limit of a free Apple ID applies here too. An install
+over the air (TestFlight) needs the paid Apple Developer account.
+
 To try it with no server, add `-demo` to the scheme's launch arguments.
 
 To run the UI tests yourself:
