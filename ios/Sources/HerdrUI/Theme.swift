@@ -61,6 +61,14 @@ extension Color {
         self.init(red: Double((v >> 16) & 0xff) / 255, green: Double((v >> 8) & 0xff) / 255, blue: Double(v & 0xff) / 255)
     }
     static let card = Color.primary.opacity(0.06)
+    // A row of the grouped session list when it is not the open one.
+    static var rowBackground: Color {
+        #if os(iOS)
+        Color(uiColor: .secondarySystemGroupedBackground)
+        #else
+        Color.clear
+        #endif
+    }
     static let codeBackground = Color.primary.opacity(0.08)
 }
 

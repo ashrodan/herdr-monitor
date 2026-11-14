@@ -104,6 +104,7 @@ struct HomeView: View {
                                 ForEach(rows) { s in
                                     SessionCard(session: s, now: now, stale: model.live.cachedAt != nil, answer: { j, l in answer(s, j, l) })
                                         .tag(s.address)
+                                        .selectedRow(selection.wrappedValue == s.address)
                                         .contextMenu { menu(s) }
                                         .swipeActions(edge: .leading) {
                                             Button { model.togglePin(s.address) } label: { Label(s.pinned ? "Unpin" : "Pin", systemImage: s.pinned ? "pin.slash" : "pin") }.tint(.indigo)
@@ -199,6 +200,13 @@ struct NewSessionTarget: Identifiable {
 extension View {
     // Inset grouped on iOS (cards on a grouped background). macOS has no
     // such style, and only builds this to check the code.
+    // The open session's row: a light tint, so the status colours and the
+    // answer buttons stay readable (the system's selection fills the row
+    // with the accent colour).
+    func selectedRow(_ on: Bool) -> some View {
+        listRowBackground(on ? Color.accentColor.opacity(0.16) : Color.rowBackground)
+    }
+
     @ViewBuilder func sessionListStyle() -> some View {
         #if os(iOS)
         listStyle(.insetGrouped)

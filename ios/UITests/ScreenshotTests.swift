@@ -5,6 +5,7 @@ import XCTest
 // artifact), so every push shows what the iPad shows.
 final class ScreenshotTests: XCTestCase {
     private var app: XCUIApplication!
+    private var landscape = false
 
     override func setUp() {
         continueAfterFailure = false
@@ -13,6 +14,7 @@ final class ScreenshotTests: XCTestCase {
 
     private func launch(_ extra: [String] = [], orientation: UIDeviceOrientation = .landscapeLeft) {
         XCUIDevice.shared.orientation = orientation
+        landscape = orientation.isLandscape
         app.launchArguments = ["-demo"] + extra
         app.launch()
     }
@@ -28,7 +30,7 @@ final class ScreenshotTests: XCTestCase {
     // landscapeLeft) the top of the interface is at the picture's right
     // edge: turn it a quarter turn counter-clockwise.
     private func upright(_ image: UIImage) -> UIImage {
-        guard XCUIDevice.shared.orientation.isLandscape, image.size.width < image.size.height else { return image }
+        guard landscape, image.size.width < image.size.height else { return image }
         let size = CGSize(width: image.size.height, height: image.size.width)
         let format = UIGraphicsImageRendererFormat()
         format.scale = image.scale

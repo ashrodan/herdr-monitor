@@ -151,6 +151,7 @@ struct SpacesList: View {
             TerminalRow(terminal: t, name: t.name ?? (w.tabNamed ? w.tabName : nil) ?? harnessName(t.agent), detail: t.msg ?? t.title, mark: t.mark(model.localSeen), now: now)
                 .padding(.leading, s.parent == nil ? 0 : 8)
                 .tag(t.address)
+                .listRowBackground(selection == t.address ? Color.accentColor.opacity(0.16) : Color.clear)
         }
         ForEach(apps) { t in
             let url = appUrl(t, serverUrl: model.server)
