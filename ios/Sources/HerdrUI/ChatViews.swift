@@ -263,6 +263,8 @@ struct AskCard: View {
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(live ? Color.orange : Color.primary.opacity(0.15), lineWidth: live ? 1.5 : 1))
         .sensoryFeedback(.success, trigger: ok)
         .sensoryFeedback(.error, trigger: failed)
+        // A container: the options keep their own identifiers and labels.
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ask-\(ask.id)")
     }
 
