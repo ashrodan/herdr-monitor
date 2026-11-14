@@ -141,7 +141,10 @@ public final class AppModel {
     // one small request.
     public func runDigestLoop() async {
         while !Task.isCancelled {
-            if online {
+            // Not online yet: look again soon, so the answer buttons do not
+            // wait a whole round after the link comes up.
+            guard online else { try? await Task.sleep(nanoseconds: 300_000_000); continue }
+            do {
                 let targets = sessions().filter { $0.bucket != .idle }.prefix(12).map(\.address)
                 let api = self.api, known = digests
                 let fresh: [(String, Digest)] = await withTaskGroup(of: (String, Digest)?.self) { group in

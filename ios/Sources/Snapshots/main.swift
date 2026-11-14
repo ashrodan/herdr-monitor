@@ -8,7 +8,7 @@
 import AppKit
 import SwiftUI
 import HerdrKit
-import HerdrUI
+@testable import HerdrUI
 
 @MainActor func render<V: View>(_ view: V, size: CGSize, to file: URL, dark: Bool) async {
     let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height))
@@ -42,9 +42,12 @@ app.setActivationPolicy(.accessory)
 Task { @MainActor in
     // iPad mini: 744 x 1133 points.
     let portrait = CGSize(width: 744, height: 1133), landscape = CGSize(width: 1133, height: 744)
-    await render(RootView(model: model(selected: "t1")), size: landscape, to: out.appendingPathComponent("question-landscape.png"), dark: true)
+    await render(RootView(model: model(selected: "t1")), size: landscape, to: out.appendingPathComponent("question-landscape.png"), dark: false)
     await render(RootView(model: model(selected: "t2")), size: portrait, to: out.appendingPathComponent("working-portrait.png"), dark: false)
-    await render(RootView(model: model(selected: nil)), size: landscape, to: out.appendingPathComponent("home-landscape.png"), dark: false)
+    // macOS does not draw a split view's sidebar off screen: the list alone.
+    let m = model(selected: nil)
+    m.start()
+    await render(NavigationStack { HomeView() }.environment(m), size: CGSize(width: 380, height: 1000), to: out.appendingPathComponent("list.png"), dark: false)
     exit(0)
 }
 app.run()
