@@ -14,6 +14,7 @@ let package = Package(
     targets: [
         .target(name: "HerdrKit", path: "Sources/HerdrKit"),
         .target(name: "HerdrUI", dependencies: ["HerdrKit"], path: "Sources/HerdrUI"),
+        .executableTarget(name: "Snapshots", dependencies: ["HerdrKit", "HerdrUI"], path: "Sources/Snapshots"),
         .testTarget(name: "HerdrKitTests", dependencies: ["HerdrKit"], path: "Tests/HerdrKitTests"),
     ],
     swiftLanguageModes: [.v5]

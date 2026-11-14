@@ -1,0 +1,52 @@
+name: iOS
+# The iOS app builds only when the app or this workflow changes.
+on:
+  push:
+    branches: [main]
+    paths: ['ios/**', '.github/workflows/ios.yml']
+  pull_request:
+    paths: ['ios/**', '.github/workflows/ios.yml']
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 40
+    defaults:
+      run: { working-directory: ios }
+    steps:
+      - uses: actions/checkout@v4
+      - run: xcodebuild -version && swift --version
+      # The core and the screens, as a Swift package (fast).
+      - name: Unit tests
+        run: swift test
+      - name: Generate the Xcode project
+        run: brew install xcodegen && xcodegen generate
+      # The app on an iPad mini simulator, with the demo server.
+      - name: Pick an iPad mini simulator
+        run: |
+          xcrun simctl list devices available | grep -i ipad || true
+          ID=$(xcrun simctl list devices available | grep -m1 'iPad mini' | grep -oE '[0-9A-F]{8}-[0-9A-F-]{27}')
+          test -n "$ID" || ID=$(xcrun simctl list devices available | grep -m1 'iPad' | grep -oE '[0-9A-F]{8}-[0-9A-F-]{27}')
+          echo "SIM_ID=$ID" >> "$GITHUB_ENV"
+      - name: UI tests
+        run: |
+          set -o pipefail
+          xcodebuild test -project HerdrMonitor.xcodeproj -scheme HerdrMonitor \
+            -destination "platform=iOS Simulator,id=$SIM_ID" -resultBundlePath build/ui.xcresult \
+            CODE_SIGNING_ALLOWED=NO | tee build-log.txt | grep -E "error|warning: unre|Test Case|Test Suite|\*\* |failed|passed" || true
+          grep -q "\*\* TEST SUCCEEDED \*\*" build-log.txt
+      - name: Export the screenshots
+        if: always()
+        run: |
+          mkdir -p shots
+          xcrun xcresulttool export attachments --path build/ui.xcresult --output-path shots || true
+          ls -la shots || true
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-screenshots
+          path: |
+            ios/shots
+            ios/build-log.txt
