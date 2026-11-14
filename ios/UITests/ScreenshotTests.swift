@@ -18,12 +18,25 @@ final class ScreenshotTests: XCTestCase {
     }
 
     private func shot(_ name: String) {
-        // The window's picture follows the interface; the screen's picture is
-        // always portrait, so a landscape run comes out on its side.
-        let a = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        let a = XCTAttachment(image: upright(XCUIScreen.main.screenshot().image))
         a.name = name
         a.lifetime = .keepAlways
         add(a)
+    }
+
+    // The screen's picture is always portrait. In landscape (these tests use
+    // landscapeLeft) the top of the interface is at the picture's right
+    // edge: turn it a quarter turn counter-clockwise.
+    private func upright(_ image: UIImage) -> UIImage {
+        guard XCUIDevice.shared.orientation.isLandscape, image.size.width < image.size.height else { return image }
+        let size = CGSize(width: image.size.height, height: image.size.width)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = image.scale
+        return UIGraphicsImageRenderer(size: size, format: format).image { c in
+            c.cgContext.translateBy(x: 0, y: size.height)
+            c.cgContext.rotate(by: -.pi / 2)
+            image.draw(at: .zero)
+        }
     }
 
     private func element(_ id: String) -> XCUIElement { app.descendants(matching: .any).matching(identifier: id).firstMatch }
