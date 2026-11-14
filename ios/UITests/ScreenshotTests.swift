@@ -18,7 +18,9 @@ final class ScreenshotTests: XCTestCase {
     }
 
     private func shot(_ name: String) {
-        let a = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        // The window's picture follows the interface; the screen's picture is
+        // always portrait, so a landscape run comes out on its side.
+        let a = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
         a.name = name
         a.lifetime = .keepAlways
         add(a)
@@ -34,7 +36,8 @@ final class ScreenshotTests: XCTestCase {
         XCTAssertTrue(element("answer-t1-0").waitForExistence(timeout: 15), "the quick answers show on the card")
         shot("01-inbox-landscape")
 
-        element("session-t1").tap()
+        // Tap the name: the middle of this card is an answer button.
+        app.staticTexts["shop · checkout"].firstMatch.tap()
         XCTAssertTrue(element("option-0-1").waitForExistence(timeout: 15), "the question shows in the chat")
         shot("02-question-landscape")
 
@@ -81,7 +84,8 @@ final class ScreenshotTests: XCTestCase {
         shot("09-spaces-folded")
 
         element("settings").tap()
-        XCTAssertTrue(app.staticTexts["Connected"].waitForExistence(timeout: 10))
+        // The row reads as one element: "State, Connected".
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Connected'")).firstMatch.waitForExistence(timeout: 10), "the link state shows")
         shot("10-settings")
         element("settings-done").tap()
 
