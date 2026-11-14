@@ -174,8 +174,8 @@ struct SettingsView: View {
         guard let server = normalizeServer(url) else { return }
         error = nil
         Task {
-            if await Servers.probe(server, transport: model.transport) != nil { model.setServer(server); url = server }
-            else { error = "No herdr-monitor server answers at \(server)." }
+            if let found = await Servers.resolve(server, transport: model.transport) { model.setServer(found); url = found }
+            else { error = "No herdr-monitor server answers at \(server). Check the port (usually :\(Servers.defaultPort))." }
         }
     }
 

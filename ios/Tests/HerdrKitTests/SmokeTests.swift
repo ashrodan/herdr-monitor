@@ -24,3 +24,9 @@ import Testing
     #expect(store.live.prs.count == 2)
     store.stop()
 }
+
+@Test func aBareAddressAlsoTriesTheUsualPort() {
+    #expect(Servers.candidates("my-mac.tail1.ts.net") == ["https://my-mac.tail1.ts.net", "https://my-mac.tail1.ts.net:7400"])
+    #expect(Servers.candidates("https://my-mac.tail1.ts.net:7421/") == ["https://my-mac.tail1.ts.net:7421"])
+    #expect(Servers.candidates("  ") == [])
+}

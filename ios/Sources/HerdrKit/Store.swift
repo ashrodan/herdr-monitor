@@ -143,6 +143,22 @@ public final class Store {
 public enum Servers {
     // One server, asked directly: /api/info, else /api/health (an older
     // server has no /api/info).
+    // The addresses to try for what the user typed. With no port, the bare
+    // address first, then herdr-monitor's usual port: Tailscale Serve often
+    // has another app on 443.
+    public static let defaultPort = 7400
+    public static func candidates(_ input: String) -> [String] {
+        guard let server = normalizeServer(input) else { return [] }
+        if URLComponents(string: server)?.port != nil { return [server] }
+        return [server, "\(server):\(defaultPort)"]
+    }
+
+    // The first candidate where a herdr-monitor answers.
+    public static func resolve(_ input: String, transport: Transport) async -> String? {
+        for url in candidates(input) where await probe(url, transport: transport) != nil { return url }
+        return nil
+    }
+
     public static func probe(_ url: String, transport: Transport) async -> ServerInfo? {
         let api = Api(url, transport: transport)
         let urlHost = URL(string: url)?.host

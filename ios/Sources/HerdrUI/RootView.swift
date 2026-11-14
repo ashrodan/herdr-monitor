@@ -83,8 +83,8 @@ struct OnboardingView: View {
         guard let server = normalizeServer(url), !busy else { return }
         busy = true; error = nil
         Task {
-            if await Servers.probe(server, transport: model.transport) != nil { model.setServer(server) }
-            else { error = "No herdr-monitor server answers at \(server). Check the address, and that Tailscale is on." }
+            if let found = await Servers.resolve(server, transport: model.transport) { model.setServer(found) }
+            else { error = "No herdr-monitor server answers at \(server). Check the address and its port (usually :\(Servers.defaultPort)), and that Tailscale is on." }
             busy = false
         }
     }
