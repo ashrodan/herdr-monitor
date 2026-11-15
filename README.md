@@ -333,6 +333,8 @@ credential field, never in a chat.
 | `herdr_send` | Type a message into an agent and press Enter |
 | `herdr_answer` | Answer a question form (option numbers) or a dialog (keys) |
 | `herdr_wait` | Wait until an agent stops working (default 20 s, max 25 s so it ends before client timeouts; a timeout is a normal "still working" answer) |
+| `herdr_handoff` | Send a task, wait (max 25 s), then read what the agent said since. On a timeout it still returns the output so far, with a cursor to continue |
+| `herdr_rename` | Give an agent a short name for what it does now (the hc label `monitor.name`). It shows in lists and reads and works as the agent argument |
 | `herdr_start` | Start `claude` or `omp` in a space's folder, in a new tab |
 | `herdr_interrupt` | Press the stop key in an agent |
 | `herdr_prs` | Open PRs, with checks and why each cannot merge |

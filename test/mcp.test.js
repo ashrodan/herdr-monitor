@@ -10,6 +10,7 @@ import { createMcp, bearerOk, headerValue, MODERN } from '../lib/mcp.js';
 import { herdrMcp, pendingQuestion, stateOf, chatText, isDialogKey, clock, foldRuns, latestTask, cursorOf, messagesSince, folderMismatch, WAIT_MAX_S } from '../lib/mcp-herdr.js';
 import { loadSkills, frontMatter } from '../lib/mcp-skills.js';
 import { mcpToken } from '../lib/mcp-token.js';
+import { summarize } from '../lib/hc.js';
 
 const SKILLS = path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'mcp', 'skills');
 
@@ -33,6 +34,8 @@ function fakeMonitor() {
   m.calls = [];
   m.call = async (method, params, opts) => {
     m.calls.push({ method, params, opts });
+    if (method === 'terminal.send' && m.onSend) m.onSend(params);
+    if (method === 'terminal.send' && m.sendError) throw new Error(m.sendError);
     if (method === 'terminal.read') return { text: 'screen text\n\n' };
     if (method === 'terminal.wait' && m.hangWait) return new Promise(() => {});
     if (method === 'terminal.wait') return { terminal: params.terminal, ended: true, reason: 'status', status: 'done', turn: 2, children: [] };
@@ -52,7 +55,7 @@ before(async () => {
   answers = []; started = [];
   const app = herdrMcp({
     monitor, skills: loadSkills(SKILLS), debounceMs: 10, now: () => Date.parse('2026-11-15T12:00:00Z'), timeZone: 'Australia/Melbourne',
-    chatFor: async () => CHAT,
+    chatFor: async () => monitor.chat || CHAT,
     overview: { get: async () => ({ prs: [{ space: 'spA', spaceName: 'app', pr: { number: 7, headRefName: 'feat/x', title: 'X', isDraft: false, url: 'https://gh/7' }, readiness: { canMerge: false, reasons: ['1 check failing'] } }] }) },
     startSession: async (body) => { started.push(body); return { address: 't20', name: 'hm-claude-1', tab: 'tbN' }; },
     answer: async (addr, body) => { answers.push({ addr, body }); return { ok: true }; },
@@ -401,4 +404,63 @@ test('clock, foldRuns, chatText folding, latestTask, cursorOf, messagesSince', (
   assert.deepEqual(messagesSince(msgs, 'b#1').messages, [{ id: 'b', role: 'assistant', parts: [{ kind: 'text', text: 'done' }] }]);
   assert.deepEqual(messagesSince(msgs, 'a#1').messages.map((m) => m.id), ['u2', 'b']);
   assert.equal(messagesSince(msgs, 'zz#0').found, false);
+});
+
+test('herdr_handoff: send, wait, then only what the agent said since the message', async () => {
+  monitor.calls.length = 0;
+  monitor.chat = { available: true, messages: [...CHAT.messages] };
+  monitor.onSend = (params) => monitor.chat.messages.push(
+    { id: 'u2', role: 'user', at: '2026-11-15T11:00:00Z', parts: [{ kind: 'text', text: params.text }] },
+    { id: 'a2', role: 'assistant', at: '2026-11-15T11:01:00Z', parts: [{ kind: 'text', text: 'Tests pass.' }] });
+  try {
+    const r = await call('herdr_handoff', { agent: 't3', text: 'run the tests' });
+    assert.notEqual(r.isError, true);
+    const text = r.content[0].text;
+    assert.match(text, /^Delivered to t3\. t3 stopped: status \(done\)\./);
+    assert.match(text, /\[user 22:00 AEDT\]\nrun the tests/);
+    assert.match(text, /Tests pass\./);
+    assert.doesNotMatch(text, /Which one\?/); // from before the message
+    assert.match(text, /Cursor: a2#1/);
+    assert.deepEqual(monitor.calls.map((c) => c.method), ['terminal.send', 'terminal.wait']);
+    assert.ok(monitor.calls[1].opts.timeoutMs > monitor.calls[1].params.timeout * 1000);
+  } finally { monitor.chat = null; monitor.onSend = null; }
+});
+
+test('herdr_handoff: a wait timeout still returns the output and a hint, not an error', async () => {
+  monitor.hangWait = true;
+  monitor.terminals.get('t2').status = { app: 'claude-code', state: 'working' };
+  try {
+    const r = await call('herdr_handoff', { agent: 't2', text: 'keep going', timeout_s: 1 });
+    assert.notEqual(r.isError, true);
+    assert.match(r.content[0].text, /^Delivered to t2\. t2 is still working after 1s\./);
+    assert.match(r.content[0].text, /Cursor: a1#3\n\nStill working: that is normal\. Call herdr_wait t2, then herdr_read t2 with since set to the cursor above\. Do not resend the task\.$/);
+    // timeout_s above the cap is cut to it.
+    monitor.hangWait = false; monitor.calls.length = 0;
+    await call('herdr_handoff', { agent: 't2', text: 'x', timeout_s: 300 });
+    assert.equal(monitor.calls.find((c) => c.method === 'terminal.wait').params.timeout, WAIT_MAX_S);
+  } finally { monitor.hangWait = false; }
+  // Nothing delivered: that is an error, so the caller can act on it.
+  monitor.sendError = 'terminal is blocked';
+  try {
+    const r = await call('herdr_handoff', { agent: 't1', text: 'x' });
+    assert.equal(r.isError, true);
+    assert.match(r.content[0].text, /waits at a question or dialog/);
+  } finally { monitor.sendError = null; }
+});
+
+test('herdr_rename sets the monitor.name label; the name shows and resolves', async () => {
+  monitor.calls.length = 0;
+  const r = await call('herdr_rename', { agent: 't3', name: '  v27   release ' });
+  assert.match(r.content[0].text, /t3 is now named "v27 release"/);
+  assert.deepEqual(monitor.calls[0], { method: 'terminal.label', params: { terminal: 't3', labels: { 'monitor.name': 'v27 release' } }, opts: undefined });
+  assert.match((await call('herdr_overview', {})).content[0].text, /t3 \(v27 release\) · claude-code/);
+  assert.match((await call('herdr_read', { agent: 'v27 release' })).content[0].text, /Name \(herdr_rename\): v27 release/);
+  const dup = await call('herdr_rename', { agent: 't2', name: 'v27 release' });
+  assert.equal(dup.isError, true);
+  await call('herdr_rename', { agent: 't3', name: '' });
+  assert.deepEqual(monitor.calls.at(-1).params.labels, { 'monitor.name': '' });
+  assert.equal(monitor.terminals.get('t3').label, null);
+  // hc's record carries the label back after a refresh.
+  assert.equal(summarize({ address: 't3', labels: { 'monitor.name': 'v27 release' } }).label, 'v27 release');
+  assert.equal(summarize({ address: 't3', labels: {} }).label, null);
 });

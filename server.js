@@ -423,7 +423,7 @@ const routes = [
     if (typeof text !== 'string' || !text.trim()) return send(res, 400, { error: 'text required' });
     // force: type even while the agent waits at a dialog (the page asks for it
     // only then). Without it, hc refuses to type into a blocked agent.
-    send(res, 200, await monitor.call('terminal.send', { terminal: addr, text, force: force === true }));
+    send(res, 200, await monitor.callAlone('terminal.send', { terminal: addr, text, force: force === true }, { timeoutMs: 90000 }));
   }],
   // Navigation keys only, to answer a dialog: arrows, tab, space, enter, esc,
   // backspace, and single letters or digits (option shortcuts).
@@ -454,7 +454,7 @@ const routes = [
   }],
   ['POST', /^\/api\/terminals\/([^/]+)\/interrupt$/, async (req, res, [addr]) => {
     if (!terminalOr404(res, addr)) return;
-    send(res, 200, await monitor.call('terminal.interrupt', { terminal: addr, timeout: 5 }));
+    send(res, 200, await monitor.callAlone('terminal.interrupt', { terminal: addr, timeout: 5 }, { timeoutMs: 15000 }));
   }],
 ];
 

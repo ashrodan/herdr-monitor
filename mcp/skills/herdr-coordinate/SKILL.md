@@ -32,7 +32,9 @@ An agent has one state:
 4. To hand out work: pick the space that owns the repo (`herdr_space`).
    Give the task to an idle agent there with `herdr_send`, or start a new
    one with `herdr_start`.
-5. Follow up: `herdr_wait` (about 20 s), then `herdr_read`. To poll one agent,
+5. Follow up: `herdr_wait` (about 20 s), then `herdr_read`. `herdr_handoff`
+   does send, wait and read in one call. When a title is old, give the agent
+   a name with `herdr_rename`. To poll one agent,
    pass the `Cursor:` from the last `herdr_read` as `since`: you get only
    the new messages.
 

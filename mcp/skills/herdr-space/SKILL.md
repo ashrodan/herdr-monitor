@@ -32,6 +32,8 @@ touch agents in other spaces by mistake.
 ## Follow a task to its result
 
 1. `herdr_send` (or `herdr_start`).
+   Or use `herdr_handoff` for steps 1 to 3 in one call: it sends, waits and
+   reads, and on a timeout gives the output so far and a cursor.
 2. `herdr_wait` with about 20 s (the maximum is 25 s). On a timeout, call it
    again. Do not resend. To see progress, `herdr_read` with `since` set to
    the `Cursor:` of your last read.
