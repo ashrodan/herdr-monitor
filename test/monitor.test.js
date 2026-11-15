@@ -212,3 +212,27 @@ test('a removed terminal leaves nothing in the app scan maps', async () => {
   assert.equal(m.screenListen.has('t1'), false);
   m.stop();
 });
+
+test('callAlone runs a waiting call on a link of its own and closes it; abort ends it early', async () => {
+  let release;
+  const { m, links } = await setup({ answers: { ...ANSWERS(), 'terminal.wait': () => new Promise((r) => { release = r; }) } });
+  await m.start();
+  const shared = links.length;
+  const p = m.callAlone('terminal.wait', { terminal: 't1', timeout: 20 });
+  await wait(5);
+  assert.equal(links.length, shared + 1);               // a new link, not the shared one
+  assert.deepEqual(links.at(-1).calls, [['terminal.wait', { terminal: 't1', timeout: 20 }]]);
+  assert.equal(m.rpc.calls.some(([x]) => x === 'terminal.wait'), false);
+  release({ ended: true });
+  assert.deepEqual(await p, { ended: true });
+  assert.equal(links.at(-1).closed, true);
+
+  const ctl = new AbortController();
+  const q = m.callAlone('terminal.wait', { terminal: 't1', timeout: 20 }, { signal: ctl.signal });
+  await wait(5);
+  ctl.abort();
+  assert.equal(links.at(-1).closed, true);              // abort closes the link (hc ends the wait)
+  release({ ended: false });
+  await q;
+  m.stop();
+});

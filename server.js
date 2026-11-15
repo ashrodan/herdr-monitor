@@ -20,6 +20,10 @@ import { Monitor, parseStore } from './lib/monitor.js';
 import { Hub } from './lib/hub.js';
 import { Overview, reposOf } from './lib/overview.js';
 import { send, readJson, readBytes, route } from './lib/http.js';
+import { createMcp, bearerOk } from './lib/mcp.js';
+import { herdrMcp } from './lib/mcp-herdr.js';
+import { loadSkills } from './lib/mcp-skills.js';
+import { mcpToken } from './lib/mcp-token.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOST = process.env.HOST || '127.0.0.1';
@@ -300,6 +304,34 @@ async function placeInNewTab(spaceId, address, label) {
   throw new Error('the Herdr layout kept changing');
 }
 
+// Start one coding agent in a space (POST /api/sessions, herdr_start).
+// Throws an error with .status for a bad request.
+async function startSession(body) {
+  const r = sessionRequest(body, monitor.layout);
+  if (!r.ok) throw Object.assign(new Error(r.error), { status: r.status });
+  const out = sessionResult(await monitor.call('terminal.run', r.params), r.params);
+  if (!out) throw Object.assign(new Error('hc started no terminal'), { status: 502 });
+  // The agent runs either way; if the tab cannot be added, say why.
+  let tab = null, placeError;
+  try { tab = await placeInNewTab(body.space, out.address, body.harness); } catch (err) { placeError = err.message; }
+  return { ...out, tab, ...(placeError ? { placeError } : {}) };
+}
+
+// Tap an option of the question form on screen (POST .../answer,
+// herdr_answer): read the screen to find which question it shows, then
+// press the keys a person would. Throws an error with .status.
+async function answerQuestion(addr, { questions, q = 0, option = 0, action = 'pick' }) {
+  if (!Array.isArray(questions) || !questions.length || questions.length > 10) throw Object.assign(new Error('questions required'), { status: 400 });
+  const qs = questions.map((x) => ({ question: String(x?.question || ''), options: Number(x?.options) | 0, multi: x?.multi === true }));
+  if (action !== 'submit' && !(Number.isInteger(q) && q >= 0 && q < qs.length && Number.isInteger(option) && option >= 0 && option < qs[q].options)) throw Object.assign(new Error('no such option'), { status: 400 });
+  const screen = await monitor.call('terminal.read', { terminal: addr, lines: 80 });
+  const current = currentQuestion(String(screen?.text ?? ''), qs.map((x) => x.question));
+  if (current < 0) throw Object.assign(new Error('the question form is not on screen'), { status: 409 });
+  const keys = answerKeys({ current, total: qs.length, q, option, rows: (qs[q]?.options || 0) + 1, multi: qs[q]?.multi, action });
+  for (let i = 0; i < keys.length; i += 20) await monitor.call('terminal.keys', { terminal: addr, keys: keys.slice(i, i + 20) });
+  return { ok: true, keys };
+}
+
 const routes = [
   ['GET', /^\/api\/icons$/, async (req, res) => {
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'max-age=3600' });
@@ -373,17 +405,7 @@ const routes = [
   // Start one coding agent (claude or omp) in a space's folder, with the
   // prompt as its task. The space must be in the layout; the client never
   // sends a path or an argv (lib/sessions.js).
-  ['POST', /^\/api\/sessions$/, async (req, res) => {
-    const body = await readJson(req);
-    const r = sessionRequest(body, monitor.layout);
-    if (!r.ok) return send(res, r.status, { error: r.error });
-    const out = sessionResult(await monitor.call('terminal.run', r.params), r.params);
-    if (!out) return send(res, 502, { error: 'hc started no terminal' });
-    // The agent runs either way; if the tab cannot be added, say why.
-    let tab = null, placeError;
-    try { tab = await placeInNewTab(body.space, out.address, body.harness); } catch (err) { placeError = err.message; }
-    send(res, 200, { ...out, tab, ...(placeError ? { placeError } : {}) });
-  }],
+  ['POST', /^\/api\/sessions$/, async (req, res) => send(res, 200, await startSession(await readJson(req)))],
   // The git worktrees of a space's repo, and the space each one has in
   // Herdr (null: none). The repo comes from the layout, never the client.
   ['GET', /^\/api\/spaces\/([^/]+)\/worktrees$/, async (req, res, [id]) => {
@@ -401,7 +423,7 @@ const routes = [
     if (typeof text !== 'string' || !text.trim()) return send(res, 400, { error: 'text required' });
     // force: type even while the agent waits at a dialog (the page asks for it
     // only then). Without it, hc refuses to type into a blocked agent.
-    send(res, 200, await monitor.call('terminal.send', { terminal: addr, text, force: force === true }));
+    send(res, 200, await monitor.callAlone('terminal.send', { terminal: addr, text, force: force === true }, { timeoutMs: 90000 }));
   }],
   // Navigation keys only, to answer a dialog: arrows, tab, space, enter, esc,
   // backspace, and single letters or digits (option shortcuts).
@@ -416,16 +438,7 @@ const routes = [
   // Body: {questions: [{question, options, multi}], q, option} or {questions, action: 'submit'}.
   ['POST', /^\/api\/terminals\/([^/]+)\/answer$/, async (req, res, [addr]) => {
     if (!terminalOr404(res, addr)) return;
-    const { questions, q = 0, option = 0, action = 'pick' } = await readJson(req);
-    if (!Array.isArray(questions) || !questions.length || questions.length > 10) return send(res, 400, { error: 'questions required' });
-    const qs = questions.map((x) => ({ question: String(x?.question || ''), options: Number(x?.options) | 0, multi: x?.multi === true }));
-    if (action !== 'submit' && !(Number.isInteger(q) && q >= 0 && q < qs.length && Number.isInteger(option) && option >= 0 && option < qs[q].options)) return send(res, 400, { error: 'no such option' });
-    const screen = await monitor.call('terminal.read', { terminal: addr, lines: 80 });
-    const current = currentQuestion(String(screen?.text ?? ''), qs.map((x) => x.question));
-    if (current < 0) return send(res, 409, { error: 'the question form is not on screen' });
-    const keys = answerKeys({ current, total: qs.length, q, option, rows: (qs[q]?.options || 0) + 1, multi: qs[q]?.multi, action });
-    for (let i = 0; i < keys.length; i += 20) await monitor.call('terminal.keys', { terminal: addr, keys: keys.slice(i, i + 20) });
-    send(res, 200, { ok: true, keys });
+    send(res, 200, await answerQuestion(addr, await readJson(req)));
   }],
   // An image for the agent: hc keeps it beside the terminal (on its machine,
   // removed with the terminal) and returns its path; the page puts the path
@@ -441,13 +454,53 @@ const routes = [
   }],
   ['POST', /^\/api\/terminals\/([^/]+)\/interrupt$/, async (req, res, [addr]) => {
     if (!terminalOr404(res, addr)) return;
-    send(res, 200, await monitor.call('terminal.interrupt', { terminal: addr, timeout: 5 }));
+    send(res, 200, await monitor.callAlone('terminal.interrupt', { terminal: addr, timeout: 5 }, { timeoutMs: 15000 }));
   }],
 ];
 
 const api = route(routes);
+
+// ---- MCP ----
+// /mcp: every space (coordination). /mcp/spaces/<id or name>: one space.
+// A bearer token guards both (lib/mcp-token.js); it stands in for the
+// same-origin check the page's POSTs get. HERDR_MCP=0 turns it off.
+const MCP_ON = process.env.HERDR_MCP !== '0';
+const VERSION = JSON.parse(await fs.readFile(path.join(HERE, 'package.json'), 'utf8')).version;
+const mcpSkills = loadSkills(path.join(HERE, 'mcp', 'skills'));
+const herdrApp = herdrMcp({
+  monitor, skills: mcpSkills, chatFor, overview, startSession, answer: answerQuestion,
+  worktrees: async (id) => {
+    const s = monitor.layout.find((x) => x.id === id);
+    const repo = s && (s.mainRepo || s.repo);
+    if (!repo) return { worktrees: [] };
+    const spaceOfRepo = new Map(monitor.layout.filter((x) => x.repo && !x.virtual).map((x) => [x.repo, x.id]));
+    return { worktrees: parseWorktrees(await tryGit(repo, 'worktree', 'list', '--porcelain')).map((w) => ({ path: w.path, branch: w.branch, space: spaceOfRepo.get(w.path) ?? null })) };
+  },
+});
+const mcp = createMcp({ name: 'herdr-monitor', version: VERSION, app: herdrApp });
+let mcpSecret = null;
+
+async function serveMcp(req, res, url) {
+  if (!MCP_ON) return send(res, 404, { error: 'MCP is off (HERDR_MCP=0)' });
+  if (!bearerOk(req, mcpSecret)) {
+    res.writeHead(401, { 'www-authenticate': 'Bearer realm="herdr-monitor"', 'content-type': 'application/json; charset=utf-8' });
+    return res.end(JSON.stringify({ error: 'Authorization: Bearer <token> required' }));
+  }
+  let scope = { kind: 'board' };
+  const m = /^\/mcp\/spaces\/([^/]+)\/?$/.exec(url.pathname);
+  if (m) {
+    let ref;
+    try { ref = decodeURIComponent(m[1]); } catch { return send(res, 400, { error: 'bad space' }); }
+    const s = herdrApp.findSpace(ref);
+    if (!s) return send(res, monitor.layout.length ? 404 : 503, { error: monitor.layout.length ? `no space "${ref}"` : 'the Herdr layout is not loaded yet' });
+    scope = { kind: 'space', space: s.id };
+  } else if (!/^\/mcp\/?$/.test(url.pathname)) return send(res, 404, { error: 'not found' });
+  return mcp.handle(req, res, scope);
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
+  if (url.pathname === '/mcp' || url.pathname.startsWith('/mcp/')) return serveMcp(req, res, url);
   if (req.method === 'POST' && !sameOrigin(req)) return send(res, 403, { error: 'cross-origin request refused' });
   if (await api(req, res, url)) return;
   if (req.method === 'GET' && !url.pathname.startsWith('/api/') && await serveStatic(req, res, url)) return;
@@ -483,7 +536,7 @@ const redirector = http.createServer((req, res) => {
 function shutdown(signal) {
   console.log(`${signal}: stopping`);
   monitor.stop();
-  clients.close(); agentClients.close();
+  clients.close(); agentClients.close(); mcp.close();
   for (const child of attached) child.kill('SIGTERM');
   server.close(); redirector.close();
   setTimeout(() => process.exit(0), 1500).unref();
@@ -495,7 +548,11 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
   if (REDIRECT_PORT) redirector.listen(REDIRECT_PORT, HOST, () => console.log(`http → https redirect on http://${HOST}:${REDIRECT_PORT}`));
-  server.listen(PORT, HOST, () => console.log(`herdr-monitor on http://${HOST}:${PORT}`));
+  if (MCP_ON) ({ token: mcpSecret } = mcpToken(configDir()));
+  server.listen(PORT, HOST, () => {
+    console.log(`herdr-monitor on http://${HOST}:${PORT}`);
+    if (MCP_ON) console.log(`MCP on http://${HOST}:${PORT}/mcp (bearer token: ${process.env.HERDR_MCP_TOKEN ? 'HERDR_MCP_TOKEN' : path.join(configDir(), 'mcp-token')})`);
+  });
   // Warm the PR overview once hc and the layout are there.
   monitor.start().then(() => overview.get().catch(() => {}));
   setInterval(() => { if (monitor.connected) monitor.refreshLayout(); }, 60000).unref(); // cwd and branch drift
