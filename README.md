@@ -329,10 +329,10 @@ credential field, never in a chat.
 | --- | --- |
 | `herdr_overview` | Start here (board only): every agent, the ones that need you first |
 | `herdr_space` | One space: folder, branch, tabs, agents and programs; git worktrees |
-| `herdr_read` | An agent's last messages and any question it waits on; or its screen |
+| `herdr_read` | An agent's latest task, last messages (local time, repeats folded) and any question it waits on; or its screen. Pass the `Cursor:` it returns as `since` to get only newer messages |
 | `herdr_send` | Type a message into an agent and press Enter |
 | `herdr_answer` | Answer a question form (option numbers) or a dialog (keys) |
-| `herdr_wait` | Wait until an agent stops working (default 20 s; a timeout is a check-in) |
+| `herdr_wait` | Wait until an agent stops working (default 20 s, max 25 s so it ends before client timeouts; a timeout is a normal "still working" answer) |
 | `herdr_start` | Start `claude` or `omp` in a space's folder, in a new tab |
 | `herdr_interrupt` | Press the stop key in an agent |
 | `herdr_prs` | Open PRs, with checks and why each cannot merge |

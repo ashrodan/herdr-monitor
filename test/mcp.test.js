@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { createMcp, bearerOk, headerValue, MODERN } from '../lib/mcp.js';
-import { herdrMcp, pendingQuestion, stateOf, chatText, isDialogKey } from '../lib/mcp-herdr.js';
+import { herdrMcp, pendingQuestion, stateOf, chatText, isDialogKey, clock, foldRuns, latestTask, cursorOf, messagesSince, folderMismatch, WAIT_MAX_S } from '../lib/mcp-herdr.js';
 import { loadSkills, frontMatter } from '../lib/mcp-skills.js';
 import { mcpToken } from '../lib/mcp-token.js';
 
@@ -20,8 +20,10 @@ function fakeMonitor() {
   m.layout = [
     { id: 'spA', name: 'app', folder: '/src/app', repo: '/src/app', branch: 'feat/x', tabs: [{ id: 'tb1', name: 'work', terminals: ['t1', 't2', 't9'] }] },
     { id: 'spB', name: 'docs', folder: '/src/docs', repo: '/src/docs', tabs: [{ id: 'tb2', name: '1', terminals: ['t3'] }] },
+    // Herdr kept another space's folder for this one.
+    { id: 'spC', name: 'vid', folder: '/wt/other', repo: '/src/vid', tabs: [] },
   ];
-  const T = (address, space, tab, state, extra = {}) => ({ address, agent: 'claude-code', state: 'live', reported: true, status: { app: 'claude-code', state }, space, tab, pid: 100 + Number(address.slice(1)), changed_ms: 1000, title: `task ${address}`, ...extra });
+  const T = (address, space, tab, state, extra = {}) => ({ address, agent: 'claude-code', state: 'live', reported: true, status: { app: 'claude-code', state }, space, tab, pid: 100 + Number(address.slice(1)), changed_ms: Date.parse('2026-11-15T11:59:00Z'), title: `task ${address}`, ...extra });
   m.terminals = new Map([
     ['t1', T('t1', 'spA', 'tb1', 'blocked', { status: { app: 'claude-code', state: 'blocked', msg: 'Which db?' } })],
     ['t2', T('t2', 'spA', 'tb1', 'working')],
@@ -32,6 +34,7 @@ function fakeMonitor() {
   m.call = async (method, params, opts) => {
     m.calls.push({ method, params, opts });
     if (method === 'terminal.read') return { text: 'screen text\n\n' };
+    if (method === 'terminal.wait' && m.hangWait) return new Promise(() => {});
     if (method === 'terminal.wait') return { terminal: params.terminal, ended: true, reason: 'status', status: 'done', turn: 2, children: [] };
     return {};
   };
@@ -39,7 +42,7 @@ function fakeMonitor() {
 }
 
 const QUESTION = { kind: 'question', id: 'q1', name: 'AskUserQuestion', result: null, questions: [{ header: 'DB', question: 'Which db?', multi: false, options: [{ label: 'Postgres', description: '' }, { label: 'SQLite', description: 'small' }] }] };
-const CHAT = { available: true, messages: [{ role: 'user', at: '2026-11-15T10:00:00Z', parts: [{ kind: 'text', text: 'Add a db' }] }, { role: 'assistant', at: '2026-11-15T10:01:00Z', parts: [{ kind: 'text', text: 'Which one?' }, { kind: 'tool', name: 'Bash', summary: 'ls' }, QUESTION] }] };
+const CHAT = { available: true, messages: [{ id: 'u1', role: 'user', at: '2026-11-15T10:00:00Z', parts: [{ kind: 'text', text: 'Add a db' }] }, { id: 'a1', role: 'assistant', at: '2026-11-15T10:01:00Z', parts: [{ kind: 'text', text: 'Which one?' }, { kind: 'tool', name: 'Bash', summary: 'ls' }, QUESTION] }] };
 
 let server, base, monitor, answers, started;
 const TOKEN = 'x'.repeat(64);
@@ -48,7 +51,7 @@ before(async () => {
   monitor = fakeMonitor();
   answers = []; started = [];
   const app = herdrMcp({
-    monitor, skills: loadSkills(SKILLS), debounceMs: 10, now: () => 61000,
+    monitor, skills: loadSkills(SKILLS), debounceMs: 10, now: () => Date.parse('2026-11-15T12:00:00Z'), timeZone: 'Australia/Melbourne',
     chatFor: async () => CHAT,
     overview: { get: async () => ({ prs: [{ space: 'spA', spaceName: 'app', pr: { number: 7, headRefName: 'feat/x', title: 'X', isDraft: false, url: 'https://gh/7' }, readiness: { canMerge: false, reasons: ['1 check failing'] } }] }) },
     startSession: async (body) => { started.push(body); return { address: 't20', name: 'hm-claude-1', tab: 'tbN' }; },
@@ -142,7 +145,7 @@ test('the board lists every tool; a space endpoint drops overview and the space 
 
 test('herdr_overview puts the agent that needs you first', async () => {
   const r = await call('herdr_overview', {});
-  assert.match(r.content[0].text, /3 agents in 2 spaces: 1 need you, 1 working, 1 done/);
+  assert.match(r.content[0].text, /3 agents in 3 spaces: 1 need you, 1 working, 1 done/);
   assert.ok(r.content[0].text.indexOf('Needs you') < r.content[0].text.indexOf('Working'));
   assert.match(r.content[0].text, /t1 · claude-code · blocked 1m · asks: Which db\?/);
 });
@@ -193,7 +196,14 @@ test('herdr_wait gives hc room past the wait; herdr_start uses the scoped space'
   monitor.calls.length = 0;
   const w = await call('herdr_wait', { agent: 't2', timeout_s: 15 });
   assert.match(w.content[0].text, /t2 stopped: status \(done\)/);
-  assert.equal(monitor.calls[0].opts.timeoutMs, 25000);
+  assert.equal(monitor.calls[0].opts.timeoutMs, 45000); // always longer than the wait
+  assert.equal(monitor.calls[0].params.timeout, 15);
+
+  // Longer than the cap: cut to WAIT_MAX_S, so the call ends before client timeouts.
+  monitor.calls.length = 0;
+  await call('herdr_wait', { agent: 't2', timeout_s: 120 });
+  assert.equal(monitor.calls[0].params.timeout, WAIT_MAX_S);
+  assert.ok(WAIT_MAX_S <= 25);
 
   const s = await call('herdr_start', { prompt: 'fix it' }, { path: '/mcp/spaces/app' });
   assert.match(s.content[0].text, /Started t20/);
@@ -296,7 +306,7 @@ test('stateOf, chatText, isDialogKey, frontMatter, bearerOk', () => {
   assert.equal(stateOf({ state: 'live', reported: true }), 'idle');
   assert.equal(stateOf({ state: 'live', status: { state: 'done' }, changed_ms: 10, seen_ms: 5 }), 'done');
   assert.equal(stateOf({ state: 'live', status: { state: 'done' }, changed_ms: 10, seen_ms: 12 }), 'idle');
-  assert.match(chatText(CHAT.messages, 1), /^\[assistant 10:01\]/);
+  assert.match(chatText(CHAT.messages, 1, { now: Date.parse('2026-11-15T12:00:00Z'), timeZone: 'UTC' }), /^\[assistant 10:01 UTC\]/);
   assert.equal(isDialogKey('shift+tab'), true);
   assert.equal(isDialogKey('ctrl+c'), false);
   assert.deepEqual(frontMatter('---\nname: a\ndescription: "b: c"\n---\nbody'), { name: 'a', description: 'b: c' });
@@ -316,4 +326,79 @@ test('mcpToken makes a 600 file once, then reads it', () => {
   assert.equal(mcpToken(dir, { HERDR_MCP_TOKEN: 'y'.repeat(40) }).token, 'y'.repeat(40));
   assert.throws(() => mcpToken(dir, { HERDR_MCP_TOKEN: 'short' }));
   fs.rmSync(dir, { recursive: true });
+});
+
+test('herdr_wait: a stuck hc is a normal still-working answer, never an error', async () => {
+  monitor.hangWait = true;
+  monitor.terminals.get('t2').status = { app: 'claude-code', state: 'working' };
+  try {
+    const t0 = Date.now();
+    const r = await call('herdr_wait', { agent: 't2', timeout_s: 1 });
+    assert.notEqual(r.isError, true);
+    assert.match(r.content[0].text, /t2 is still working after 1s\. That is normal: call herdr_wait again/);
+    assert.ok(Date.now() - t0 < 3000);
+
+    // The monitor's own state events end the wait when hc says nothing.
+    const t2 = monitor.terminals.get('t2');
+    const p = call('herdr_wait', { agent: 't2', timeout_s: 5 });
+    setTimeout(() => { t2.status = { app: 'claude-code', state: 'done' }; monitor.emit('event', 'status', {}); }, 200);
+    const done = await p;
+    assert.match(done.content[0].text, /t2 stopped: state \(done\)/);
+    t2.status = { app: 'claude-code', state: 'working' };
+  } finally { monitor.hangWait = false; }
+});
+
+test('herdr_read: local time with zone, latest task, cursor and since', async () => {
+  const r = (await call('herdr_read', { agent: 't3' })).content[0].text;
+  assert.match(r, /\[user 21:00 AEDT\]/);           // 10:00 UTC on the Mac's clock
+  assert.match(r, /Latest task \(21:00 AEDT\): Add a db/);
+  assert.match(r, /Terminal title \(may be old\): task t3/);
+  assert.match(r, /Cursor: a1#3$/);
+  assert.match((await call('herdr_read', { agent: 't3', since: 'a1#3' })).content[0].text, /\(nothing new since the cursor\)/);
+  const newer = (await call('herdr_read', { agent: 't3', since: 'u1#1' })).content[0].text;
+  assert.doesNotMatch(newer, /\[user/);
+  assert.match(newer, /\[assistant 21:01 AEDT\]/);
+  assert.match((await call('herdr_read', { agent: 't3', since: 'gone#1' })).content[0].text, /cursor is not in this conversation/);
+  // Rows show the latest task, not the old terminal title.
+  assert.match((await call('herdr_overview', {})).content[0].text, /t3 · claude-code · done \S+ · task: "Add a db"/);
+});
+
+test('folder mismatch: herdr_space warns, herdr_start refuses', async () => {
+  assert.equal(folderMismatch({ folder: '/wt/other', repo: '/src/vid' }), true);
+  assert.equal(folderMismatch({ folder: '/src/vid/sub', repo: '/src/vid' }), false);
+  assert.equal(folderMismatch({ folder: '/src', repo: '/src/vid' }), false);
+  assert.equal(folderMismatch({ folder: '/src/vid' }), false);
+  assert.match((await call('herdr_space', { space: 'vid' })).content[0].text, /WARNING: folder mismatch\. Herdr's folder for this space is \/wt\/other, but its agents work in \/src\/vid/);
+  const before = started.length;
+  const r = await call('herdr_start', { space: 'vid', prompt: 'go' });
+  assert.equal(r.isError, true);
+  assert.match(r.content[0].text, /Not started/);
+  assert.equal(started.length, before);
+});
+
+test('clock, foldRuns, chatText folding, latestTask, cursorOf, messagesSince', () => {
+  const now = Date.parse('2026-11-15T12:00:00Z');
+  assert.equal(clock('2026-11-15T03:37:00Z', { now, timeZone: 'Australia/Melbourne' }), '14:37 AEDT');
+  assert.equal(clock('2026-11-13T03:37:00Z', { now, timeZone: 'Australia/Melbourne' }), '2026-11-13 14:37 AEDT');
+  assert.equal(clock(null), '');
+  assert.deepEqual(foldRuns(['a', 'b', 'b', 'b', 'a']), ['a', 'b (x3)', 'a']);
+
+  const wait = { kind: 'tool', name: 'wait', summary: 'Waiting for approved private v27 upload' };
+  // One message with the same step five times (omp polling).
+  assert.match(chatText([{ role: 'assistant', parts: [wait, wait, wait, wait, wait] }]), /^\[assistant\]\n→ wait: Waiting for approved private v27 upload \(x5\)$/);
+  // Five messages in a row that say the same thing.
+  const polls = [0, 1, 2, 3, 4].map((i) => ({ id: `m${i}`, role: 'assistant', at: `2026-11-15T03:3${i}:00Z`, parts: [wait] }));
+  const text = chatText([{ role: 'user', at: '2026-11-15T03:20:00Z', parts: [{ kind: 'text', text: 'ship v27' }] }, ...polls], 6, { now, timeZone: 'UTC' });
+  assert.equal(text.match(/→ wait/g).length, 1);
+  assert.match(text, /\[assistant 03:30 UTC to 03:34 UTC, x5\]/);
+  assert.match(text, /\[user 03:20 UTC\]\nship v27/);
+
+  const msgs = [{ id: 'u', role: 'user', at: 'x', parts: [{ kind: 'text', text: 'old' }] }, { id: 'a', role: 'assistant', parts: [wait] }, { id: 'u2', role: 'user', at: 'y', parts: [{ kind: 'text', text: 'Ship   v27' }] }, { id: 'b', role: 'assistant', parts: [wait, { kind: 'text', text: 'done' }] }];
+  assert.deepEqual(latestTask(msgs), { text: 'Ship v27', at: 'y' });
+  assert.equal(cursorOf(msgs), 'b#2');
+  assert.equal(cursorOf([{ role: 'user', parts: [] }]), null);
+  // The last message grew by one part since the cursor: only that part shows.
+  assert.deepEqual(messagesSince(msgs, 'b#1').messages, [{ id: 'b', role: 'assistant', parts: [{ kind: 'text', text: 'done' }] }]);
+  assert.deepEqual(messagesSince(msgs, 'a#1').messages.map((m) => m.id), ['u2', 'b']);
+  assert.equal(messagesSince(msgs, 'zz#0').found, false);
 });

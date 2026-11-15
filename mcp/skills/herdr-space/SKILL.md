@@ -32,7 +32,9 @@ touch agents in other spaces by mistake.
 ## Follow a task to its result
 
 1. `herdr_send` (or `herdr_start`).
-2. `herdr_wait` with about 20 s. On a timeout, call it again. Do not resend.
+2. `herdr_wait` with about 20 s (the maximum is 25 s). On a timeout, call it
+   again. Do not resend. To see progress, `herdr_read` with `since` set to
+   the `Cursor:` of your last read.
 3. When it stops:
    - done or idle: `herdr_read` and report the result.
    - blocked: `herdr_read`, then `herdr_answer`, then go back to step 2.
