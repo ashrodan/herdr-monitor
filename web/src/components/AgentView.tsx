@@ -96,7 +96,7 @@ function Header({ children }: { children: React.ReactNode }) {
 const MODE_KEY = 'herdr-monitor.output';
 type Mode = 'chat' | 'live' | 'text';
 // Agents whose own session the server can read: Claude Code, omp and pi.
-const CHAT_APPS = /^(claude|claude-code|omp|pi)$/;
+const CHAT_APPS = /^(claude|claude-code|codex|omp|pi)$/;
 const hasChat = (t: { agent: string; status: { app?: string } | null }) => CHAT_APPS.test(t.status?.app || '') || CHAT_APPS.test(t.agent);
 
 function Output({ addr, live, chat, outbox, delivered, cols, rows, working, blocked, stateKey }: { addr: string; live: boolean; chat: boolean; outbox: Sent[]; delivered: (ids: number[]) => void; cols: number; rows: number; working: boolean; blocked: boolean; stateKey: string }) {

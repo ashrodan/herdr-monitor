@@ -11,7 +11,10 @@ built to `dist/`.
 - **Agents by state**: waiting, working and done, across every Herdr space.
   You can also group them by space, or nest them under the agent that
   started them.
-- **Chat**: Claude Code, omp and pi conversations, rendered for a phone.
+- **Chat**: Claude Code, Codex, omp and pi conversations, rendered for a phone.
+  (Codex: the session file is found by the session id in the terminal title,
+  else by the folder and the start time of the process. A resumed Codex
+  session without the id in its title has no chat.)
 - **Answer questions**: tap the options of an agent's question form.
 - **Reply**: type, paste or attach an image.
 - **Push notifications** when an agent needs you (installed as a PWA).

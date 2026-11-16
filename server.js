@@ -344,7 +344,7 @@ const routes = [
     // A terminal on an hc machine ("dai/t1"): its pid and its transcript are
     // on that machine, never in this machine's files.
     const slash = t.address.indexOf('/');
-    const chat = slash < 0 ? await chatFor(t.pid) : await remoteChatFor(t.address.slice(0, slash), t.pid, { hcBin: HC_BIN });
+    const chat = slash < 0 ? await chatFor(t.pid, { agent: t.agent, title: t.title, cwd: t.cwd }) : await remoteChatFor(t.address.slice(0, slash), t.pid, { hcBin: HC_BIN });
     // The page polls: answer "no change" without the body when it has this version.
     if (chat.available && url.searchParams.get('v') === chat.version) return send(res, 200, { unchanged: true, version: chat.version });
     send(res, 200, chat);
