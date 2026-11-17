@@ -279,11 +279,18 @@ fun AgentScreen(
     val targets = remember(place, address, pages, live.terminals, live.spaces) {
         val alive = { a: String -> live.terminals[a]?.finished == false }
         Move.entries.mapNotNull { m ->
-            val to = if (place != null) neighbour(place, address, m, alive) else neighbourInList(pages, address, m)
+            val to = if (place != null) neighbour(place, address, m, alive, live.spaces) else neighbourInList(pages, address, m)
             val tt = to?.let(live.terminals::get) ?: return@mapNotNull null
             val label = tt.name ?: if (tt.isChat()) harnessName(tt.agent) else tt.agent
-            val tab = place?.space?.tabs?.firstOrNull { to in it.terminals }?.takeIf { it.id != place.tab.id }
-            m to StickTarget(to, label + (tab?.let { " · tab ${it.name}" } ?: ""))
+            // Say when the move leaves the tab or the space.
+            val there = placeOf(tt, to, live.spaces)
+            val far = when {
+                place == null || there == null -> null
+                there.space.id != place.space.id -> there.space.name
+                there.tab.id != place.tab.id -> "tab ${there.tab.name}"
+                else -> null
+            }
+            m to StickTarget(to, label + (far?.let { " · $it" } ?: ""))
         }.toMap()
     }
     val watchedAll by ctx.app.watched.collectAsStateWithLifecycle()

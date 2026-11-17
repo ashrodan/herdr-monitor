@@ -75,7 +75,7 @@ class SpaceMapTest {
         assertEquals("a", from("c", Move.Left))
         assertEquals("c", from("b", Move.Down))
         assertEquals("b", from("c", Move.Up))
-        // Up and down stay in the tab.
+        // Up and down stay in the tab when the space is alone.
         assertNull(from("a", Move.Up))
         assertNull(from("b", Move.Up))
         assertNull(from("c", Move.Down))
@@ -102,6 +102,32 @@ class SpaceMapTest {
         assertNull(from("c", Move.Up) { it != "b" && it != "dead" })
         // A terminal in no tab has no neighbours there.
         assertNull(neighbour(placeOf(null, "x", listOf(grid)), "x", Move.Right, alive))
+    }
+
+    // As on the map: the worktrees of the repo are under their main space.
+    @Test fun atTheTabsTopOrBottomTheMoveGoesToTheSpaceAboveOrBelow() {
+        val wt1 = Space("w1", "fix", worktree = true, parent = "g", tabs = listOf(SpaceTab("w1a", "1", false, listOf("dead"))))
+        val wt2 = Space("w2", "feat", worktree = true, parent = "g", tabs = listOf(
+            SpaceTab("w2a", "1", false, listOf("p")),
+            SpaceTab("w2b", "2", false, listOf("q", "r"), PaneSplit(true, listOf(PaneLeaf("q"), PaneLeaf("r")))),
+        ))
+        val all = listOf(grid, wt1, wt2, Space("other", "notes", tabs = listOf(SpaceTab("o", "1", false, listOf("n")))))
+        fun go(a: String, m: Move) = neighbour(placeOf(null, a, all), a, m, alive, all)
+        // From tab 2 of the main space: wt1 has nothing that runs, so wt2,
+        // its tab 2, the pane under where you were.
+        assertEquals("q", go("a", Move.Down))
+        assertEquals("r", go("c", Move.Down))
+        // From tab 4: wt2 has no tab 4, so its nearest tab.
+        assertEquals("q", go("e", Move.Down))
+        // Up from the worktree: the main space, the same tab, its lower edge.
+        assertEquals("z", go("p", Move.Up))
+        assertEquals("a", go("q", Move.Up))
+        assertEquals("c", go("r", Move.Up))
+        // No space above the first or below the last of the family, and
+        // another repo is never a neighbour.
+        assertNull(go("a", Move.Up))
+        assertNull(go("p", Move.Down))
+        assertNull(go("n", Move.Down))
     }
 
     @Test fun aSessionInNoTabGoesThroughTheSwipeList() {

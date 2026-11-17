@@ -69,23 +69,45 @@ fun paneBeside(rects: List<PaneRect>, address: String, move: Move, alive: (Strin
     }.minWithOrNull(compareBy<Triple<String, Int, Float>>({ it.second }, { -it.third }))?.first
 }
 
-// Where the joystick goes from `address`. In the tab first. At the tab's
-// left or right edge: the tab before or after it (a tab with no terminal
-// that runs is passed), into the pane on its near edge at the height you
-// left. Up and down stay in the tab.
-fun neighbour(place: Place?, address: String, move: Move, alive: (String) -> Boolean): String? {
+// Where the joystick goes from `address`, as on the space map (tabs side by
+// side, the spaces of the repo one under the other). In the tab first. At
+// the tab's left or right edge: the tab before or after it, into the pane
+// on its near edge at the height you left. At its top or bottom edge: the
+// space above or below in the family (spaces: all of them), into the tab at
+// the same place in the row. A tab or space with no terminal that runs is
+// passed.
+fun neighbour(place: Place?, address: String, move: Move, alive: (String) -> Boolean, spaces: List<Space> = emptyList()): String? {
     place ?: return null
     val here = place.tab.panes()
     paneBeside(here, address, move, alive)?.let { return it }
-    if (move == Move.Up || move == Move.Down) return null
+    val me = here.firstOrNull { it.terminal == address }
+    val near = 1e-3f
+    if (move == Move.Up || move == Move.Down) {
+        val down = move == Move.Down
+        val family = spaceFamily(spaces, place.space.id)
+        val cx = me?.let { it.x + it.w / 2 } ?: 0.5f
+        var j = family.indexOfFirst { it.id == place.space.id }.takeIf { it >= 0 }?.plus(if (down) 1 else -1) ?: return null
+        while (j in family.indices) {
+            val tabs = family[j].tabs
+            for (k in tabs.indices.sortedBy { kotlin.math.abs(it - place.tabIndex) }) {
+                val rects = tabs[k].panes().filter { alive(it.terminal) }
+                if (rects.isEmpty()) continue
+                val edge = if (down) rects.minOf { it.y } else rects.maxOf { it.y + it.h }
+                return rects.filter { kotlin.math.abs((if (down) it.y else it.y + it.h) - edge) < near }
+                    .minByOrNull { kotlin.math.abs(it.x + it.w / 2 - cx) }?.terminal
+            }
+            j += if (down) 1 else -1
+        }
+        return null
+    }
     val step = if (move == Move.Right) 1 else -1
-    val cy = here.firstOrNull { it.terminal == address }?.let { it.y + it.h / 2 } ?: 0.5f
+    val cy = me?.let { it.y + it.h / 2 } ?: 0.5f
     var i = place.tabIndex + step
     while (i in place.space.tabs.indices) {
         val rects = place.space.tabs[i].panes().filter { alive(it.terminal) }
         if (rects.isNotEmpty()) {
             val edge = if (move == Move.Right) rects.minOf { it.x } else rects.maxOf { it.x + it.w }
-            return rects.filter { kotlin.math.abs((if (move == Move.Right) it.x else it.x + it.w) - edge) < 1e-3f }
+            return rects.filter { kotlin.math.abs((if (move == Move.Right) it.x else it.x + it.w) - edge) < near }
                 .minByOrNull { kotlin.math.abs(it.y + it.h / 2 - cy) }?.terminal
         }
         i += step

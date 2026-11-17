@@ -169,8 +169,10 @@ WebView.
 - **Joystick** (the round button above the reply bar): its face shows the
   panes of your tab in miniature, with your pane filled, and one dot per
   tab. Push it left, right, up or down and let go: the session in the pane
-  on that side opens. At the left or right edge of the tab, the push goes
-  on into the tab before or after it. An arrow is bright where a pane is,
+  on that side opens. The moves follow the space map. At the left or right
+  edge of the tab, the push goes on into the tab before or after it. At the
+  top or bottom edge, it goes to the space above or below (the repo and
+  its worktrees), into the tab at the same place in the row. An arrow is bright where a pane is,
   and a label names the pane while you push. A session on another machine
   has no panes: left and right go through that machine's sessions.
 - **Plain terminals**: a shell or a dev server opens as a page of its own:
