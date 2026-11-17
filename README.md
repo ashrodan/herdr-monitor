@@ -11,7 +11,10 @@ built to `dist/`.
 - **Agents by state**: waiting, working and done, across every Herdr space.
   You can also group them by space, or nest them under the agent that
   started them.
-- **Chat**: Claude Code, omp and pi conversations, rendered for a phone.
+- **Chat**: Claude Code, Codex, omp and pi conversations, rendered for a phone.
+  (Codex: the session file is found by the session id in the terminal title,
+  else by the folder and the start time of the process. A resumed Codex
+  session without the id in its title has no chat.)
 - **Answer questions**: tap the options of an agent's question form.
 - **Reply**: type, paste or attach an image.
 - **Push notifications** when an agent needs you (installed as a PWA).
@@ -136,9 +139,9 @@ WebView.
     (HTTP 401 or 403), the link was down for 5 minutes or more, or Android
     did not start the alert service. **Open alert setup** and **Retry**. It
     goes away when the link works again.
-  Working and Done agents have no notification of their own, and there is
-  no per-session progress notification (a pin only orders the list in the
-  app). Each Needs you notification shows its space, its harness and the
+  Working and Done agents have no notification of their own (but see the
+  bell below), and there is no per-session progress notification (a pin
+  only orders the list in the app). Each Needs you notification shows its space, its harness and the
   server under the title, when the server sends them. An answer from a
   notification shows as "Sent" on the Home card.
 - **Alerts screen** (**Alerts** in the drawer): the link's state
@@ -156,9 +159,32 @@ WebView.
 - **Widget** (4x2): the server name, three counts (Needs you, Working,
   PRs) and the top Needs you session with its first answer button. It
   changes when the server sends a change, not on a timer.
-- **Space map**: in a session, the button left of the menu shows where you
-  are: the panes of your tab in miniature, with your pane filled, and one
-  dot per tab, with yours filled. A tap opens the map of the space and its
+- **Bell** (in a session, left of the menu): turn it on for an agent whose
+  end matters to you. When that agent is done, the phone posts a native
+  alert on the **Done (bell on)** channel, with the agent's last words and
+  **Open** and **Reply**. The bell stays on until you turn it off, so it
+  alerts at the end of each turn. Agents with the bell off stay in the
+  summary only. With Quiet agents on, a Done does not alert. The bell is
+  kept on the phone, for each server.
+- **Joystick** (the round button above the reply bar): its face shows the
+  panes of your tab in miniature, with your pane filled, and one dot per
+  tab. Push it left, right, up or down and let go: the session in the pane
+  on that side opens. The moves follow the space map. At the left or right
+  edge of the tab, the push goes on into the tab before or after it. At the
+  top or bottom edge, it goes to the space above or below (the repo and
+  its worktrees), into the tab at the same place in the row. An arrow is bright where a pane is,
+  and a label names the pane while you push. A session on another machine
+  has no panes: left and right go through that machine's sessions.
+- **Plain terminals**: a shell or a dev server opens as a page of its own:
+  its screen, a command line, and the arrow, Enter, Esc and Tab keys. A
+  shell has Stop (Ctrl-C); a running server does not. A swipe goes through
+  the agents of the space. A shell or a server joins that set when you open
+  it with the joystick, the map or Session options. An agent with no
+  transcript shows its screen in place of the chat.
+- **Latest**: the chat stays where you scrolled to while new output comes
+  in. **Latest** goes back to the end.
+- **Space map**: a tap on the joystick (or **Space map** in Session
+  options) opens the map of the space and its
   worktrees. Each tab shows its panes where Herdr draws them, with the
   harness mark, the name and the state of each pane. A tap on a pane opens
   that session. **New tab** starts an agent in that space, in a new tab at
@@ -169,6 +195,21 @@ WebView.
   (CC0), Codex from lobe-icons (MIT), pi from pi.dev, omp from omp.sh.
   Each mark belongs to its owner; the app uses it only to show which
   harness runs in a session.
+- **Replies**: a reply leaves the field at the tap and shows in the chat as
+  "Sending…" until the transcript has it. Replies go in order, one at a
+  time (the server takes about 1 s for each). A reply typed while the agent
+  works goes at once, and the harness keeps it in its own queue. A reply for
+  the prompt waits while the agent is at a dialog. A reply that failed stays
+  as a bubble with **Send again** and delete.
+- **Dots under the title**: one for each session a swipe reaches, the one on
+  screen filled. No dots: no swipe there.
+- **Machines** (at the end of the Spaces tab, and in the server list): every
+  machine of your tailnet, online or not. A machine that the server reaches
+  through `hc` (`hc machine ls`) shows its terminals. A tap on the machine
+  opens its agent sessions, a swipe apart; a tap on a terminal opens that one,
+  through the server in use. That machine needs no herdr-monitor. A machine
+  with its own herdr-monitor has **Use**. The others show as online or
+  offline only.
 - **Settings**: the server URL, **Find on tailnet** (lists the herdr-monitor
   servers on your tailnet, with each one's Herdr app, Herdr TUI and hc
   versions), the background-alerts switch, Quiet agents and the look.
@@ -335,7 +376,7 @@ not from this repo.
     web/ (React) ── vite build ──> dist/ (served by server.js)
 
     Android app ── SSE /api/events (screens), /api/agents/stream (alerts)
-                ── /api/info, /api/discover ── lib/herdr.js, lib/agents.js
+                ── /api/info, /api/discover, /api/machines ── lib/herdr.js, lib/agents.js
 
 `hc schema` prints the full `hc` API.
 

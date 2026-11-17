@@ -2,6 +2,18 @@ package io.github.ashrodan.herdrmonitor.ui
 
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.ashrodan.herdrmonitor.placeOf
+import io.github.ashrodan.herdrmonitor.Move
+import io.github.ashrodan.herdrmonitor.neighbour
+import io.github.ashrodan.herdrmonitor.neighbourInList
+import io.github.ashrodan.herdrmonitor.isChat
+import io.github.ashrodan.herdrmonitor.mayNotify
+import android.widget.Toast
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.isImeVisible
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.outlined.Notifications
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.zIndex
 import io.github.ashrodan.herdrmonitor.userTexts
 import io.github.ashrodan.herdrmonitor.Link
 import io.github.ashrodan.herdrmonitor.OutItem
@@ -67,6 +79,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -168,7 +181,7 @@ private val STATE_WORD = mapOf(
 
 private enum class SessionPanel { Terminal, Commits, Status }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun AgentScreen(
     live: Live,
@@ -183,11 +196,15 @@ fun AgentScreen(
     open: ((String) -> Unit)? = null,
     // Open a space (from the space map); null: spaces do not open.
     openSpace: ((String) -> Unit)? = null,
+    // The sessions a swipe reaches, in order. A terminal in no tab (a
+    // session on another machine) uses them for the joystick's left and right.
+    pages: List<String> = emptyList(),
 ) {
     val ctx = LocalContext.current
     val api = remember(live) { ctx.app.store.api }
     val port = remember(api) { ApiPort(api) }
     val scope = rememberCoroutineScope()
+    val view = LocalView.current
     val clipboard = LocalClipboard.current
     val outboxAll by ctx.app.outbox.items.collectAsStateWithLifecycle()
     val queued = remember(outboxAll, api.base, address) { outboxAll.filter { it.server == api.base && it.address == address } }
@@ -195,8 +212,11 @@ fun AgentScreen(
     val now = rememberNow()
     var menu by remember { mutableStateOf(false) }
     var map by remember { mutableStateOf(false) }
+    // A terminal with no conversation (a shell, a dev server) shows its
+    // screen as the page; an agent shows its chat.
+    val chatPage = t?.isChat() ?: true
     var panel by rememberSaveable(address, showTerminalOnOpen) {
-        mutableStateOf(if (showTerminalOnOpen) SessionPanel.Terminal else null)
+        mutableStateOf(if (showTerminalOnOpen && t?.isChat() == true) SessionPanel.Terminal else null)
     }
     var rawAddress by rememberSaveable(address) { mutableStateOf(address) }
 
@@ -224,7 +244,9 @@ fun AgentScreen(
     val working = t?.status == "working"
     val rawState = if (t?.finished == true) "finished" else t?.status ?: "idle"
     val where = t?.let { whereOf(it, live.spaces) }
-    val name = t?.let { dedupName(displayName(it, live.spaces)) } ?: address
+    // A shell or a server with no name of its own: its program, because
+    // the space name is the agent's title too.
+    val name = t?.let { if (!it.isChat() && it.name == null) it.agent else dedupName(displayName(it, live.spaces)) } ?: address
     val branch = where?.space?.branch ?: commits?.branch
     val pr = where?.space?.let { s -> live.prs.firstOrNull { it.space == s.id } }?.pr ?: commits?.pr
     val companions = remember(address, live.terminals, live.spaces) {
@@ -252,9 +274,35 @@ fun AgentScreen(
         ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, body), null))
     }
 
+    // The joystick: the pane on each side that still runs, with its name.
+    val place = remember(t, address, live.spaces) { placeOf(t, address, live.spaces) }
+    val targets = remember(place, address, pages, live.terminals, live.spaces) {
+        val alive = { a: String -> live.terminals[a]?.finished == false }
+        Move.entries.mapNotNull { m ->
+            val to = if (place != null) neighbour(place, address, m, alive, live.spaces) else neighbourInList(pages, address, m)
+            val tt = to?.let(live.terminals::get) ?: return@mapNotNull null
+            val label = tt.name ?: if (tt.isChat()) harnessName(tt.agent) else tt.agent
+            // Say when the move leaves the tab or the space.
+            val there = placeOf(tt, to, live.spaces)
+            val far = when {
+                place == null || there == null -> null
+                there.space.id != place.space.id -> there.space.name
+                there.tab.id != place.tab.id -> "tab ${there.tab.name}"
+                else -> null
+            }
+            m to StickTarget(to, label + (far?.let { " · $it" } ?: ""))
+        }.toMap()
+    }
+    val watchedAll by ctx.app.watched.collectAsStateWithLifecycle()
+    val watched = address in watchedAll
+
     if (map) SpaceMapSheet(live, address, onDismiss = { map = false }, onOpen = open, onSpace = openSpace)
 
-    Scaffold(contentWindowInsets = WindowInsets(0), topBar = {
+    Scaffold(contentWindowInsets = WindowInsets(0), floatingActionButton = {
+        // Out of the way while the keyboard is up.
+        if (t != null && open != null && !WindowInsets.isImeVisible)
+            Joystick(place, address, targets, onMove = open, onTap = { map = true })
+    }, topBar = {
         Column(Modifier.statusBarsPadding()) {
             Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (showBack) IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
@@ -265,7 +313,7 @@ fun AgentScreen(
                         STATE_WORD[rawState] ?: rawState,
                         ticketOf(name) ?: where?.space?.name?.let { ticketOf(it) ?: it }
                             ?: t?.where?.substringBefore(" / ")?.let { ticketOf(it) ?: it.takeIf(String::isNotBlank) },
-                        t?.agent?.let { harnessName(it) },
+                        t?.agent?.takeIf { chatPage }?.let { harnessName(it) },
                         t?.changedMs?.let { clock(now - it) },
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -274,11 +322,25 @@ fun AgentScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
-                // Where you are in the space: the tab's panes, yours filled.
-                val place = remember(t, address, live.spaces) { placeOf(t, address, live.spaces) }
-                IconButton(onClick = { map = true }, modifier = Modifier.testTag("space-map-$address").semantics {
-                    contentDescription = place?.let { "Space map. ${it.space.name}, tab ${it.tab.name}" } ?: "Space map"
-                }) { WhereAmIIcon(place, address) }
+                // The bell: a native alert when this agent is done. Only an
+                // agent has a Done. (The map of the panes is on the joystick.)
+                if (t?.status != null && !t.finished) IconButton(onClick = {
+                    val on = ctx.app.toggleWatch(address)
+                    view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                    val note = when {
+                        !on -> "Bell off for $name."
+                        !ctx.app.prefs.alerts -> "Bell on, but background alerts are off. Turn them on in Alerts."
+                        !ctx.mayNotify() -> "Bell on, but notifications are blocked for this app."
+                        ctx.app.prefs.quiet -> "Bell on. Quiet agents is on, so it alerts after you turn that off."
+                        else -> "Bell on. You get an alert when $name is done."
+                    }
+                    Toast.makeText(ctx, note, Toast.LENGTH_SHORT).show()
+                }, modifier = Modifier.testTag("bell-$address").semantics {
+                    contentDescription = if (watched) "Bell on: alert when this agent is done. Tap to turn off." else "Bell off. Tap to get an alert when this agent is done."
+                }) {
+                    Icon(if (watched) Icons.Filled.Notifications else Icons.Outlined.Notifications, null,
+                        tint = if (watched) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 Box {
                     IconButton(onClick = { menu = true }, modifier = Modifier.testTag("session-options-$address")) {
                         Icon(Icons.Default.MoreVert, "Session options")
@@ -288,16 +350,18 @@ fun AgentScreen(
                             menu = false
                             scope.launch { io { api.interrupt(address) } }
                         })
-                        DropdownMenuItem({ Text("Raw terminal") }, {
+                        if (chatPage) DropdownMenuItem({ Text("Raw terminal") }, {
                             menu = false
                             rawAddress = address
                             panel = SessionPanel.Terminal
                         })
+                        DropdownMenuItem({ Text("Space map") }, { menu = false; map = true })
+                        // A shell of this space opens as its own page.
                         shells.forEach { shell ->
                             DropdownMenuItem({ Text("Shell · ${shell.name ?: shell.agent}") }, {
                                 menu = false
-                                rawAddress = shell.address
-                                panel = SessionPanel.Terminal
+                                if (open != null) open(shell.address)
+                                else { rawAddress = shell.address; panel = SessionPanel.Terminal }
                             })
                         }
                         branch?.let { b ->
@@ -310,18 +374,17 @@ fun AgentScreen(
                     }
                 }
             }
-            if (pageIndex != null && pageCount > 1) {
-                Text("Swipe sessions · ${pageIndex + 1} of $pageCount", Modifier.fillMaxWidth().padding(bottom = 6.dp)
-                    .testTag("space-page-indicator"), textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+            if (pageIndex != null && pageCount > 1) PageDots(pageIndex, pageCount)
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         }
     }, bottomBar = {
         val offline = live.link != Link.Online
         when {
             t != null && !t.finished -> Composer(port, ctx.app.outbox, address, online = !offline, blocked, t.kind,
-                working = working, harness = t.agent, contextActions = contextActions)
+                // A shell has Stop (Ctrl-C). A running server does not: a
+                // tap by mistake must not end it.
+                working = working || (!chatPage && !t.isApp()), harness = t.agent, contextActions = contextActions,
+                flush = ctx.app::flushOutbox, shell = !chatPage)
             t == null && offline -> Composer(port, ctx.app.outbox, address, online = false, blocked = false, kind = null, working = false)
             t != null -> SessionActionsBar(contextActions)
         }
@@ -333,7 +396,8 @@ fun AgentScreen(
                 else Text("This terminal is gone.", Modifier.padding(16.dp))
                 return@Column
             }
-            ChatTab(api, address, blocked, working, t.agent, queued, active && live.link == Link.Online)
+            if (chatPage) ChatTab(api, address, blocked, working, t.agent, queued, active && live.link == Link.Online)
+            else ScreenPage(api, address, queued, active && live.link == Link.Online)
         }
     }
 
@@ -419,7 +483,12 @@ private fun ChatTab(api: Api, address: String, blocked: Boolean, working: Boolea
     when {
         c == null && err != null -> NoChat("Could not read the transcript: $err", queued, error = true)
         c == null -> if (queued.isEmpty()) SkeletonChat() else NoChat("Loading the conversation…", queued)
-        !c.available -> NoChat("${c.reason ?: "No transcript."} Open Raw terminal from Session options.", queued)
+        // No transcript for this harness: its screen, as for a shell.
+        !c.available -> Column(Modifier.fillMaxSize()) {
+            Text((c.reason ?: "No transcript.") + " This is its screen.", Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            ScreenPage(api, address, queued, active)
+        }
         else -> {
             val list = rememberLazyListState()
             // The first transcript folds here (no blank frame); later ones
@@ -433,9 +502,29 @@ private fun ChatTab(api: Api, address: String, blocked: Boolean, working: Boolea
             val items = shown.second
             val waitingOn = if (blocked) remember(shown) { lastUnansweredAsk(shown.first.messages) } else null
             val running = if (working) runningTool(items) else null
-            LaunchedEffect(items.size, queued.size, working) { list.layoutInfo.totalItemsCount.takeIf { it > 0 }?.let { list.scrollToItem(it - 1) } }
+            // New output moves the list to its end only while you are at the
+            // end. After you scroll up to read, it stays, and "Latest" goes
+            // back down.
+            var follow by remember(address) { mutableStateOf(true) }
+            LaunchedEffect(list) {
+                snapshotFlow { list.isScrollInProgress to list.canScrollForward }.collect { (moving, more) -> if (moving) follow = !more }
+            }
+            suspend fun toEnd() { list.layoutInfo.totalItemsCount.takeIf { it > 0 }?.let { list.scrollToItem(it - 1, Int.MAX_VALUE / 2) } }
+            LaunchedEffect(items.size, queued.size, working) { if (follow) toEnd() }
+            val jumpScope = rememberCoroutineScope()
+            Box(Modifier.fillMaxSize()) {
+            if (!follow && list.canScrollForward) Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.secondaryContainer,
+                contentColor = MaterialTheme.colorScheme.onSecondaryContainer, shadowElevation = 4.dp,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp).zIndex(1f).clip(RoundedCornerShape(18.dp))
+                    .clickable(onClickLabel = "Go to the latest message") { follow = true; jumpScope.launch { toEnd() } }.testTag("chat-latest")) {
+                Row(Modifier.heightIn(min = 36.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.KeyboardArrowDown, null, Modifier.size(18.dp))
+                    Text(" Latest", style = MaterialTheme.typography.labelLarge)
+                }
+            }
+            // The space at the end keeps the last message clear of the joystick.
             LazyColumn(Modifier.fillMaxSize(), state = list, verticalArrangement = Arrangement.spacedBy(12.dp),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp)) {
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 84.dp)) {
                 if (c.truncated) item { SystemChip("Older messages are not shown (long transcript).") }
                 if (items.isEmpty()) item { SystemChip("No messages yet.") }
                 items(items, key = { it.key }) { i ->
@@ -449,6 +538,7 @@ private fun ChatTab(api: Api, address: String, blocked: Boolean, working: Boolea
                 }
                 if (working) item(key = "live") { LiveStep(running) }
                 if (queued.isNotEmpty()) item(key = "outbox") { QueuedReplies(queued, onRetry = { ctx.app.outbox.retry(it.id); ctx.app.flushOutbox() }) { ctx.app.outbox.remove(it.id) } }
+            }
             }
         }
     }
@@ -640,24 +730,40 @@ private fun AskCard(q: Part.Ask, api: Api, address: String, live: Boolean) {
 
 // ---- Text: the screen and its history, refreshed every 2 s ----
 
+// A terminal as a page: its screen, then what you typed that is not sent yet.
 @Composable
-private fun TextTab(api: Api, address: String) {
+private fun ScreenPage(api: Api, address: String, queued: List<OutItem>, active: Boolean) {
+    val ctx = LocalContext.current
+    Column(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxWidth().weight(1f)) { TextTab(api, address, active) }
+        if (queued.isNotEmpty()) Box(Modifier.fillMaxWidth().heightIn(max = 160.dp).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp)) {
+            QueuedReplies(queued, onRetry = { ctx.app.outbox.retry(it.id); ctx.app.flushOutbox() }) { ctx.app.outbox.remove(it.id) }
+        }
+    }
+}
+
+@Composable
+private fun TextTab(api: Api, address: String, active: Boolean = true) {
     var text by remember(address) { mutableStateOf<String?>(null) }
     var err by remember(address) { mutableStateOf<String?>(null) }
     val scroll = rememberScrollState()
-    LaunchedEffect(address, api.base) {
+    LaunchedEffect(address, api.base, active) {
+        if (!active) return@LaunchedEffect
         while (true) {
             io { api.read(address, 300) }.onSuccess { text = it; err = null }.onFailure { err = it.message }
             delay(2000)
         }
     }
-    LaunchedEffect(text) { scroll.scrollTo(scroll.maxValue) }
+    // New output goes to the end only while you are at the end.
+    var follow by remember(address) { mutableStateOf(true) }
+    LaunchedEffect(scroll) { snapshotFlow { scroll.isScrollInProgress to scroll.canScrollForward }.collect { (moving, more) -> if (moving) follow = !more } }
+    LaunchedEffect(text, scroll.maxValue) { if (follow) scroll.scrollTo(scroll.maxValue) }
     Box(Modifier.fillMaxSize()) {
         when {
             text == null && err != null -> Text("Could not read the screen: $err", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error)
             text == null -> Text("Reading the screen…", Modifier.padding(16.dp))
             else -> SelectionContainer {
-                Text(text!!.trimEnd(), Modifier.fillMaxSize().verticalScroll(scroll).horizontalScroll(rememberScrollState()).padding(8.dp),
+                Text(text!!.trimEnd(), Modifier.fillMaxSize().verticalScroll(scroll).horizontalScroll(rememberScrollState()).padding(start = 8.dp, top = 8.dp, end = 8.dp, bottom = 84.dp),
                     fontFamily = Mono, fontSize = 10.sp, lineHeight = 12.sp, softWrap = false)
             }
         }
@@ -756,5 +862,25 @@ private fun NoChat(text: String, queued: List<OutItem>, error: Boolean = false) 
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(text, color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
         if (queued.isNotEmpty()) QueuedReplies(queued, onRetry = { ctx.app.outbox.retry(it.id); ctx.app.flushOutbox() }) { ctx.app.outbox.remove(it.id) }
+    }
+}
+
+// Where you are among the sessions a swipe reaches: one dot for each, the
+// one on screen filled. It shows only when a swipe is possible. More than
+// 12 sessions: a count, because the dots would not fit.
+@Composable
+fun PageDots(index: Int, count: Int) {
+    val label = "Session ${index + 1} of $count. Swipe to change."
+    Row(Modifier.fillMaxWidth().padding(bottom = 8.dp).testTag("space-page-indicator").semantics(mergeDescendants = true) { contentDescription = label },
+        horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+        if (count > 12) {
+            Text("${index + 1} of $count", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            return@Row
+        }
+        for (i in 0 until count) {
+            val on = i == index
+            Box(Modifier.padding(horizontal = 3.dp).size(if (on) 8.dp else 6.dp).clip(CircleShape)
+                .then(if (on) Modifier.background(MaterialTheme.colorScheme.primary) else Modifier.border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)))
+        }
     }
 }

@@ -40,6 +40,27 @@ class ModelTest {
         assertNull(planAlert("t1", null, null))
     }
 
+    // The bell: the Done of a watched agent posts; any other Done does not.
+    @Test fun planAlertPostsDoneOnlyForAnAgentWithItsBellOn() {
+        val bell = setOf("t1")
+        val p = planAlert("t1", null, agent("done"), watched = bell) as AlertAction.Post
+        assertEquals("done", p.state)
+        assertNull(planAlert("t2", null, agent("done", addr = "t2"), watched = bell))
+        // The same Done posts once; a Done after a blocked alert replaces it.
+        assertNull(planAlert("t1", "done", agent("done"), watched = bell))
+        assertEquals("done", (planAlert("t1", "blocked", agent("done"), watched = bell) as AlertAction.Post).state)
+        // Seen on the Mac or here, or the next turn starts: the alert goes.
+        assertEquals(AlertAction.Cancel("t1"), planAlert("t1", "done", agent("done", seen = 100), watched = bell))
+        assertEquals(AlertAction.Cancel("t1"), planAlert("t1", "done", agent("done"), mapOf("t1" to 150L), watched = bell))
+        assertEquals(AlertAction.Cancel("t1"), planAlert("t1", "done", agent("working"), watched = bell))
+        assertNull(planAlert("t1", null, agent("done", seen = 100), watched = bell))
+        // A reconnect does not replay a Done from before the phone listened.
+        assertNull(planAlert("t1", null, agent("done", changed = 100), since = 500, watched = bell))
+        assertTrue(planAlert("t1", null, agent("done", changed = 600), since = 500, watched = bell) is AlertAction.Post)
+        // Bell off again: the alert goes with the next change.
+        assertEquals(AlertAction.Cancel("t1"), planAlert("t1", "done", agent("done")))
+    }
+
     @Test fun planAlertOnASnapshotSkipsChangesFromBeforeWeListened() {
         assertNull(planAlert("t1", null, agent("blocked", changed = 100), since = 500))
         assertTrue(planAlert("t1", null, agent("blocked", changed = 600), since = 500) is AlertAction.Post)
@@ -85,6 +106,13 @@ class ModelTest {
         ).associateBy { it.address }
 
         assertEquals(listOf("agent-1", "agent-2"), space.agentAddresses(terminals))
+        // The joystick reaches every terminal that runs, in tab order.
+        assertEquals(listOf("agent-1", "server", "shell", "agent-2"), space.liveAddresses(terminals))
+        assertEquals(listOf("agent-1", "shell", "agent-2"),
+            space.liveAddresses(terminals + ("server" to Terminal("server", agent = "node", state = "finished"))))
+        assertEquals(listOf(true, false, false), listOf("agent-1", "server", "shell").map { terminals[it]!!.isChat() })
+        assertEquals("dai", machineOf("dai/t1"))
+        assertNull(machineOf("t1"))
     }
 
     @Test fun widgetShowsCountsAndTheTopNeedsYouSession() {

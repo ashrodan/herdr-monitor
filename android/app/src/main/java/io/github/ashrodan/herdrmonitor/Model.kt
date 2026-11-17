@@ -99,8 +99,10 @@ data class AgentInfo(
 )
 
 val GROUPS = listOf("blocked" to "Blocked", "error" to "Error", "done" to "Done", "working" to "Working", "idle" to "Idle")
-// The states that post their own notification. Done is in the summary only.
+// The states that post their own notification. Done is in the summary
+// only, but an agent with its bell on (watched) posts its Done too.
 val ALERT_STATES = setOf("blocked", "error")
+fun alerts(state: String, watched: Boolean) = state in ALERT_STATES || (state == "done" && watched)
 
 // "Done" turns into "idle" once someone looked at the agent after it
 // finished: on the Mac (seen_ms) or on this phone (localSeen).
@@ -160,6 +162,23 @@ fun Space.agentAddresses(terminals: Map<String, Terminal>): List<String> = build
     }
 }
 
+// A terminal with a conversation: its page is the chat. Any other terminal
+// (a shell, a dev server) shows its screen.
+fun Terminal.isChat() = isAgent() && !isApp()
+
+// Every terminal of the space that still runs, in tab order: the pages the
+// joystick can reach. A swipe reaches the agents, and each other terminal
+// that was opened.
+fun Space.liveAddresses(terminals: Map<String, Terminal>): List<String> = buildList {
+    val seen = HashSet<String>()
+    for (tab in tabs) for (address in tab.terminals) {
+        val terminal = terminals[address] ?: continue
+        if (!terminal.finished && seen.add(address)) add(address)
+    }
+}
+
+// The terminals of one machine that the server reaches through hc.
+fun machineOf(address: String): String? = address.substringBefore('/', "").ifEmpty { null }
 
 fun age(ms: Long?, now: Long = System.currentTimeMillis()): String {
     if (ms == null || ms == 0L) return ""
@@ -226,11 +245,12 @@ sealed interface AlertAction {
 // prev: the alert state now on screen for that agent (null: none).
 // since: on a snapshot, alert only for changes after this time (the phone
 // was not listening before), so a reconnect does not replay old alerts.
-// agent null: it went away.
-fun planAlert(address: String, prev: String?, agent: AgentInfo?, localSeen: Map<String, Long> = emptyMap(), since: Long? = null): AlertAction? {
+// agent null: it went away. watched: the agents with their bell on.
+fun planAlert(address: String, prev: String?, agent: AgentInfo?, localSeen: Map<String, Long> = emptyMap(), since: Long? = null,
+              watched: Set<String> = emptySet()): AlertAction? {
     if (agent == null) return if (prev != null) AlertAction.Cancel(address) else null
     val now = agent.stateOf(localSeen)
-    if (now !in ALERT_STATES) return if (prev != null) AlertAction.Cancel(address) else null
+    if (!alerts(now, address in watched)) return if (prev != null) AlertAction.Cancel(address) else null
     if (prev == now) return null
     if (since != null && (agent.changedMs ?: 0) <= since) return null
     return AlertAction.Post(agent, now, sound = true)
@@ -312,3 +332,48 @@ fun shortHost(url: String): String {
     return if (Regex("^[\\d.]+$").matches(host) || host.contains(':')) host else host.substringBefore('.')
 }
 fun portOf(url: String): Int = runCatching { java.net.URI(url).let { if (it.port != -1) it.port else if (it.scheme == "https") 443 else 80 } }.getOrDefault(-1)
+
+// ---- Machines (GET /api/machines, lib/herdr.js machineList) ----
+
+// One machine of the tailnet, as the server in use sees it.
+//   hcName: the server's hc reaches it; its terminals have the address
+//           "<hcName>/t1", and the phone works with them through the server.
+//   server: a herdr-monitor of its own runs there (a URL the phone can use).
+data class Machine(
+    val name: String,
+    val os: String? = null,
+    val self: Boolean = false,
+    val online: Boolean = false,
+    val tailnet: Boolean = true,
+    val hcName: String? = null,
+    val hcState: String? = null,
+    val hcVersion: String? = null,
+    val server: String? = null,
+    val terminals: Int = 0,
+    val agents: Int = 0,
+) {
+    val short get() = name.substringBefore('.')
+    val linked get() = hcName != null && hcState == "connected"
+}
+
+private fun count(n: Int, word: String) = "$n $word" + if (n == 1) "" else "s"
+
+// What the phone can do with a machine, in one line. via: the short name of
+// the server in use (the row cuts a long line at its end, so counts stay short).
+fun machineLine(m: Machine, via: String): String = when {
+    m.self -> "This server · " + count(m.terminals, "terminal")
+    m.linked -> "Through hc on $via · " +
+        if (m.terminals == 0) "no terminals" else count(m.terminals, "terminal") + if (m.agents > 0) ", " + count(m.agents, "agent") else ""
+    m.hcName != null -> "hc on $via: ${m.hcState ?: "not connected"}"
+    m.server != null -> "Has its own herdr-monitor"
+    !m.online -> "Offline"
+    else -> "Online · no Herdr link"
+}
+
+// The live terminals of a machine that the server reaches through hc:
+// agents first, then by address.
+fun machineTerminals(m: Machine, terminals: Collection<Terminal>): List<Terminal> {
+    val prefix = (m.hcName ?: return emptyList()) + "/"
+    return terminals.filter { !it.finished && it.address.startsWith(prefix) }
+        .sortedWith(compareBy({ !it.isAgent() }, { it.address }))
+}

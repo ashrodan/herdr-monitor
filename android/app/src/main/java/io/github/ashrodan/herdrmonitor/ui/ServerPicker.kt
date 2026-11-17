@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -33,6 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.github.ashrodan.herdrmonitor.AlertService
 import io.github.ashrodan.herdrmonitor.Link
+import io.github.ashrodan.herdrmonitor.Machine
 import io.github.ashrodan.herdrmonitor.ServerInfo
 import io.github.ashrodan.herdrmonitor.Servers
 import io.github.ashrodan.herdrmonitor.app
@@ -83,7 +85,9 @@ fun ServerList(modifier: Modifier = Modifier, onPicked: () -> Unit = {}) {
     val saved = ctx.app.prefs.server
     var servers by remember { mutableStateOf<List<ServerInfo>?>(null) }
     var round by remember { mutableIntStateOf(0) }
+    var machines by remember { mutableStateOf<List<Machine>>(emptyList()) }
     LaunchedEffect(round) { servers = null; servers = Servers.find(saved) }
+    LaunchedEffect(round) { machines = Servers.machines(saved) }
     Column(modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Herdr servers", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
@@ -119,6 +123,15 @@ fun ServerList(modifier: Modifier = Modifier, onPicked: () -> Unit = {}) {
                     HorizontalDivider(color = Palette.border)
                 }
             }
+        }
+        // The rest of the tailnet. These machines have no herdr-monitor: the
+        // server in use works there through hc, when hc has a link to them.
+        val others = machines.filter { m -> !m.self && m.server == null }
+        if (others.isNotEmpty()) {
+            Text("Other machines on your tailnet", Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp), style = MaterialTheme.typography.titleSmall)
+            Text("No herdr-monitor runs on these. Sessions on a machine with an hc link show under Spaces, in Machines.",
+                Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall, color = Palette.mutedForeground)
+            others.forEach { m -> Box(Modifier.padding(horizontal = 4.dp)) { MachineRow(m, shortHost(saved)) } }
         }
     }
 }
