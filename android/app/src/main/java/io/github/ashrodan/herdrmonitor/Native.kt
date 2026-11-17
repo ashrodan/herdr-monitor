@@ -15,8 +15,11 @@ fun channelFor(state: String): Channel? = when (state) {
     else -> null
 }
 
-// Only Needs you posts its own notification, with Quiet agents on or off.
-fun mayAlert(state: String, @Suppress("UNUSED_PARAMETER") quiet: Boolean): Boolean = channelFor(state) == Channel.NeedsYou
+// Needs you posts its own notification, with Quiet agents on or off. A
+// Done posts only for an agent with its bell on, and not with Quiet agents
+// on (Quiet agents means: only Needs you).
+fun mayAlert(state: String, quiet: Boolean, watched: Boolean = false): Boolean =
+    channelFor(state) == Channel.NeedsYou || (state == "done" && watched && !quiet)
 
 // The Herdr tile's subtitle: "2 need you" when any, else "4 working".
 fun tileSubtitle(d: WidgetData?): String = when {

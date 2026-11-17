@@ -72,7 +72,25 @@ class NotificationTest {
 
     private fun ask(vararg options: String) = Part.Ask("q", listOf(Question("Pick", "Which one?", false, options.map { Option(it, "") })), false)
 
-    @Test fun threeChannelsOnly() {
+    // The bell: the Done of a watched agent is its own alert, on its own
+    // high channel, with the agent's last words. Open and Reply, no Stop.
+    @Test fun aDoneWithTheBellOnIsANativeAlert() {
+        val a = fake("fake-1", "done")
+        Notifier.postAgent(c, a, "done", null)
+        val first = active("fake-1", Notifier.ID_AGENT)!!
+        assertEquals(Notifier.CH_DONE, first.channelId)
+        assertEquals("Fake fake-1 · done", first.extras.getString(Notification.EXTRA_TITLE))
+        assertEquals("Finished its turn", first.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
+        assertEquals(listOf("Open", "Reply"), first.actions.map { it.title.toString() })
+        // The last words replace the line, in the same notification.
+        Notifier.postAgent(c, a, "done", null, quiet = true, text = "All 27 tests pass. The PR is ready.")
+        val then = active("fake-1", Notifier.ID_AGENT)!!
+        assertEquals("All 27 tests pass. The PR is ready.", then.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
+        assertEquals(1, nm.activeNotifications.count { it.tag == "fake-1" })
+    }
+
+    @Test fun fourChannelsOnly() {
+        assertEquals(NotificationManager.IMPORTANCE_HIGH, nm.getNotificationChannel(Notifier.CH_DONE).importance)
         assertEquals(NotificationManager.IMPORTANCE_HIGH, nm.getNotificationChannel(Notifier.CH_NEEDS).importance)
         val sum = nm.getNotificationChannel(Notifier.CH_SUMMARY)
         assertEquals(NotificationManager.IMPORTANCE_LOW, sum.importance)

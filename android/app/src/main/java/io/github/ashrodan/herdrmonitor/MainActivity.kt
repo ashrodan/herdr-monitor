@@ -29,7 +29,7 @@ import androidx.navigation.navArgument
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import io.github.ashrodan.herdrmonitor.ui.AgentScreen
+import io.github.ashrodan.herdrmonitor.ui.SessionScreen
 import io.github.ashrodan.herdrmonitor.ui.HomeListDetail
 import io.github.ashrodan.herdrmonitor.ui.SettingsScreen
 import io.github.ashrodan.herdrmonitor.ui.AlertsScreen
@@ -158,10 +158,10 @@ class MainActivity : ComponentActivity() {
             composable(Nav.SPACE) { e -> SpaceScreen(live(), e.arguments?.getString("id").orEmpty(), go, back) }
             composable(Nav.MACHINE) { e -> MachineScreen(live(), e.arguments?.getString("name").orEmpty(), go, back) }
             composable(Nav.AGENT, arguments = listOf(navArgument("terminal") { type = NavType.BoolType; defaultValue = false })) { e ->
-                // The space map opens sessions and spaces from here too.
-                AgentScreen(live(), e.arguments?.getString("address").orEmpty(), back,
-                    showTerminalOnOpen = e.arguments?.getBoolean("terminal") ?: false,
-                    open = { a -> go(Route.Agent(a)) }, openSpace = { s -> go(Route.SpaceR(s)) })
+                // The session with the others of its space: a swipe and the
+                // joystick work here as in the space.
+                SessionScreen(live(), e.arguments?.getString("address").orEmpty(), go, back,
+                    rawTerminal = e.arguments?.getBoolean("terminal") ?: false)
             }
         }
     }

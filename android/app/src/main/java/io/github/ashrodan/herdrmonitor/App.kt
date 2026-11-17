@@ -47,6 +47,14 @@ class App : Application() {
         val next = if (address in pins.value) pins.value - address else pins.value + address
         pins.value = next; prefs.pinned = next
     }
+    // The bell: an alert when this agent is done.
+    val watched = MutableStateFlow<Set<String>>(emptySet())
+    fun toggleWatch(address: String): Boolean {
+        val on = address !in watched.value
+        setWatched(if (on) watched.value + address else watched.value - address)
+        return on
+    }
+    fun setWatched(next: Set<String>) { watched.value = next; prefs.watched = next }
     // The theme the screens draw with; Settings changes it.
     // Home's filter, asked for from outside (the Herdr tile: Needs you).
     val homeFilter = MutableStateFlow<Bucket?>(null)
@@ -89,6 +97,7 @@ class App : Application() {
         sent.value = emptyMap()
         // Pins, seen and opened are per server (Prefs).
         pins.value = prefs.pinned
+        watched.value = prefs.watched
         serviceStates.clear()
         store.restart()
         readDigests()
@@ -110,6 +119,7 @@ class App : Application() {
         Notifier.channels(this)
         outbox = Outbox(prefs.outboxStorage, legacyServer = prefs.server)
         pins.value = prefs.pinned
+        watched.value = prefs.watched
         // Flush when the app's link comes up, and every 15 s while replies wait.
         scope.launch { store.live.map { it.link }.distinctUntilChanged().collect { if (it == Link.Online) flushOutbox() } }
         // A reply held at a dialog goes when the dialog is answered.

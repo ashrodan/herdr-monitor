@@ -11,13 +11,15 @@ import android.graphics.drawable.Icon
 import org.json.JSONArray
 import org.json.JSONObject
 
-// The notifications, on three channels:
+// The notifications, on four channels:
 //  - Agent summary (low, silent): ONE ongoing notification, which is also
 //    the foreground service's: the link state, the counts, and up to five
 //    agents (Needs you, Failed, Working, unseen Done). Working and Done
 //    have no notification of their own.
 //  - Needs you (high): one per agent that is blocked or failed (tag = its
 //    address, so a new state replaces the old one).
+//  - Done, bell on (high): an agent whose bell is on finished its turn
+//    (same tag, so it replaces that agent's other alert).
 //  - Alert health (default): only when alerts cannot work at all.
 // The summary has no group. As a group summary, Android 16 removed it
 // when the last child in its group went (found on a Pixel), and it is the
@@ -27,6 +29,8 @@ object Notifier {
     // The stored id stays "running", so a user's setting for it survives.
     const val CH_SUMMARY = "running"
     const val CH_HEALTH = "alert_health"
+    // The Done of an agent with its bell on.
+    const val CH_DONE = "done_bell"
     // Gone: the Finished and Connection channels (and the first "alerts").
     private val OLD_CHANNELS = listOf("alerts", "finished", "service")
     const val ID_AGENT = 1
@@ -51,6 +55,9 @@ object Notifier {
         OLD_CHANNELS.forEach { nm.deleteNotificationChannel(it) }
         nm.createNotificationChannel(NotificationChannel(CH_NEEDS, "Needs you", NotificationManager.IMPORTANCE_HIGH).apply {
             description = "An agent asks a question or stopped with an error"
+        })
+        nm.createNotificationChannel(NotificationChannel(CH_DONE, "Done (bell on)", NotificationManager.IMPORTANCE_HIGH).apply {
+            description = "An agent with its bell on finished its turn"
         })
         // Same id as before: this renames it and keeps the user's importance.
         nm.createNotificationChannel(NotificationChannel(CH_SUMMARY, "Agent summary", NotificationManager.IMPORTANCE_LOW).apply {
@@ -141,10 +148,11 @@ object Notifier {
 
     private fun host(c: Context) = shortHost(c.app.prefs.server)
 
-    fun postAgent(c: Context, a: AgentInfo, state: String, ask: Part.Ask?, quiet: Boolean = false) {
+    // text: what the alert says in place of the state's own line.
+    fun postAgent(c: Context, a: AgentInfo, state: String, ask: Part.Ask?, quiet: Boolean = false, text: String? = null) {
         val question = if (state == "blocked") ask?.questions?.singleOrNull()?.question else null
-        val body = question ?: alertBody(a, state)
-        val n = Notification.Builder(c, CH_NEEDS)
+        val body = text ?: question ?: alertBody(a, state)
+        val n = Notification.Builder(c, if (state == "done") CH_DONE else CH_NEEDS)
             .setSmallIcon(R.drawable.ic_stat_herdr)
             .setContentTitle(alertTitle(a.name, state))
             .setContentText(body)
@@ -153,7 +161,7 @@ object Notifier {
             .setContentIntent(openPi(c, a.address))
             .setAutoCancel(true)
             .setOnlyAlertOnce(quiet)
-            .setCategory(if (state == "blocked") Notification.CATEGORY_MESSAGE else Notification.CATEGORY_ERROR)
+            .setCategory(when (state) { "blocked" -> Notification.CATEGORY_MESSAGE; "done" -> Notification.CATEGORY_STATUS; else -> Notification.CATEGORY_ERROR })
             .setColor(colorOf(state))
             .setWhen(a.changedMs ?: System.currentTimeMillis())
             .setShowWhen(true)

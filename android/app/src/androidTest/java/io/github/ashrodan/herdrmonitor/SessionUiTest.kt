@@ -10,6 +10,13 @@ import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeLeft
+import androidx.compose.ui.test.swipeRight
+import androidx.compose.ui.test.swipeUp
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
+import io.github.ashrodan.herdrmonitor.ui.Joystick
+import io.github.ashrodan.herdrmonitor.ui.StickTarget
+import io.github.ashrodan.herdrmonitor.ui.SessionScreen
 import io.github.ashrodan.herdrmonitor.ui.ActivityCard
 import io.github.ashrodan.herdrmonitor.ui.Composer
 import io.github.ashrodan.herdrmonitor.ui.ReplyPort
@@ -94,6 +101,59 @@ class SessionUiTest {
         rule.onNodeWithTag("session-options-second").performClick()
         rule.onNodeWithText("Raw terminal").assertIsDisplayed()
         rule.onNodeWithText("Share").assertIsDisplayed()
+    }
+
+    // The joystick reaches a pane that a swipe does not: the shell on the
+    // near edge of the tab before. The shell opens as a page of its own (its
+    // screen and a command line) and joins the set.
+    @Test fun theJoystickOpensAShellAsAPage() {
+        val first = Terminal("first", name = "First agent", agent = "claude", status = "working", space = "space", tab = "one")
+        val second = Terminal("second", name = "Second agent", agent = "omp", status = "idle", space = "space", tab = "two")
+        val shell = Terminal("shell", name = "logs", agent = "zsh", space = "space", tab = "one")
+        val space = Space("space", "MNT-1", tabs = listOf(
+            SpaceTab("one", "one", true, listOf(first.address, shell.address)),
+            SpaceTab("two", "two", true, listOf(second.address)),
+        ))
+        val live = Live(link = Link.Offline, terminals = listOf(first, second, shell).associateBy { it.address }, spaces = listOf(space))
+        val went = mutableListOf<Route>()
+        rule.setContent { HerdrTheme { SessionScreen(live, "second", go = { went += it }, back = {}) } }
+
+        // Opened by its address: the session of the space, on that one.
+        rule.onNodeWithText("Second agent").assertIsDisplayed()
+        rule.onNodeWithContentDescription("Session 2 of 2. Swipe to change.").assertIsDisplayed()
+        // Only an agent has a bell.
+        rule.onNodeWithTag("bell-second").assertIsDisplayed()
+
+        rule.onNodeWithTag("joystick-second").performTouchInput { swipeLeft() }
+        rule.waitUntil(5000) { rule.onAllNodesWithTag("joystick-shell").fetchSemanticsNodes().isNotEmpty() }
+        rule.onNodeWithText("logs").assertIsDisplayed()
+        rule.onNodeWithText("Type a command…").assertIsDisplayed()
+        rule.onNodeWithContentDescription("Session 2 of 3. Swipe to change.").assertIsDisplayed()
+        rule.onNodeWithTag("bell-shell").assertDoesNotExist()
+        // It stayed in this screen: no new screen opened.
+        assertEquals(emptyList<Route>(), went)
+
+        // Left again: the agent beside the shell.
+        rule.onNodeWithTag("joystick-shell").performTouchInput { swipeLeft() }
+        rule.waitUntil(5000) { rule.onAllNodesWithText("First agent").fetchSemanticsNodes().isNotEmpty() }
+        rule.onNodeWithContentDescription("Session 1 of 3. Swipe to change.").assertIsDisplayed()
+    }
+
+    @Test fun theJoystickMovesOnlyWhereAPaneIsAndATapOpensTheMap() {
+        val moved = mutableListOf<String>()
+        var taps = 0
+        rule.setContent { HerdrTheme {
+            Joystick(null, "t1", mapOf(Move.Right to StickTarget("t2", "review")), onMove = { moved += it }, onTap = { taps++ })
+        } }
+        rule.onNodeWithTag("joystick-t1").performTouchInput { swipeUp() }
+        rule.onNodeWithTag("joystick-t1").performTouchInput { swipeLeft() }
+        rule.waitForIdle()
+        assertEquals(emptyList<String>(), moved)
+        rule.onNodeWithTag("joystick-t1").performTouchInput { swipeRight() }
+        rule.waitForIdle()
+        assertEquals(listOf("t2"), moved)
+        rule.onNodeWithTag("joystick-t1").performClick()
+        assertEquals(1, taps)
     }
 
     @Test fun anActivityGroupOpensToItsSteps() {

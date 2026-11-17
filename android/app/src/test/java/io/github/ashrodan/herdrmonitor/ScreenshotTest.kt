@@ -33,6 +33,8 @@ import io.github.ashrodan.herdrmonitor.ui.Attachment
 import io.github.ashrodan.herdrmonitor.ui.AttachmentStrip
 import io.github.ashrodan.herdrmonitor.ui.TabCard
 import io.github.ashrodan.herdrmonitor.ui.WhereAmIIcon
+import io.github.ashrodan.herdrmonitor.ui.Joystick
+import io.github.ashrodan.herdrmonitor.ui.StickTarget
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import io.github.ashrodan.herdrmonitor.ui.components.QuestionBlock
@@ -164,6 +166,19 @@ class ScreenshotTest {
         Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             WhereAmIIcon(placeOf(live.terminals["t2"], "t2", live.spaces), "t2", size = 48.dp)
             TabCard(tab, live, "t2", emptyMap(), onOpen = null)
+        }
+    }
+
+    // The joystick: in the middle of three tabs (a pane on each side but
+    // up), then alone in its space (no arrow is bright).
+    @Test fun joystick() = both {
+        val tab = SpaceTab("tb2", "review", true, listOf("t1", "t2", "t3"),
+            PaneSplit(true, listOf(PaneLeaf("t1", 0.5f), PaneSplit(false, listOf(PaneLeaf("t2"), PaneLeaf("t3")), 0.5f))))
+        val space = Space("sp", "herdr-monitor", tabs = listOf(SpaceTab("tb1", "1", false, listOf("t9")), tab, SpaceTab("tb3", "3", false, listOf("t8"))))
+        val to = mapOf(Move.Left to StickTarget("t1", "server tests"), Move.Right to StickTarget("t8", "zsh · tab 3"), Move.Down to StickTarget("t3", "omp"))
+        Row(Modifier.padding(24.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+            Joystick(placeOf(null, "t2", listOf(space)), "t2", to, onMove = {}, onTap = {})
+            Joystick(null, "t7", emptyMap(), onMove = {}, onTap = {})
         }
     }
 

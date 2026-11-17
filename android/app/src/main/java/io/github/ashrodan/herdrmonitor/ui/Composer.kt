@@ -110,6 +110,10 @@ fun Composer(
     // Sends the outbox outside this screen, so a send still ends when the
     // screen closes. null (tests): the composer sends it through the port.
     flush: (() -> Unit)? = null,
+    // A plain terminal (a shell, a dev server): the text is a command line
+    // and the keys are always there. The caller sets `working` for Stop
+    // (Ctrl-C) with an empty field.
+    shell: Boolean = false,
 ) {
     val ctx = LocalContext.current
     val view = LocalView.current
@@ -179,8 +183,9 @@ fun Composer(
                 Text(it, Modifier.padding(horizontal = 4.dp, vertical = 2.dp).testTag("composer-note"), style = MaterialTheme.typography.labelSmall,
                     color = if (it.startsWith("Not")) MaterialTheme.colorScheme.error else if (blocked && note == null) stateColor("blocked") else MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            if (blocked) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                for ((k, label) in DIALOG_KEYS) AssistChip(onClick = { keys(k) }, label = { Text(label) })
+            if (blocked || shell) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                // A shell with no dialog: the arrows, Enter, Esc and Tab.
+                for ((k, label) in if (blocked) DIALOG_KEYS else DIALOG_KEYS.take(5)) AssistChip(onClick = { keys(k) }, label = { Text(label) })
             }
             if (attached.isNotEmpty()) AttachmentStrip(attached,
                 onOpen = { a -> if (a.state == AttachState.Failed) upload(a) else preview = a },
@@ -199,7 +204,7 @@ fun Composer(
                         Icon(Icons.Default.Add, "Attach an image")
                     }
                     Box(Modifier.weight(1f).padding(vertical = 14.dp)) {
-                        if (text.isEmpty()) Text("Steer ${harnessName(harness)}…", style = MaterialTheme.typography.bodyLarge,
+                        if (text.isEmpty()) Text(if (shell) "Type a command…" else "Steer ${harnessName(harness)}…", style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                         BasicTextField(text, { text = it }, Modifier.fillMaxWidth().testTag("composer-field"),
                             textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
@@ -223,7 +228,7 @@ fun Composer(
                 Box(Modifier.size(52.dp).clip(RoundedCornerShape(corner)).background(bg)
                     .clickable(enabled = enabled, role = Role.Button) { if (showStop) interrupt() else send() }
                     .testTag(if (showStop) "composer-stop" else "composer-send")
-                    .semantics { contentDescription = if (showStop) "Stop the agent" else "Send" },
+                    .semantics { contentDescription = if (!showStop) "Send" else if (shell) "Stop the command (Ctrl-C)" else "Stop the agent" },
                     contentAlignment = Alignment.Center) {
                     if (showStop) Box(Modifier.size(14.dp).clip(RoundedCornerShape(3.dp)).background(fg))
                     else Icon(Icons.Default.KeyboardArrowUp, null, tint = fg, modifier = Modifier.size(28.dp))

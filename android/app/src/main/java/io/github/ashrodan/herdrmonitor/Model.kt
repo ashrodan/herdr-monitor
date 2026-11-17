@@ -99,8 +99,10 @@ data class AgentInfo(
 )
 
 val GROUPS = listOf("blocked" to "Blocked", "error" to "Error", "done" to "Done", "working" to "Working", "idle" to "Idle")
-// The states that post their own notification. Done is in the summary only.
+// The states that post their own notification. Done is in the summary
+// only, but an agent with its bell on (watched) posts its Done too.
 val ALERT_STATES = setOf("blocked", "error")
+fun alerts(state: String, watched: Boolean) = state in ALERT_STATES || (state == "done" && watched)
 
 // "Done" turns into "idle" once someone looked at the agent after it
 // finished: on the Mac (seen_ms) or on this phone (localSeen).
@@ -160,6 +162,23 @@ fun Space.agentAddresses(terminals: Map<String, Terminal>): List<String> = build
     }
 }
 
+// A terminal with a conversation: its page is the chat. Any other terminal
+// (a shell, a dev server) shows its screen.
+fun Terminal.isChat() = isAgent() && !isApp()
+
+// Every terminal of the space that still runs, in tab order: the pages the
+// joystick can reach. A swipe reaches the agents, and each other terminal
+// that was opened.
+fun Space.liveAddresses(terminals: Map<String, Terminal>): List<String> = buildList {
+    val seen = HashSet<String>()
+    for (tab in tabs) for (address in tab.terminals) {
+        val terminal = terminals[address] ?: continue
+        if (!terminal.finished && seen.add(address)) add(address)
+    }
+}
+
+// The terminals of one machine that the server reaches through hc.
+fun machineOf(address: String): String? = address.substringBefore('/', "").ifEmpty { null }
 
 fun age(ms: Long?, now: Long = System.currentTimeMillis()): String {
     if (ms == null || ms == 0L) return ""
@@ -226,11 +245,12 @@ sealed interface AlertAction {
 // prev: the alert state now on screen for that agent (null: none).
 // since: on a snapshot, alert only for changes after this time (the phone
 // was not listening before), so a reconnect does not replay old alerts.
-// agent null: it went away.
-fun planAlert(address: String, prev: String?, agent: AgentInfo?, localSeen: Map<String, Long> = emptyMap(), since: Long? = null): AlertAction? {
+// agent null: it went away. watched: the agents with their bell on.
+fun planAlert(address: String, prev: String?, agent: AgentInfo?, localSeen: Map<String, Long> = emptyMap(), since: Long? = null,
+              watched: Set<String> = emptySet()): AlertAction? {
     if (agent == null) return if (prev != null) AlertAction.Cancel(address) else null
     val now = agent.stateOf(localSeen)
-    if (now !in ALERT_STATES) return if (prev != null) AlertAction.Cancel(address) else null
+    if (!alerts(now, address in watched)) return if (prev != null) AlertAction.Cancel(address) else null
     if (prev == now) return null
     if (since != null && (agent.changedMs ?: 0) <= since) return null
     return AlertAction.Post(agent, now, sound = true)
