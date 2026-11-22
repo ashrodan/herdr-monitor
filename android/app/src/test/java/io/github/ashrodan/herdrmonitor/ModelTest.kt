@@ -147,4 +147,17 @@ class ModelTest {
         assertEquals("2h", age(1, 7_200_001))
         assertEquals("", age(null))
     }
+
+    // An agent event that changes nothing the widget shows must not draw it
+    // again (each draw is a Glance render and a tile refresh).
+    @Test fun sameForWidgetIgnoresTheTimeOnly() {
+        val agents = listOf(agent("blocked", addr = "a"), agent("working", addr = "b"))
+        val w = widgetData(true, "mac", agents, emptyList(), emptyMap(), emptyMap(), 1000)
+        assertFalse(sameForWidget(null, w))
+        assertTrue(sameForWidget(w, widgetData(true, "mac", agents, emptyList(), emptyMap(), emptyMap(), 2000)))
+        // A new status message on a working agent: the widget shows only counts for it.
+        assertTrue(sameForWidget(w, widgetData(true, "mac", listOf(agents[0], agent("working", addr = "b", msg = "Reading files")), emptyList(), emptyMap(), emptyMap(), 3000)))
+        assertFalse(sameForWidget(w, widgetData(false, "mac", agents, emptyList(), emptyMap(), emptyMap(), 2000)))
+        assertFalse(sameForWidget(w, widgetData(true, "mac", agents + agent("working", addr = "c"), emptyList(), emptyMap(), emptyMap(), 2000)))
+    }
 }

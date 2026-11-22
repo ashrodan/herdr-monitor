@@ -293,6 +293,10 @@ data class WidgetData(
     val updatedMs: Long,
 )
 
+// The widget and the tile would show the same thing. updatedMs does not
+// count: it changes on each save.
+fun sameForWidget(a: WidgetData?, b: WidgetData) = a != null && a.copy(updatedMs = 0) == b.copy(updatedMs = 0)
+
 // asks: the open question of each blocked agent, when the service read it.
 fun widgetData(connected: Boolean, host: String, agents: Collection<AgentInfo>, prs: List<OverviewPr>, asks: Map<String, Part.Ask>,
                localSeen: Map<String, Long>, now: Long): WidgetData {

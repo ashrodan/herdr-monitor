@@ -404,7 +404,7 @@ private fun LazyListScope.sessionsList(
 }
 
 // Reads the transcript of each session that is not idle (up to 12), every
-// 8 s while Home shows, for its last words, its question and its last
+// 8 s while Home shows (not in the background), for its last words, its question and its last
 // output time. Needs you first (its answer buttons wait on this), four at a
 // time, a 10 s read timeout each: one slow agent does not hold up the rest. An
 // unchanged transcript costs one small request.
@@ -412,7 +412,7 @@ private fun LazyListScope.sessionsList(
 private fun DigestLoader(sessions: List<Session>) {
     val app = LocalContext.current.app
     val current by rememberUpdatedState(sessions)
-    LaunchedEffect(Unit) {
+    PollWhileStarted(Unit) {
         val gate = Semaphore(4)
         while (true) {
             val api = app.store.api

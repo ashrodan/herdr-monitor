@@ -1,5 +1,7 @@
 package io.github.ashrodan.herdrmonitor
 
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import androidx.compose.runtime.Composable
@@ -43,13 +45,25 @@ import org.json.JSONObject
 // button. It updates when the stream pushes a change, not on a timer.
 object Widget {
     private val scope = CoroutineScope(Dispatchers.Default)
+    // The last data saved in this process: an unchanged save draws nothing.
+    @Volatile private var last: WidgetData? = null
 
+    // Called for each agent event (at most once a second). Most events
+    // change nothing the widget shows: skip those, and skip the Glance
+    // render when no widget is on the home screen.
     fun save(c: Context, d: WidgetData) {
+        if (sameForWidget(last, d)) return
+        last = d
         c.app.prefs.widgetJson = toJson(d)
-        scope.launch { runCatching { AgentWidget().updateAll(c.applicationContext) } }
+        if (placed(c)) scope.launch { runCatching { AgentWidget().updateAll(c.applicationContext) } }
         // The Herdr tile shows the same counts.
         HerdrTile.refresh(c)
     }
+
+    // A widget is on the home screen. When Android cannot say, assume yes.
+    fun placed(c: Context): Boolean = runCatching {
+        AppWidgetManager.getInstance(c).getAppWidgetIds(ComponentName(c, AgentWidgetReceiver::class.java)).isNotEmpty()
+    }.getOrDefault(true)
 
     fun toJson(d: WidgetData): String = JSONObject()
         .put("connected", d.connected).put("host", d.host).put("needsYou", d.needsYou).put("working", d.working)

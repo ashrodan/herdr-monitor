@@ -75,7 +75,8 @@ class Store(private val server: () -> String, private val cache: Cache? = null) 
                     // (maybe the old server): drop it, do not cache it.
                     api.stream("/api/events", SseParser({ if (gen == generation) onEvent(it) }), onOpen = { backoff.reset() }, isCancelled = { !isActive || gen != generation })
                 } catch (e: Exception) {
-                    _live.update { it.copy(link = Link.Offline, error = e.message ?: e.javaClass.simpleName) }
+                    // A link from before a stop or a restart says nothing about the new one.
+                    if (gen == generation) _live.update { it.copy(link = Link.Offline, error = e.message ?: e.javaClass.simpleName) }
                 }
                 if (!isActive || gen != generation) break
                 _live.update { it.copy(link = Link.Offline) }
@@ -84,7 +85,9 @@ class Store(private val server: () -> String, private val cache: Cache? = null) 
         }
     }
 
-    fun stop() { generation++; job?.cancel(); job = null }
+    // The link is not Online after a stop: screens that poll while Online
+    // must not think it is, and the outbox flushes again when it comes back.
+    fun stop() { generation++; job?.cancel(); job = null; _live.update { it.copy(link = Link.Connecting) } }
 
     // A new server, or the network came back: connect again now.
     fun restart() { stop(); _live.value = Live(); loadCache(); start() }

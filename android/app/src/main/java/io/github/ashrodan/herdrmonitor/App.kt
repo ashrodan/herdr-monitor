@@ -13,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.map
@@ -124,10 +125,11 @@ class App : Application() {
         scope.launch { store.live.map { it.link }.distinctUntilChanged().collect { if (it == Link.Online) flushOutbox() } }
         // A reply held at a dialog goes when the dialog is answered.
         scope.launch { store.live.map { l -> l.terminals.values.count { it.status == "blocked" } }.distinctUntilChanged().collect { flushOutbox() } }
+        // The 15 s timer runs only while a reply waits: the alert service
+        // keeps this process alive all day.
         scope.launch {
-            while (true) {
-                delay(15_000)
-                flushOutbox()
+            outbox.items.map { l -> l.any { it.state == OutState.WAITING } }.distinctUntilChanged().collectLatest { waiting ->
+                if (waiting) while (true) { delay(15_000); flushOutbox() }
             }
         }
     }

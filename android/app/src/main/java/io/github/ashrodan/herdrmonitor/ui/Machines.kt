@@ -14,7 +14,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,11 +41,11 @@ import io.github.ashrodan.herdrmonitor.shortPath
 import kotlinx.coroutines.delay
 
 // The machines of the tailnet, read from the server in use and read again
-// each minute. Empty while it loads, and with an older server.
+// each minute while the app is on screen. Empty while it loads, and with an older server.
 @Composable
 fun rememberMachines(server: String): List<Machine> {
     var machines by remember(server) { mutableStateOf<List<Machine>>(emptyList()) }
-    LaunchedEffect(server) { while (true) { machines = Servers.machines(server).ifEmpty { machines }; delay(60_000) } }
+    PollWhileStarted(server) { while (true) { machines = Servers.machines(server).ifEmpty { machines }; delay(60_000) } }
     return machines
 }
 
