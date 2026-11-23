@@ -43,4 +43,10 @@ object Servers {
             val best = rows.maxBy { (if (it.herdr != null) 2 else 0) + (if (it.os != null) 1 else 0) }
             best.copy(url = url, self = rows.any { it.self }, os = rows.firstNotNullOfOrNull { it.os })
         }.sortedWith(compareBy({ !it.self }, { it.name }, { portOf(it.url) }))
+
+    // Every machine of the tailnet, from the server in use. An older server
+    // has no /api/machines: an empty list then.
+    suspend fun machines(server: String): List<Machine> = withContext(Dispatchers.IO) {
+        runCatching { Json.machines(Api(server).get("/api/machines", 20000)) }.getOrDefault(emptyList())
+    }
 }

@@ -65,6 +65,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.ashrodan.herdrmonitor.ui.theme.Mono
 import io.github.ashrodan.herdrmonitor.Link
+import io.github.ashrodan.herdrmonitor.Machine
+import io.github.ashrodan.herdrmonitor.machineTerminals
 import io.github.ashrodan.herdrmonitor.Live
 import io.github.ashrodan.herdrmonitor.OverviewPr
 import io.github.ashrodan.herdrmonitor.Route
@@ -73,7 +75,10 @@ import io.github.ashrodan.herdrmonitor.Terminal
 import io.github.ashrodan.herdrmonitor.age
 import io.github.ashrodan.herdrmonitor.app
 import io.github.ashrodan.herdrmonitor.appUrl
-import io.github.ashrodan.herdrmonitor.agentAddresses
+import io.github.ashrodan.herdrmonitor.liveAddresses
+import io.github.ashrodan.herdrmonitor.isChat
+import io.github.ashrodan.herdrmonitor.machineOf
+import io.github.ashrodan.herdrmonitor.placeOf
 import io.github.ashrodan.herdrmonitor.displayName
 import io.github.ashrodan.herdrmonitor.groupAgents
 import io.github.ashrodan.herdrmonitor.isAgent
@@ -223,21 +228,74 @@ fun PrRow(p: OverviewPr, onClick: () -> Unit) {
     }
 }
 
-// A space is a horizontal set of agent sessions. App servers are actions
-// above the composer; shell terminals stay behind Session options.
+// A space is a horizontal set of sessions. A swipe goes through its agents;
+// the joystick reaches every pane, also a shell or a dev server, and such a
+// terminal then stays in the set. App servers are also actions above the
+// composer.
 @Composable
 fun SpaceScreen(live: Live, id: String, go: (Route) -> Unit, back: () -> Unit) {
     val space = live.spaces.find { it.id == id }
-    val addresses = remember(space, live.terminals) { space?.agentAddresses(live.terminals).orEmpty() }
-    if (addresses.isEmpty()) {
+    val all = remember(space, live.terminals) { space?.liveAddresses(live.terminals).orEmpty() }
+    val first = remember(all, live.terminals) { all.firstOrNull { live.terminals[it]?.isChat() == true } }
+    if (first == null) {
         SpaceWithoutAgents(live, space, go, back)
         return
     }
+    SessionPager(live, all, go, back, space = id, start = first)
+}
 
-    val pager = rememberPagerState(pageCount = { addresses.size })
+// One session, opened by its address (Home, an alert, the map): the same
+// set as its space, on that session. A session on another machine: that
+// machine's sessions. A terminal in no space: only itself.
+@Composable
+fun SessionScreen(live: Live, address: String, go: (Route) -> Unit, back: () -> Unit, rawTerminal: Boolean = false) {
+    val t = live.terminals[address]
+    val place = remember(t, address, live.spaces) { placeOf(t, address, live.spaces) }
+    val all = remember(place, address, live.terminals) {
+        place?.space?.liveAddresses(live.terminals)?.takeIf { address in it }
+            ?: machineOf(address)?.let { m -> machineTerminals(Machine(m, hcName = m), live.terminals.values).map { it.address } }?.takeIf { address in it }
+            ?: listOf(address)
+    }
+    SessionPager(live, all, go, back, space = place?.space?.id, start = address, rawTerminal = rawTerminal)
+}
+
+// Sessions side by side: a swipe changes the session, and dots under the
+// title show which one is on screen. all: every terminal the joystick can
+// open here. The pages are its agents, and each other terminal that was
+// opened (start, or a move of the joystick). space: the space they belong
+// to, when they share one.
+@Composable
+fun SessionPager(live: Live, all: List<String>, go: (Route) -> Unit, back: () -> Unit, space: String? = null, start: String? = null, rawTerminal: Boolean = false) {
+    var extras by rememberSaveable { mutableStateOf(listOfNotNull(start).joinToString("\n")) }
+    val addresses = remember(all, live.terminals, extras) {
+        val opened = extras.split("\n").toSet()
+        all.filter { it in opened || live.terminals[it]?.isChat() == true }
+    }
+    if (addresses.isEmpty()) return
+    // The session on screen, by address: the set can grow before it.
+    var anchor by rememberSaveable { mutableStateOf(start ?: addresses.first()) }
+    val pager = rememberPagerState(initialPage = addresses.indexOf(anchor).coerceAtLeast(0), pageCount = { addresses.size })
     val scope = rememberCoroutineScope()
-    LaunchedEffect(addresses) {
-        if (pager.currentPage > addresses.lastIndex) pager.scrollToPage(addresses.lastIndex)
+    val current by androidx.compose.runtime.rememberUpdatedState(addresses)
+    // Where a joystick move goes; the page may not be in the set yet.
+    var target by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(addresses, target) {
+        val to = target
+        if (to != null) {
+            val i = addresses.indexOf(to)
+            // A swipe during the move ends it: the page on screen then counts.
+            if (i >= 0) try { pager.animateScrollToPage(i); anchor = to } finally {
+                if (anchor != to) anchor = current.getOrNull(pager.currentPage) ?: to
+                target = null
+            }
+            return@LaunchedEffect
+        }
+        val i = addresses.indexOf(anchor)
+        if (i >= 0 && i != pager.currentPage) pager.scrollToPage(i)
+        else if (i < 0 && pager.currentPage > addresses.lastIndex) pager.scrollToPage(addresses.lastIndex)
+    }
+    LaunchedEffect(pager) {
+        androidx.compose.runtime.snapshotFlow { pager.settledPage }.collect { p -> if (target == null) current.getOrNull(p)?.let { anchor = it } }
     }
     HorizontalPager(
         state = pager,
@@ -251,13 +309,39 @@ fun SpaceScreen(live: Live, id: String, go: (Route) -> Unit, back: () -> Unit) {
             pageIndex = page,
             pageCount = addresses.size,
             active = pager.currentPage == page,
-            // From the map: a session of this space is a swipe away, any
-            // other opens on its own.
-            open = { a -> val i = addresses.indexOf(a); if (i >= 0) scope.launch { pager.animateScrollToPage(i) } else go(Route.Agent(a)) },
+            showTerminalOnOpen = rawTerminal && addresses[page] == start,
+            // From the map or the joystick: a terminal of this set is a
+            // page of it (a shell joins the set), any other opens on its own.
+            open = { a ->
+                if (a in all) { if (a !in addresses) extras = extras + "\n" + a; target = a }
+                else go(Route.Agent(a))
+            },
             // This space is already open: only the map closes.
-            openSpace = { s -> if (s != id) go(Route.SpaceR(s)) },
+            openSpace = { s -> if (s != space) go(Route.SpaceR(s)) },
+            pages = addresses,
         )
     }
+}
+
+// A machine that the server reaches through hc, opened from the Machines
+// list: its agent sessions, a swipe apart. With no agent there, its first
+// terminal.
+@Composable
+fun MachineScreen(live: Live, name: String, go: (Route) -> Unit, back: () -> Unit) {
+    val all = remember(name, live.terminals) { machineTerminals(Machine(name, hcName = name), live.terminals.values).map { it.address } }
+    if (all.isEmpty()) {
+        // Its last terminal ended, or the link is not up yet.
+        Scaffold(containerColor = Palette.background) { pad ->
+            Column(Modifier.fillMaxSize().padding(pad)) {
+                IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+                ConnectionLine(live)
+                Empty(if (live.link == Link.Online) "No terminals on $name." else "Connecting…")
+            }
+        }
+        return
+    }
+    // machineTerminals puts agents first.
+    SessionPager(live, all, go, back, start = all.first())
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

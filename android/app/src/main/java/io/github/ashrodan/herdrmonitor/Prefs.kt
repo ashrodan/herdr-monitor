@@ -100,6 +100,12 @@ class Prefs(context: Context) {
         get() = p.getStringSet(scoped("pinned"), emptySet())!!.toSet()
         set(v) = p.edit().putStringSet(scoped("pinned"), v).apply()
 
+    // Agents with their bell on: a native alert when one is done. Local to
+    // the phone, for the server in use.
+    var watched: Set<String>
+        get() = p.getStringSet(scoped("watched"), emptySet())!!.toSet()
+        set(v) = p.edit().putStringSet(scoped("watched"), v).apply()
+
     // The widget's data, as the service last wrote it.
     var widgetJson: String?
         get() = p.getString("widget", null)

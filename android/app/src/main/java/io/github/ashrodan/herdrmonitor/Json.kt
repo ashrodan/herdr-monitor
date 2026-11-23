@@ -134,6 +134,13 @@ object Json {
         ServerInfo(it.getString("url"), it.optString("name"), it.optStringOrNull("os"), it.optBoolean("self"), herdr(it.optJSONObject("herdr")), it.optBoolean("older"))
     }
 
+    fun machines(text: String): List<Machine> = JSONObject(text).optJSONArray("machines").mapObj {
+        val hc = it.optJSONObject("hc")
+        Machine(it.getString("name"), it.optStringOrNull("os"), it.optBoolean("self"), it.optBoolean("online"), it.optBoolean("tailnet", true),
+            hc?.optStringOrNull("name"), hc?.optStringOrNull("state"), hc?.optStringOrNull("version"),
+            it.optStringOrNull("server"), it.optInt("terminals"), it.optInt("agents"))
+    }
+
     fun started(text: String): String = JSONObject(text).getString("address")
 
     fun readText(text: String): String = Glyphs.mono(JSONObject(text).optString("text"))

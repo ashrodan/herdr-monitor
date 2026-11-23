@@ -89,17 +89,21 @@ class OutboxUiTest {
         assertEquals(listOf("first", "second"), outbox.items.value.map { it.text })
     }
 
-    @Test fun aRefusedSendIsNotQueuedAndTheTextStays() {
+    // The field clears at the tap. A reply the server refuses stays in the
+    // chat as a bubble marked "Not sent", and is not sent again by itself.
+    @Test fun aRefusedSendShowsAsABubbleMarkedNotSent() {
         val outbox = Outbox(Mem())
         val port = RefusingPort()
         show(outbox, port, online = true)
         rule.onNodeWithTag("composer-field").performTextInput("to nobody")
         rule.onNodeWithTag("composer-send").performClick()
-        rule.waitUntil(5_000) { port.sends == 1 }
+        rule.waitUntil(5_000) { port.sends == 1 && outbox.items.value.single().state == OutState.FAILED }
         rule.waitForIdle()
-        assertTrue(outbox.items.value.isEmpty())
-        rule.onNodeWithTag("composer-note").assertTextContains("Not sent: no such terminal")
-        rule.onNodeWithTag("composer-field").assertTextContains("to nobody")
+        val item = outbox.items.value.single()
+        assertEquals("no such terminal", item.lastError)
+        rule.onNodeWithTag("queued-${item.id}").assertTextContains("Not sent", substring = true)
+        rule.onNodeWithTag("composer-field").assertTextContains("", substring = false)
+        assertEquals(1, port.sends)
     }
 
     @Test fun deleteRemovesThatQueuedBubble() {

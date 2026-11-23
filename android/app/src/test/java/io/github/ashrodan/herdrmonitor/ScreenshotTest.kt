@@ -21,6 +21,7 @@ import com.android.resources.NightMode
 import io.github.ashrodan.herdrmonitor.ui.ActivityCard
 import io.github.ashrodan.herdrmonitor.ui.Composer
 import io.github.ashrodan.herdrmonitor.ui.HerdrScene
+import io.github.ashrodan.herdrmonitor.ui.MachineRow
 import io.github.ashrodan.herdrmonitor.ui.PrRow
 import io.github.ashrodan.herdrmonitor.ui.ReplyPort
 import io.github.ashrodan.herdrmonitor.ui.SceneState
@@ -32,6 +33,8 @@ import io.github.ashrodan.herdrmonitor.ui.Attachment
 import io.github.ashrodan.herdrmonitor.ui.AttachmentStrip
 import io.github.ashrodan.herdrmonitor.ui.TabCard
 import io.github.ashrodan.herdrmonitor.ui.WhereAmIIcon
+import io.github.ashrodan.herdrmonitor.ui.Joystick
+import io.github.ashrodan.herdrmonitor.ui.StickTarget
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import io.github.ashrodan.herdrmonitor.ui.components.QuestionBlock
@@ -164,5 +167,32 @@ class ScreenshotTest {
             WhereAmIIcon(placeOf(live.terminals["t2"], "t2", live.spaces), "t2", size = 48.dp)
             TabCard(tab, live, "t2", emptyMap(), onOpen = null)
         }
+    }
+
+    // The joystick: in the middle of three tabs (a pane on each side but
+    // up), then alone in its space (no arrow is bright).
+    @Test fun joystick() = both {
+        val tab = SpaceTab("tb2", "review", true, listOf("t1", "t2", "t3"),
+            PaneSplit(true, listOf(PaneLeaf("t1", 0.5f), PaneSplit(false, listOf(PaneLeaf("t2"), PaneLeaf("t3")), 0.5f))))
+        val space = Space("sp", "herdr-monitor", tabs = listOf(SpaceTab("tb1", "1", false, listOf("t9")), tab, SpaceTab("tb3", "3", false, listOf("t8"))))
+        val to = mapOf(Move.Left to StickTarget("t1", "server tests"), Move.Right to StickTarget("t8", "zsh · tab 3"), Move.Down to StickTarget("t3", "omp"))
+        Row(Modifier.padding(24.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+            Joystick(placeOf(null, "t2", listOf(space)), "t2", to, onMove = {}, onTap = {})
+            Joystick(null, "t7", emptyMap(), onMove = {}, onTap = {})
+        }
+    }
+
+    // The Machines list: this server, a machine reached through hc with one
+    // of its sessions below it, one with its own server, one with no Herdr
+    // link, and one that is offline.
+    @Test fun machines() = both {
+        MachineRow(Machine("studio-mac.t.ts.net", "macOS", self = true, online = true, server = "https://x:7400", terminals = 50, agents = 6), "studio-mac")
+        MachineRow(Machine("dev-box.t.ts.net", "linux", online = true, hcName = "dev-box", hcState = "connected", hcVersion = "0.1.16", terminals = 2, agents = 1), "studio-mac")
+        androidx.compose.foundation.layout.Box(Modifier.padding(start = 20.dp)) {
+            TerminalRow(Terminal("dev-box/t18", agent = "claude-code", status = "done", changedMs = now - 600_000), "feat-inventory", "~/shop-dbt", "done", now) {}
+        }
+        MachineRow(Machine("build-box.t.ts.net", "linux", online = true, server = "https://build-box.t.ts.net:7400"), "studio-mac", onClick = {}, action = "Use")
+        MachineRow(Machine("lab-box.t.ts.net", "linux", online = true), "studio-mac")
+        MachineRow(Machine("tablet.t.ts.net", "iOS"), "studio-mac")
     }
 }

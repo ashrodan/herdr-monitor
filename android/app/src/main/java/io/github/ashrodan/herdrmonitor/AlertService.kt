@@ -208,7 +208,7 @@ class AlertService : Service() {
                 agents.clear()
                 list.forEach { agents[it.address] = it }
                 val addresses = prefs.posted.keys + agents.keys
-                for (a in addresses) apply(planAlert(a, prefs.posted[a], agents[a], prefs.localSeen, since))
+                for (a in addresses) apply(planAlert(a, prefs.posted[a], agents[a], prefs.localSeen, since, prefs.watched))
                 app.serviceStates.clear()
                 list.forEach { app.serviceStates[it.address] = it.state }
                 refreshOverview()
@@ -220,7 +220,7 @@ class AlertService : Service() {
                 agents[a.address] = a
                 app.serviceStates[a.address] = a.state
                 if (a.state != "blocked") asks.remove(a.address)
-                apply(planAlert(a.address, prefs.posted[a.address], a, prefs.localSeen))
+                apply(planAlert(a.address, prefs.posted[a.address], a, prefs.localSeen, watched = prefs.watched))
                 refreshOverview()
             }
             "removed" -> {
@@ -228,6 +228,8 @@ class AlertService : Service() {
                 agents.remove(a)
                 app.serviceStates.remove(a)
                 asks.remove(a)
+                // Its bell goes with it.
+                if (a in prefs.watched) app.setWatched(prefs.watched - a)
                 apply(planAlert(a, prefs.posted[a], null))
                 refreshOverview()
             }
@@ -246,8 +248,8 @@ class AlertService : Service() {
             }
             is AlertAction.Post -> {
                 prefs.posted = prefs.posted + (action.agent.address to action.state)
-                // Only Needs you posts (planAlert plans nothing else).
-                if (mayAlert(action.state, prefs.quiet)) scope.launch { post(action.agent, action.state) }
+                // Needs you, or the Done of an agent with its bell on.
+                if (mayAlert(action.state, prefs.quiet, action.agent.address in prefs.watched)) scope.launch { post(action.agent, action.state) }
             }
         }
     }
@@ -258,6 +260,14 @@ class AlertService : Service() {
     // question shows up, update the alert quietly with its options.
     private suspend fun post(a: AgentInfo, state: String) {
         Notifier.postAgent(this, a, state, null, quiet = false)
+        // Done (its bell is on): the alert says the agent's last words.
+        if (state == "done") {
+            val words = withTimeoutOrNull(8000) {
+                runCatching { Api(prefs.server).chat(a.address, null)?.let { lastProse(it.messages) } }.getOrNull()
+            }
+            if (words != null && prefs.posted[a.address] == state) Notifier.postAgent(this, agents[a.address] ?: a, state, null, quiet = true, text = words)
+            return
+        }
         if (state != "blocked") return
         repeat(5) { attempt ->
             if (attempt > 0) delay(1500)

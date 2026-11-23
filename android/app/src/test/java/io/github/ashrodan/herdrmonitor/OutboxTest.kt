@@ -87,7 +87,7 @@ class OutboxTest {
         val b = box(mem)
         b.add(S, "dai/t1", "quote \" back\\slash\nnew line\ttab é 🚀", true)
         b.add(S, "t2", "plain", false)
-        b.flush(S, { true }) { item, _ -> if (item.address == "dai/t1") error("HTTP 409: \"busy\"") }
+        b.flush(S, { it == "dai/t1" }) { item, _ -> if (item.address == "dai/t1") error("HTTP 409: \"busy\"") }
         val again = Outbox(Mem(mem.json))
         assertEquals(b.items.value, again.items.value)
         val item = again.items.value.single()
@@ -121,7 +121,7 @@ class OutboxTest {
         b.flush(S, { it == "t2" || it == "t3" }) { item, force -> forced[item.address] = force }
         assertFalse(forced["t1"]!!) // queued at a dialog, no longer blocked
         assertTrue(forced["t2"]!!)  // still blocked
-        assertFalse(forced["t3"]!!) // not queued at a dialog
+        assertNull(forced["t3"])    // typed for the prompt: it waits until the dialog is answered
     }
 
     @Test fun anItemTheTranscriptShowsIsDropped() {
@@ -247,5 +247,43 @@ class OutboxTest {
         assertEquals(2, u.size)
         assertEquals("hi" to 1_794_038_400_000L, u[0])
         assertNull(u[1].second)
+    }
+
+    // A reply typed while a flush runs goes in that flush, in order: the
+    // field is free again at the tap, so a second reply can come at once.
+    @Test fun anItemAddedDuringAFlushIsSentByIt() = runBlocking {
+        val box = Outbox(Mem())
+        box.add("", "t1", "one", false)
+        val sent = mutableListOf<String>()
+        val n = box.flush("", { false }) { item, _ ->
+            if (item.text == "one") { box.add("", "t1", "two", false); box.add("", "t2", "other agent", false) }
+            sent.add(item.text)
+        }
+        assertEquals(3, n)
+        assertEquals(listOf("one", "two", "other agent"), sent)
+        assertTrue(box.items.value.isEmpty())
+    }
+
+    // A reply for the prompt waits while the agent is at a dialog (the text
+    // would go into the dialog), and goes when the dialog is answered.
+    @Test fun aReplyForThePromptWaitsWhileTheAgentIsAtADialog() = runBlocking {
+        val box = Outbox(Mem())
+        box.add("", "t1", "next task", false)
+        var blocked = true
+        val sent = mutableListOf<String>()
+        assertEquals(0, box.flush("", { blocked }) { item, _ -> sent.add(item.text) })
+        assertEquals(HELD_AT_DIALOG, box.items.value.single().lastError)
+        assertEquals(OutState.WAITING, box.items.value.single().state)
+        assertEquals(0, box.items.value.single().attempts)
+        assertEquals("Queued", box.items.value.single().waitingLabel())
+        blocked = false
+        assertEquals(1, box.flush("", { blocked }) { item, _ -> sent.add(item.text) })
+        assertEquals(listOf("next task"), sent)
+    }
+
+    @Test fun aNewItemSaysSendingAndAHeldOneSaysQueued() {
+        val box = Outbox(Mem())
+        assertEquals("Sending…", box.add("", "t1", "a", false).waitingLabel())
+        assertEquals("Queued", box.add("", "t1", "b", false, error = "Offline").waitingLabel())
     }
 }
