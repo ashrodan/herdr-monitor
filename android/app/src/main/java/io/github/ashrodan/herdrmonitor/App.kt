@@ -94,7 +94,7 @@ class App : Application() {
             try {
                 val to = nextServer(s.list, s.inUse) { Servers.healthy(it) } ?: return@launch
                 if (serverState.value != s) return@launch
-                android.util.Log.i("HerdrFailover", "${shortHost(s.inUse)} does not answer: using ${shortHost(to)}")
+                android.util.Log.i("HerdrFailover", "${s.inUse} does not answer: using $to")
                 useServer(to, pick = false)
             } finally { switching.set(false) }
         }
@@ -174,7 +174,7 @@ class App : Application() {
                     val s = serverState.value
                     val back = above(s.list, s.inUse).firstOrNull { Servers.healthy(it) } ?: continue
                     if (serverState.value != s) continue
-                    android.util.Log.i("HerdrFailover", "${shortHost(back)} answers again: using it")
+                    android.util.Log.i("HerdrFailover", "$back answers again: using it")
                     useServer(back, pick = false)
                 }
             }
