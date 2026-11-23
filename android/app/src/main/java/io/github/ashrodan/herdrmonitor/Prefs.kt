@@ -34,6 +34,15 @@ class Prefs(context: Context) {
         get() = p.getString("server", null) ?: DEFAULT_SERVER
         set(v) = p.edit().putString("server", v).apply()
 
+    // The servers to use, in order (Failover.kt): the first is preferred, the
+    // others are fallbacks. server above is the one in use, which can be a
+    // fallback. Before there was a list: the server in use alone.
+    var servers: List<String>
+        get() = p.getString("servers", null)?.let { s ->
+            runCatching { org.json.JSONArray(s).let { a -> (0 until a.length()).map { a.getString(it) } } }.getOrNull()
+        }?.takeIf { it.isNotEmpty() } ?: listOf(server)
+        set(v) = p.edit().putString("servers", org.json.JSONArray(v.distinct()).toString()).apply()
+
     // Dark (default), Light or System; and whether to take colours from the
     // wallpaper (off by default). Status colours never change.
     var theme: String

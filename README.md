@@ -45,8 +45,9 @@ less memory. Either one is fine for a few phones and browsers.
 
 ### Keep it running
 
-`scripts/service.js` makes the server a launchd agent: it starts at login,
-and launchd starts it again if it stops.
+`scripts/service.js` makes the server a service that starts by itself, and
+starts again if it stops: a launchd agent on macOS, a systemd user service on
+Linux.
 
     npm run build
     node scripts/service.js print            # show the plist; changes nothing
@@ -60,6 +61,32 @@ Run `install` from the checkout you want to serve, with the same `PORT`,
 stop the server you started by hand first. The log is
 `~/Library/Logs/herdr-monitor/server.log`. The server stops cleanly on
 SIGTERM: it ends every stream, so clients reconnect at once.
+
+On Linux the same commands write `~/.config/systemd/user/herdr-monitor.service`
+and start it. The logs are in `journalctl --user -u herdr-monitor`. The service
+runs without a login only when lingering is on (`loginctl enable-linger
+$USER`); `install` warns when it is off.
+
+### A second hub (when the Mac is off)
+
+The Android app can use more than one server. Run herdr-monitor on a Linux
+box that is always on (a hub), with hc links to the other boxes, and add it
+as a fallback in the app:
+
+1. On the box: clone this repo, `npm ci && npm run build`, then
+   `node scripts/service.js install` and
+   `tailscale serve --bg --https=7400 http://127.0.0.1:7400`.
+2. On the box: `hc machine add <box>` for each other box it must show.
+3. In the app: open the server list (tap the server on Home) and tap
+   `+ fallback` on the hub.
+
+The first server in the list is the preferred one (a tap on a server makes
+it the preferred one). When the phone cannot reach the server in use for a
+minute, it moves to the first server in the list that answers and runs Herdr.
+On a fallback, it asks the servers above it every 5 minutes and moves back to
+the first one that answers. The phone holds a link to one server at a time.
+Each server keeps its own records (seen, pinned, alerts), because a terminal
+has another address on another hub (`dai/t3` through the Mac, `t3` on dai).
 
 ### On a phone
 

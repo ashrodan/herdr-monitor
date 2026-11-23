@@ -1,10 +1,15 @@
-// Run herdr-monitor as a macOS launchd agent: it starts at login and
-// launchd starts it again if it stops.
+// Run herdr-monitor as a service that starts by itself and starts again if
+// it stops: a launchd agent on macOS, a systemd user service on Linux (a
+// box on the tailnet that is a hub for the phone; see the README).
 //
 //   node scripts/service.js print    [--bun]   show the plist, change nothing
 //   node scripts/service.js install  [--bun]   write it and start the agent
 //   node scripts/service.js uninstall          stop the agent, remove it
 //   node scripts/service.js status
+//
+// On Linux the unit is ~/.config/systemd/user/herdr-monitor.service, and the
+// logs are in `journalctl --user -u herdr-monitor`. It runs without a login
+// only when lingering is on (loginctl enable-linger): install warns if not.
 //
 // install takes PORT, HOST, REDIRECT_PORT, HTTPS_PORT, HC_SOCKET, HC_BIN and
 // HERDR_MONITOR_DIR from the current environment, and PATH too: launchd's own
@@ -52,6 +57,32 @@ ${envXml}
 `;
 }
 
+export const UNIT = 'herdr-monitor';
+
+// systemd quoting: a value in double quotes, with \ and " escaped, and %
+// doubled (systemd expands %-specifiers in these lines).
+const sdq = (s) => `"${String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/%/g, '%%')}"`;
+
+export function unit({ runtime, root = ROOT, env = {} }) {
+  const envLines = Object.entries(env).filter(([, v]) => v != null && v !== '')
+    .map(([k, v]) => `Environment=${sdq(`${k}=${v}`)}`).join('\n');
+  return `[Unit]
+Description=herdr-monitor (web and phone view of Herdr)
+After=network-online.target
+
+[Service]
+ExecStart=${sdq(runtime)} ${sdq(path.join(root, 'server.js'))}
+WorkingDirectory=${String(root).replace(/%/g, '%%')}
+${envLines}
+Restart=always
+RestartSec=5
+TimeoutStopSec=5
+
+[Install]
+WantedBy=default.target
+`;
+}
+
 export function pickEnv(env) {
   return Object.fromEntries(KEEP_ENV.filter((k) => env[k]).map((k) => [k, env[k]]));
 }
@@ -68,7 +99,47 @@ function portInUse(port, host) {
   });
 }
 
+async function linux(cmd, flags) {
+  const unitFile = path.join(os.homedir(), '.config/systemd/user', `${UNIT}.service`);
+  const runtime = flags.includes('--bun') ? which('bun') : process.execPath;
+  if (!runtime) throw new Error('bun is not on PATH');
+  const text = unit({ runtime, env: pickEnv(process.env) });
+  const sc = (...args) => execFileSync('systemctl', ['--user', ...args], { encoding: 'utf8' });
+
+  if (cmd === 'print') { process.stdout.write(text); return; }
+  if (cmd === 'status') {
+    try { process.stdout.write(sc('status', '--no-pager', '-n', '5', UNIT)); }
+    catch (e) { process.stdout.write(e.stdout || 'not installed\n'); }
+    return;
+  }
+  if (cmd === 'install') {
+    const port = Number(process.env.PORT || 7400);
+    if (await portInUse(port, process.env.HOST || '127.0.0.1')) {
+      throw new Error(`something already listens on port ${port}. Stop that server first, then run install again.`);
+    }
+    fs.mkdirSync(path.dirname(unitFile), { recursive: true });
+    fs.writeFileSync(unitFile, text);
+    sc('daemon-reload');
+    sc('enable', '--now', UNIT);
+    console.log(`installed ${unitFile}\nlogs: journalctl --user -u ${UNIT}`);
+    let linger = '';
+    try { linger = execFileSync('loginctl', ['show-user', os.userInfo().username, '-p', 'Linger'], { encoding: 'utf8' }); } catch { /* no logind */ }
+    if (!/Linger=yes/.test(linger)) console.log(`lingering is off: the service stops when you log out. Turn it on: loginctl enable-linger ${os.userInfo().username}`);
+    return;
+  }
+  if (cmd === 'uninstall') {
+    try { sc('disable', '--now', UNIT); } catch { /* not installed */ }
+    fs.rmSync(unitFile, { force: true });
+    try { sc('daemon-reload'); } catch { /* no systemd */ }
+    console.log('uninstalled');
+    return;
+  }
+  console.log('usage: node scripts/service.js print|install|uninstall|status [--bun]');
+  process.exitCode = 2;
+}
+
 async function main([cmd, ...flags]) {
+  if (process.platform === 'linux') return linux(cmd, flags);
   const plistFile = path.join(os.homedir(), 'Library/LaunchAgents', `${LABEL}.plist`);
   const logDir = path.join(os.homedir(), 'Library/Logs/herdr-monitor');
   const domain = `gui/${process.getuid()}`;

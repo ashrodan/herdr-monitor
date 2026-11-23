@@ -14,6 +14,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -70,6 +73,8 @@ class AlertService : Service() {
         else startForeground(Notifier.ID_SUMMARY, n)
         getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(net)
         // The PR count is for the widget only (the tile does not show it).
+        // A failover (or a pick) changed the server in use: link to the new one.
+        scope.launch { app.serverState.map { it.inUse }.distinctUntilChanged().drop(1).collect { reconnect() } }
         scope.launch { while (isActive) { if (Widget.placed(this@AlertService)) loadPrs(); delay(300_000) } }
     }
 
@@ -171,6 +176,7 @@ class AlertService : Service() {
                 connected = false
                 val now = System.currentTimeMillis()
                 if (failingSince == 0L) failingSince = now
+                app.linkFailing(failingSince)
                 val wait = backoff.next()
                 setHealth(healthOfFailure(shortHost(prefs.server), code, reason, failingSince, now + wait))
                 pushWidget()

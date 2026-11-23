@@ -4,7 +4,7 @@ import net from 'node:net';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
-import { HcConnection, splitLines, summarize } from '../lib/hc.js';
+import { HcConnection, splitLines, summarize, defaultSocket } from '../lib/hc.js';
 
 test('splitLines keeps partial lines for the next chunk', () => {
   const got = [];
@@ -79,4 +79,20 @@ test('HcConnection.connect rejects when there is no hc, and does not throw an er
   const sock = path.join(os.tmpdir(), `hcmon-none-${process.pid}.sock`);
   await assert.rejects(new HcConnection(sock).connect(), /ENOENT/);
   await new Promise((r) => setTimeout(r, 20)); // an unhandled 'error' would fail the test here
+});
+
+test('defaultSocket: HC_TERMINAL_SOCKET, else the runtime dir (Linux) or the state dir (macOS), whichever exists', () => {
+  const home = '/home/me';
+  const run = '/run/user/1000/herdr-core/default.sock';
+  const state = '/home/me/.local/state/herdr-core/default/default.sock';
+  const has = (...ps) => ({ home, exists: (p) => ps.includes(p) });
+  assert.equal(defaultSocket({ HC_TERMINAL_SOCKET: '/t.sock', XDG_RUNTIME_DIR: '/run/user/1000' }, has(run)), '/t.sock');
+  // A systemd service on Linux: no HC_TERMINAL_SOCKET.
+  assert.equal(defaultSocket({ XDG_RUNTIME_DIR: '/run/user/1000' }, has(run)), run);
+  // macOS: no runtime dir, the state dir.
+  assert.equal(defaultSocket({}, has(state)), state);
+  assert.equal(defaultSocket({ XDG_RUNTIME_DIR: '/run/user/1000' }, has(state)), state);
+  // Nothing there yet: the runtime dir when there is one.
+  assert.equal(defaultSocket({ XDG_RUNTIME_DIR: '/run/user/1000' }, has()), run);
+  assert.equal(defaultSocket({}, has()), state);
 });

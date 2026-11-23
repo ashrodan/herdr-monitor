@@ -32,7 +32,8 @@ data class Live(
 
 enum class Link { Connecting, Online, Offline }
 
-class Store(private val server: () -> String, private val cache: Cache? = null) {
+// onFailing: the link has failed since this time (for failover, App.linkFailing).
+class Store(private val server: () -> String, private val cache: Cache? = null, private val onFailing: (Long) -> Unit = {}) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _live = MutableStateFlow(Live())
     val live: StateFlow<Live> = _live.asStateFlow()
@@ -68,18 +69,21 @@ class Store(private val server: () -> String, private val cache: Cache? = null) 
         val gen = ++generation
         job = scope.launch {
             val backoff = Backoff()
+            var failingSince = 0L
             launch { while (isActive) { refreshPrs(); delay(120_000) } }
             while (isActive && gen == generation) {
                 try {
                     // A line read after a restart belongs to the old link
                     // (maybe the old server): drop it, do not cache it.
-                    api.stream("/api/events", SseParser({ if (gen == generation) onEvent(it) }), onOpen = { backoff.reset() }, isCancelled = { !isActive || gen != generation })
+                    api.stream("/api/events", SseParser({ if (gen == generation) onEvent(it) }), onOpen = { backoff.reset(); failingSince = 0L }, isCancelled = { !isActive || gen != generation })
                 } catch (e: Exception) {
                     // A link from before a stop or a restart says nothing about the new one.
                     if (gen == generation) _live.update { it.copy(link = Link.Offline, error = e.message ?: e.javaClass.simpleName) }
                 }
                 if (!isActive || gen != generation) break
                 _live.update { it.copy(link = Link.Offline) }
+                if (failingSince == 0L) failingSince = System.currentTimeMillis()
+                onFailing(failingSince)
                 delay(backoff.next())
             }
         }
@@ -89,8 +93,10 @@ class Store(private val server: () -> String, private val cache: Cache? = null) 
     // must not think it is, and the outbox flushes again when it comes back.
     fun stop() { generation++; job?.cancel(); job = null; _live.update { it.copy(link = Link.Connecting) } }
 
-    // A new server, or the network came back: connect again now.
-    fun restart() { stop(); _live.value = Live(); loadCache(); start() }
+    // A new server, or the network came back: connect again now, but only
+    // when the link ran (a failover can come while the app is in the
+    // background; MainActivity.onStart starts the link then).
+    fun restart() { val running = job != null; stop(); _live.value = Live(); loadCache(); if (running) start() }
 
     fun refreshPrs(fresh: Boolean = false) {
         scope.launch {
