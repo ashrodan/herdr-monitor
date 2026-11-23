@@ -1,0 +1,9 @@
+.build/
+.swiftpm/
+DerivedData/
+build/
+*.xcodeproj
+xcuserdata/
+*.xcresult
+shots/
+App/Info.plist
