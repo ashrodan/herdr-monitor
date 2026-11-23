@@ -343,6 +343,8 @@ fun portOf(url: String): Int = runCatching { java.net.URI(url).let { if (it.port
 //   hcName: the server's hc reaches it; its terminals have the address
 //           "<hcName>/t1", and the phone works with them through the server.
 //   server: a herdr-monitor of its own runs there (a URL the phone can use).
+data class MachineList(val machines: List<Machine>, val tooOld: Boolean = false)
+
 data class Machine(
     val name: String,
     val os: String? = null,

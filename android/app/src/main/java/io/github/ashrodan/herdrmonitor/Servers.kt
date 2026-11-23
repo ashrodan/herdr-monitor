@@ -46,7 +46,20 @@ object Servers {
 
     // Every machine of the tailnet, from the server in use. An older server
     // has no /api/machines: an empty list then.
-    suspend fun machines(server: String): List<Machine> = withContext(Dispatchers.IO) {
-        runCatching { Json.machines(Api(server).get("/api/machines", 20000)) }.getOrDefault(emptyList())
+    suspend fun machines(server: String): List<Machine> = machineList(server).machines
+
+    // The same, and whether the server is too old to list machines (a 404:
+    // it runs code from before /api/machines), so a screen can say so.
+    suspend fun machineList(server: String): MachineList = withContext(Dispatchers.IO) {
+        try { MachineList(Json.machines(Api(server).get("/api/machines", 20000))) }
+        catch (e: HttpError) { MachineList(emptyList(), tooOld = e.code == 404) }
+        catch (e: Exception) { MachineList(emptyList()) }
     }
+
+    // A server the phone can move to: it answers /api/health and its Herdr
+    // runs (connected). A server whose Herdr is off shows nothing useful.
+    fun healthy(url: String): Boolean = runCatching {
+        val text = Api(url).get("/api/health", 6000)
+        Json.isHealth(text) && org.json.JSONObject(text).optBoolean("connected")
+    }.getOrDefault(false)
 }

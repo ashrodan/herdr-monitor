@@ -23,6 +23,9 @@ import java.util.concurrent.ConcurrentHashMap
 
 data class Look(val pref: ThemePref, val wallpaperColours: Boolean)
 
+// The server in use and the ordered server list (Failover.kt).
+data class ServerState(val inUse: String, val list: List<String>)
+
 class App : Application() {
     lateinit var prefs: Prefs
     lateinit var store: Store
@@ -60,6 +63,42 @@ class App : Application() {
     // Home's filter, asked for from outside (the Herdr tile: Needs you).
     val homeFilter = MutableStateFlow<Bucket?>(null)
     val look = MutableStateFlow(Look(ThemePref.Dark, false))
+
+    // The alert service reconnects when inUse changes.
+    val serverState = MutableStateFlow(ServerState("", emptyList()))
+
+    // Use another server. pick: the user chose it, so it becomes the
+    // preferred one (first in the list). A failover does not reorder.
+    fun useServer(url: String, pick: Boolean) {
+        if (pick) prefs.servers = pickFirst(prefs.servers, url)
+        prefs.server = url
+        serverChanged()
+        serverState.value = ServerState(url, prefs.servers)
+    }
+
+    fun setServers(list: List<String>) {
+        prefs.servers = list
+        serverState.value = ServerState(prefs.server, prefs.servers)
+    }
+
+    private val switching = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    // The alert service or the app's Store says: the link to the server in
+    // use has failed since `since`. After FAILOVER_AFTER_MS, move to the
+    // first healthy server of the list. One check at a time.
+    fun linkFailing(since: Long) {
+        val s = serverState.value
+        if (!shouldFailOver(s.list, s.inUse, since, System.currentTimeMillis())) return
+        if (!switching.compareAndSet(false, true)) return
+        scope.launch {
+            try {
+                val to = nextServer(s.list, s.inUse) { Servers.healthy(it) } ?: return@launch
+                if (serverState.value != s) return@launch
+                android.util.Log.i("HerdrFailover", "${shortHost(s.inUse)} does not answer: using ${shortHost(to)}")
+                useServer(to, pick = false)
+            } finally { switching.set(false) }
+        }
+    }
 
     fun isBlocked(address: String): Boolean =
         (serviceStates[address] ?: store.live.value.terminals[address]?.status) == "blocked"
@@ -115,7 +154,8 @@ class App : Application() {
         prefs = Prefs(this)
         look.value = Look(ThemePref.of(prefs.theme), prefs.wallpaperColours)
         cache = Cache(java.io.File(cacheDir, "live"))
-        store = Store({ prefs.server }, cache)
+        serverState.value = ServerState(prefs.server, prefs.servers)
+        store = Store({ prefs.server }, cache, onFailing = ::linkFailing)
         loadDigests()
         Notifier.channels(this)
         outbox = Outbox(prefs.outboxStorage, legacyServer = prefs.server)
@@ -125,6 +165,20 @@ class App : Application() {
         scope.launch { store.live.map { it.link }.distinctUntilChanged().collect { if (it == Link.Online) flushOutbox() } }
         // A reply held at a dialog goes when the dialog is answered.
         scope.launch { store.live.map { l -> l.terminals.values.count { it.status == "blocked" } }.distinctUntilChanged().collect { flushOutbox() } }
+        // On a fallback server: ask the servers above it every
+        // RETURN_EVERY_MS, and move back to the first that answers.
+        scope.launch {
+            serverState.map { onFallback(it.list, it.inUse) }.distinctUntilChanged().collectLatest { away ->
+                if (away) while (true) {
+                    delay(RETURN_EVERY_MS)
+                    val s = serverState.value
+                    val back = above(s.list, s.inUse).firstOrNull { Servers.healthy(it) } ?: continue
+                    if (serverState.value != s) continue
+                    android.util.Log.i("HerdrFailover", "${shortHost(back)} answers again: using it")
+                    useServer(back, pick = false)
+                }
+            }
+        }
         // The 15 s timer runs only while a reply waits: the alert service
         // keeps this process alive all day.
         scope.launch {

@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.ashrodan.herdrmonitor.Live
 import io.github.ashrodan.herdrmonitor.Machine
+import io.github.ashrodan.herdrmonitor.MachineList
 import io.github.ashrodan.herdrmonitor.Route
 import io.github.ashrodan.herdrmonitor.Servers
 import io.github.ashrodan.herdrmonitor.app
@@ -43,9 +44,16 @@ import kotlinx.coroutines.delay
 // The machines of the tailnet, read from the server in use and read again
 // each minute while the app is on screen. Empty while it loads, and with an older server.
 @Composable
-fun rememberMachines(server: String): List<Machine> {
-    var machines by remember(server) { mutableStateOf<List<Machine>>(emptyList()) }
-    PollWhileStarted(server) { while (true) { machines = Servers.machines(server).ifEmpty { machines }; delay(60_000) } }
+fun rememberMachines(server: String): MachineList {
+    var machines by remember(server) { mutableStateOf(MachineList(emptyList())) }
+    PollWhileStarted(server) {
+        while (true) {
+            val got = Servers.machineList(server)
+            // A failed read keeps the last list.
+            if (got.machines.isNotEmpty() || got.tooOld) machines = got
+            delay(60_000)
+        }
+    }
     return machines
 }
 
@@ -76,7 +84,15 @@ fun MachineRow(m: Machine, via: String, onClick: (() -> Unit)? = null, action: S
 // machine that the server reaches through hc shows its terminals below it,
 // and a tap opens one through the server (no server on that machine). A
 // machine with its own herdr-monitor has "Use", which changes the server.
-fun LazyListScope.machinesList(ctx: Context, live: Live, machines: List<Machine>, now: Long, go: (Route) -> Unit) {
+fun LazyListScope.machinesList(ctx: Context, live: Live, list: MachineList, now: Long, go: (Route) -> Unit) {
+    if (list.tooOld) {
+        item(key = "machines-old") {
+            Text("${shortHost(ctx.app.prefs.server)} runs an older herdr-monitor that cannot list the machines of your tailnet. Update it to see them here.",
+                Modifier.padding(horizontal = 12.dp, vertical = 14.dp).testTag("machines-too-old"), fontSize = 12.sp, color = Palette.mutedForeground)
+        }
+        return
+    }
+    val machines = list.machines
     if (machines.isEmpty()) return
     val via = shortHost(ctx.app.prefs.server)
     val seen = ctx.app.prefs.localSeen

@@ -39,16 +39,20 @@ import io.github.ashrodan.herdrmonitor.ServerInfo
 import io.github.ashrodan.herdrmonitor.Servers
 import io.github.ashrodan.herdrmonitor.app
 import io.github.ashrodan.herdrmonitor.normalizeServer
+import io.github.ashrodan.herdrmonitor.onFallback
+import io.github.ashrodan.herdrmonitor.toggleFallback
+import androidx.compose.ui.platform.testTag
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.ashrodan.herdrmonitor.portOf
 import io.github.ashrodan.herdrmonitor.shortHost
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-// Use another server: save it, and reconnect the screens and the alerts.
+// Use another server: it becomes the preferred one (first in the server
+// list), and the screens and the alerts reconnect.
 fun useServer(c: Context, url: String): Boolean {
     val n = normalizeServer(url) ?: return false
-    c.app.prefs.server = n
-    c.app.serverChanged()
+    c.app.useServer(n, pick = true)
     AlertService.start(c, reconnect = true)
     return true
 }
@@ -77,12 +81,24 @@ fun ServerSheet(onDismiss: () -> Unit) {
     }
 }
 
+// The server's place in the list: "preferred", "fallback 2", or "+ fallback"
+// (a tap adds it to the end). A tap on "fallback N" takes it out.
+@Composable
+private fun FallbackChip(list: List<String>, url: String, onChange: (List<String>) -> Unit) {
+    val i = list.indexOf(url)
+    val label = when { i == 0 -> "preferred"; i > 0 -> "fallback $i"; else -> "+ fallback" }
+    Text(label, Modifier.clip(RoundedCornerShape(6.dp)).let { if (i == 0) it else it.clickable { onChange(toggleFallback(list, url)) } }
+        .background(if (i >= 0) Palette.border else Palette.card).padding(horizontal = 8.dp, vertical = 3.dp).testTag("fallback-${shortHost(url)}"),
+        style = MaterialTheme.typography.labelMedium, color = if (i >= 0) Palette.foreground else Palette.working)
+}
+
 // Every herdr-monitor the phone can reach, with the Herdr app and the Herdr
 // TUI on two lines each. A tap uses that server.
 @Composable
 fun ServerList(modifier: Modifier = Modifier, onPicked: () -> Unit = {}) {
     val ctx = LocalContext.current
     val saved = ctx.app.prefs.server
+    val state by ctx.app.serverState.collectAsStateWithLifecycle()
     var servers by remember { mutableStateOf<List<ServerInfo>?>(null) }
     var round by remember { mutableIntStateOf(0) }
     var machines by remember { mutableStateOf<List<Machine>>(emptyList()) }
@@ -93,8 +109,11 @@ fun ServerList(modifier: Modifier = Modifier, onPicked: () -> Unit = {}) {
             Text("Herdr servers", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
             TextButton(onClick = { round++ }, enabled = servers != null) { Text("Look again") }
         }
-        Text("Servers on your tailnet that this phone can reach. The phone must be on Tailscale.",
+        Text("Servers on your tailnet that this phone can reach. The phone must be on Tailscale. A tap makes a server the preferred one. " +
+            "Fallbacks take over when the preferred server does not answer for a minute, in the order shown.",
             Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall, color = Palette.mutedForeground)
+        if (onFallback(state.list, state.inUse)) Text("Using ${shortHost(state.inUse)}: ${shortHost(state.list.first())} does not answer. " +
+            "The phone moves back when it answers.", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.bodySmall, color = Palette.blocked)
         Spacer(Modifier.padding(4.dp))
         val list = servers
         when {
@@ -110,7 +129,8 @@ fun ServerList(modifier: Modifier = Modifier, onPicked: () -> Unit = {}) {
                             Text("  :${portOf(s.url)}", color = Palette.mutedForeground)
                             if (s.self) Text("  · this Mac", style = MaterialTheme.typography.labelMedium, color = Palette.mutedForeground)
                             Spacer(Modifier.weight(1f))
-                            if (inUse) Text("in use", style = MaterialTheme.typography.labelMedium, color = Palette.done)
+                            if (inUse) Text("in use  ", style = MaterialTheme.typography.labelMedium, color = Palette.done)
+                            FallbackChip(state.list, normalizeServer(s.url) ?: s.url) { ctx.app.setServers(it) }
                         }
                         val h = s.herdr
                         if (h != null) {
