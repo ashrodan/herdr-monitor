@@ -69,7 +69,8 @@ class AlertService : Service() {
         if (Build.VERSION.SDK_INT >= 34) startForeground(Notifier.ID_SUMMARY, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         else startForeground(Notifier.ID_SUMMARY, n)
         getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(net)
-        scope.launch { while (isActive) { loadPrs(); delay(300_000) } }
+        // The PR count is for the widget only (the tile does not show it).
+        scope.launch { while (isActive) { if (Widget.placed(this@AlertService)) loadPrs(); delay(300_000) } }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -192,7 +193,8 @@ class AlertService : Service() {
     private var lastHeard = 0L
     private fun heard() {
         val now = System.currentTimeMillis()
-        if (now - lastHeard > 10_000) { lastHeard = now; prefs.listenedMs = now }
+        // A disk write: once a minute is enough (a ping comes every 25 s).
+        if (now - lastHeard > 60_000) { lastHeard = now; prefs.listenedMs = now }
     }
 
     private fun onEvent(e: SseEvent) {

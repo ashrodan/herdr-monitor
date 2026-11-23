@@ -470,8 +470,8 @@ private fun ChatTab(api: Api, address: String, blocked: Boolean, working: Boolea
     // below brings it up to date.
     var chat by remember(address) { mutableStateOf(ctx.app.chats.get(api.base, address)) }
     var err by remember(address) { mutableStateOf<String?>(null) }
-    LaunchedEffect(address, api.base, active) {
-        if (!active) return@LaunchedEffect
+    PollWhileStarted(address, api.base, active) {
+        if (!active) return@PollWhileStarted
         while (true) {
             io { api.chat(address, chat?.version) }
                 .onSuccess { c -> if (c != null) { chat = c; ctx.app.chats.put(api.base, address, c); ctx.app.outbox.dropDelivered(api.base, address, userTexts(c.messages)) }; err = null }
@@ -747,8 +747,8 @@ private fun TextTab(api: Api, address: String, active: Boolean = true) {
     var text by remember(address) { mutableStateOf<String?>(null) }
     var err by remember(address) { mutableStateOf<String?>(null) }
     val scroll = rememberScrollState()
-    LaunchedEffect(address, api.base, active) {
-        if (!active) return@LaunchedEffect
+    PollWhileStarted(address, api.base, active) {
+        if (!active) return@PollWhileStarted
         while (true) {
             io { api.read(address, 300) }.onSuccess { text = it; err = null }.onFailure { err = it.message }
             delay(2000)
