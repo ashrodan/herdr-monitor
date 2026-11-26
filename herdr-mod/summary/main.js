@@ -13,9 +13,10 @@
 // every minute, shared through setShared("summary.apps"). Recaps are read only for rows the panel
 // shows, and again only when that agent changes.
 import { View, div, image, svg } from "gpui-kit";
-import { v_flex, h_flex } from "gpui-base";
+import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { agents, spaces, panes, layout, theme, run, shared, setShared, nextCommand, props } from "herdr";
 import { loadPrs, loadApps, shareApp, loadRecap, age } from "./data.js";
+import { ask, runAction } from "./ask.js";
 
 const MOD = "summary";
 const PANEL_BLOCK = "summary"; // the block id in the layout's panel-body stack
@@ -96,6 +97,13 @@ export default class Summary extends View {
     this.stale = true;
     this.loading = { prs: false, apps: false };
     this.sharing = new Map(); // app key -> { busy, error }
+    // The chat (panel copy only): turns [{role, text, actions?: [{...action, state, note}]}].
+    this.turns = [];
+    this.asking = false;
+    if (!this.bar) {
+      this.input = InputState.new({ placeholder: "Ask, or say what to start…" });
+      this.input.on("submit", (_e, cx) => this.send(cx));
+    }
     if (this.bar) {
       // The bar is always on screen: it keeps the slow facts fresh for both copies.
       for (const kind of Object.keys(FACTS)) {
@@ -107,10 +115,20 @@ export default class Summary extends View {
     cx.spawn(async (cx) => { for (;;) { this.command(await nextCommand(), cx); cx.notify(); } });
   }
 
-  // summary.open, .toggle, .all, .waiting, .done, .working, .apps, .prs, .refresh
+  // summary.open, .toggle, .all, .waiting, .done, .working, .apps, .prs, .refresh, .ask, .clear
   command(name, cx) {
     const c = String(name).replace(/^summary[.:]/, "");
     if (c === "refresh") { this.refresh(cx); return; }
+    if (c === "clear") { this.turns = []; return; }
+    if (c === "ask") { if (this.bar) openPanel(null); else this.input.focus(); return; }
+    // ask:<text> sends a message; run:<n> runs card n (from 1) of the last answer. Panel copy only.
+    if (c.startsWith("ask:")) { if (!this.bar) { this.input.set_value(c.slice(4)); this.send(cx); } return; }
+    if (c.startsWith("run:")) {
+      const cards = this.bar ? [] : this.turns.findLast((t) => t.actions?.length)?.actions ?? [];
+      const a = cards[Number(c.slice(4)) - 1];
+      if (a) this.act(a, cx);
+      return;
+    }
     if (!this.bar && panelCopyShown() && (KINDS.includes(c) || c === "all")) { setShared(VIEW, c); return; }
     if (!this.bar) return; // the bar opens and toggles; the panel would do it twice
     if (c === "open") openPanel(null);
@@ -159,6 +177,37 @@ export default class Summary extends View {
       try { error = await shareApp(app); } catch (e) { error = String(e).slice(0, 160); }
       this.sharing.set(app.key, { busy: false, error });
       this.load("apps", cx, true);
+      cx.notify();
+    });
+  }
+
+  // One chat turn: the message and the turns before it go to herdr-ask.
+  send(cx) {
+    const text = this.input.value().trim();
+    if (!text || this.asking) return;
+    const history = this.turns.map((t) => ({ role: t.role, text: t.text }));
+    this.turns.push({ role: "user", text });
+    this.input.set_value("");
+    this.asking = true;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      try {
+        const out = await ask(text, history, PRS);
+        const note = out.dropped?.length ? `Left out: ${out.dropped.join("; ")}` : null;
+        this.turns.push({ role: "model", text: out.reply, note, actions: (out.actions ?? []).map((a) => ({ ...a, state: "new", note: null })) });
+      } catch (e) {
+        this.turns.push({ role: "model", text: "", error: String(e?.message ?? e).slice(0, 240) });
+      }
+      this.asking = false;
+      cx.notify();
+    });
+  }
+
+  act(a, cx) {
+    if (a.state === "running" || a.state === "done") return;
+    a.state = "running"; a.note = null;
+    cx.spawn(async (cx) => {
+      try { a.note = await runAction(a); a.state = "done"; } catch (e) { a.note = String(e?.message ?? e).slice(0, 240); a.state = "error"; }
       cx.notify();
     });
   }
@@ -269,9 +318,58 @@ export default class Summary extends View {
       parts.push(v_flex().px(6).pt(8).gap(2).text_size(11).text_color(t.dim)
         .children(prs.errors.slice(0, 4).map((e, i) => div().id(`err-${i}`).truncate().child(`${e.repo.split("/").pop() || "PRs"}: ${e.error}`))));
     }
-    const body = v_flex().id("summary-body").flex_1().min_h(0).overflow_y_scrollbar().px(8).pb(12).children(parts);
+    const body = v_flex().id("summary-body").flex_1().min_h(0).overflow_y_scrollbar().px(8).pb(12)
+      .child(this.chat(t)).children(parts);
     return v_flex().id("summary-panel").size_full().bg(t.surface).text_size(12.5).text_color(t.foreground)
-      .child(header).child(tiles).child(body);
+      .child(header).child(tiles).child(this.askRow(t)).child(body);
+  }
+
+  // ------------------------------------------------------------ the chat
+
+  askRow(t) {
+    return h_flex().px(12).pt(8).pb(2).gap(6).flex_none().items_center()
+      .child(div().id("summary-ask").flex_1().min_w(0).h(30).px(10).flex().items_center().rounded(8)
+        .border(1).border_color(this.asking ? t.working : t.border).bg(t.background).cursor_text()
+        .child(Input.new(this.input).w_full().text_size(12.5).text_color(t.foreground)))
+      .when(this.asking, (el) => el.child(svg("mods/summary/spinner.svg").size(13).flex_none().text_color(t.working).spin(900)))
+      .when(!this.asking && this.turns.length > 0, (el) => el.child(div().id("summary-ask-clear").flex_none().px(6).h(22).flex().items_center()
+        .rounded(5).text_size(11).text_color(t.dim).cursor_pointer().hover((s) => s.bg(t.raised)).tooltip("Clear the chat")
+        .on_click((_e, cx) => { this.turns = []; cx.notify(); }).child("Clear")));
+  }
+
+  // The last few turns; the model's proposals as cards with Run.
+  chat(t) {
+    if (!this.turns.length) return div();
+    const shown = this.turns.slice(-6);
+    return v_flex().id("summary-chat").pt(8).gap(6).children(shown.map((turn, i) => {
+      if (turn.role === "user") {
+        return div().id(`turn-${i}`).px(6).text_size(12).text_color(t.muted).child(`› ${turn.text}`);
+      }
+      return v_flex().id(`turn-${i}`).px(6).gap(4)
+        .when(Boolean(turn.text), (el) => el.child(div().text_size(12.5).child(turn.text)))
+        .when(Boolean(turn.error), (el) => el.child(div().text_size(11.5).text_color(t.blocked).child(turn.error)))
+        .when(Boolean(turn.note), (el) => el.child(div().text_size(11).text_color(t.dim).child(turn.note)))
+        .children((turn.actions ?? []).map((a, j) => this.card(t, a, `${i}-${j}`)));
+    }));
+  }
+
+  card(t, a, key) {
+    const head = a.type === "spawn" ? `Start ${a.agent} · ${a.space_name}${a.machine ? ` on ${a.machine}` : ""}`
+      : a.type === "tell" ? `Tell ${a.label}` : `Hand off ${a.space_name}${a.machine ? ` → ${a.machine}` : ""}`;
+    const lines = a.type === "spawn" ? [a.worktree ? `worktree ${a.branch}` : "in the space folder", a.brief]
+      : a.type === "tell" ? [a.text] : ["Opens the hand-off dialog: you confirm there."];
+    const color = a.state === "error" ? t.blocked : a.state === "done" ? t.done : t.border;
+    const label = a.state === "running" ? "Running…" : a.state === "done" ? "Done" : a.state === "error" ? "Retry" : "Run";
+    return v_flex().id(`card-${key}`).p(8).gap(3).rounded(8).border(1).border_color(color).bg(t.background)
+      .child(h_flex().gap(6).items_center().min_w(0)
+        .child(div().flex_1().min_w(0).truncate().font_semibold().child(head))
+        .child(div().id(`run-${key}`).flex_none().px(8).h(20).flex().items_center().rounded(4)
+          .border(1).border_color(t.border).text_size(11).text_color(a.state === "done" ? t.dim : t.foreground)
+          .when(a.state !== "running" && a.state !== "done", (el) => el.cursor_pointer().hover((s) => s.bg(t.raised))
+            .on_click((_e, cx) => { this.act(a, cx); cx.notify(); }))
+          .child(label)))
+      .children(lines.filter(Boolean).map((l, k) => div().id(`card-${key}-${k}`).text_size(11.5).text_color(t.muted).child(l)))
+      .when(Boolean(a.note), (el) => el.child(div().text_size(11).text_color(a.state === "error" ? t.blocked : t.dim).child(a.note)));
   }
 
   section(t, kind, rows, limit, facts) {
