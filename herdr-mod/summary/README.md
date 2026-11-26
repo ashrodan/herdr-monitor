@@ -19,6 +19,17 @@ herdr-monitor's Overview.
   - Open PRs: every open PR in the repos of the open spaces (worktrees of one
     repo count once), with repo, branch, author, draft or review state, and a
     dot when checks fail (red) or run (amber). Click a row to open it on GitHub.
+  - **Ask** (under the tiles): a chat with a Gemini model that knows your
+    spaces, agents, machines and open PRs. Ask about state ("what's waiting?"),
+    or say what to start. Proposals come back as cards with a **Run** button:
+    - **Start** an agent (claude or codex): a new worktree
+      `<repo>/.worktrees/<slug>` on a new branch from the remote's default
+      branch, in a new space with the brief as its first message; or a tab in
+      the space's folder for work that changes nothing.
+    - **Tell** a running agent something (`hc send`).
+    - **Hand off** a space to another machine: opens the
+      [herdr-handoff](https://github.com/ashrodan/herdr-handoff) dialog on that
+      space with the machine picked; you confirm there.
 
 ## Install
 
@@ -52,6 +63,35 @@ The first goes in the status row, the second in the `panel-body` stack.
 | `summary.toggle` | open or close the panel |
 | `summary.all` / `.waiting` / `.done` / `.working` / `.apps` / `.prs` | open the panel on that list |
 | `summary.refresh` | reload PRs, apps and recaps now |
+| `summary.ask` | focus the Ask input (opens the panel from the bar) |
+| `summary.ask:<text>` | send a message to Ask |
+| `summary.run:<n>` | run card `n` (from 1) of the last answer |
+| `summary.clear` | clear the chat |
+
+## Ask: setup and how it works
+
+Each turn runs `herdr-ask` (`bin/herdr-ask.js`, linked into `~/.local/bin` by
+`scripts/install-mod.sh`; Node 20+, no dependencies). The mod writes the
+message, the last 12 turns and a small snapshot (space ids, names and folders;
+agent addresses, status and titles; connected machines; the PR count and the
+latest 20 PRs, no transcripts) to `~/.cache/herdr-ask/turn-*.json`.
+`herdr-ask --consume` reads and deletes it, calls Gemini with three tools
+(`spawn_agent`, `tell_agent`, `hand_off`), and prints `{reply, actions}`.
+When Gemini answers a tool call with no words, it sends one more round with a
+`functionResponse` per call so the reply text comes back (about 7 s instead of 4 s).
+
+Every action is checked against the snapshot before it becomes a card: an
+unknown space, agent or machine is dropped and named under the reply, the
+agent is `claude` or `codex`, and a branch that isn't `feat|fix|chore|docs|spike/<slug>`
+is replaced by one made from the title.
+
+The key: `GEMINI_API_KEY`, else the macOS Keychain item `herdr-ask`/`gemini`:
+
+```sh
+security add-generic-password -U -s herdr-ask -a gemini -w <key>
+```
+
+The model: `HERDR_ASK_MODEL`, default `gemini-3.8-flash`.
 
 ## How apps are found
 
@@ -75,6 +115,10 @@ The first goes in the status row, the second in the `panel-body` stack.
 
 | Action | When | Command |
 | --- | --- | --- |
+| Start (worktree) | a click on Run | `git fetch origin`, `git worktree add <repo>/.worktrees/<slug> -b <branch> <origin default>` (refused when the repo doesn't ignore `.worktrees/`), then `space.new {folder, argv: [claude\|codex], task: brief}` |
+| Start (no worktree) | a click on Run | `tab.new {space, folder, argv, task}` |
+| Tell | a click on Run | `hc send <terminal> <text>` |
+| Hand off | a click on Run | opens the handoff dialog; that dialog's own button runs `herdr-handoff send` |
 | Share | a click on Share | `tailscale serve --bg --https=<port> http://127.0.0.1:<port>` (`[::1]` for an IPv6-only app), on the app's machine; on Linux it tries `sudo -n` when the plain command fails |
 
 To stop sharing: `tailscale serve --https=<port> off`. Tailscale Serve
