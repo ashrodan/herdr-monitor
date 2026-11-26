@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildRequest, parseResponse, toAction, branchOf, slug } from '../lib/ask.js';
+import { buildRequest, buildFollowup, needsFollowup, textOf, parseResponse, toAction, branchOf, slug } from '../lib/ask.js';
 
 const context = {
   spaces: [{ id: 'sp1', name: 'dash', folder: '/r/dash', machine: null }, { id: 'sp2', name: 'mon', folder: '/r/mon', machine: 'dai' }],
@@ -62,4 +62,19 @@ test('parseResponse: text only, thoughts left out, empty answers explained', () 
 test('slug: plain words only', () => {
   assert.equal(slug('Fix the Date tests!'), 'fix-the-date-tests');
   assert.equal(slug('***'), 'task');
+});
+
+test('follow-up: only for a tool call with no words; echoes the model turn and answers each call', () => {
+  const callOnly = { candidates: [{ content: { role: 'model', parts: [{ functionCall: { name: 'hand_off', args: {} }, thoughtSignature: 'sig' }] } }] };
+  const withText = { candidates: [{ content: { parts: [{ text: 'ok' }, { functionCall: { name: 'hand_off', args: {} } }] } }] };
+  assert.equal(needsFollowup(callOnly), true);
+  assert.equal(needsFollowup(withText), false);
+  assert.equal(needsFollowup({ candidates: [{ content: { parts: [{ text: 'hi' }] } }] }), false);
+  const body = buildRequest({ message: 'go', context });
+  const f = buildFollowup(body, callOnly);
+  assert.equal(f.contents.length, 3);
+  assert.equal(f.contents[1].parts[0].thoughtSignature, 'sig');
+  assert.equal(f.contents[2].parts[0].functionResponse.name, 'hand_off');
+  assert.equal(f.toolConfig.functionCallingConfig.mode, 'NONE');
+  assert.equal(textOf({ candidates: [{ content: { parts: [{ text: ' a ', thought: false }, { text: 'x', thought: true }] } }] }), 'a');
 });
