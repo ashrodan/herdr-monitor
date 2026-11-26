@@ -6,7 +6,22 @@ herdr-monitor's Overview.
 - **Bar** (status row): how many agents are waiting, done (not seen) and
   working, how many web apps run, and how many PRs are open. Click a count to open the panel on that
   list; click it again to close the panel.
-- **Panel** (right panel): the four tiles, then the lists.
+- **Panel** (right panel): the tiles (Decide, Working, Apps, PRs), Ask, then the lists.
+  - **Decide**: what waits on your call, as cards with one-click options,
+    most urgent first:
+
+    | Card | When | Options |
+    | --- | --- | --- |
+    | Asks | an agent is blocked on a question or permission prompt | **Yes** / **No** (permission prompts of Claude Code and Codex only), Review, Later |
+    | Merge | your PR: not a draft, checks green (or none), not waiting on a review | **Merge** (confirm names the method and base), Review, Later |
+    | Fix | your PR with failing checks or changes requested | **Fix with agent**, Review, Later |
+    | Review | someone's PR waits on your review | **Approve** (confirm), Review, Later |
+    | Done | an agent finished while you weren't looking | **Approve: open PR**, Review, Later |
+    | Bots | Dependabot, Renovate and other apps' PRs, all on one card | Show (the PR list), Later |
+
+    Review shows the agent, or the PR in ship-it's review pane when a space
+    has its branch checked out (GitHub otherwise). Later hides a card until
+    its subject changes (the agent moves on, the PR is updated).
   - Agents: space · tab, and for Claude Code agents the latest recap (Claude's
     away summary, else its last reply). Click a row to show the agent.
   - Running apps: each web app that runs in a space, on this Mac or on a
@@ -63,6 +78,8 @@ The first goes in the status row, the second in the `panel-body` stack.
 | `summary.toggle` | open or close the panel |
 | `summary.all` / `.waiting` / `.done` / `.working` / `.apps` / `.prs` | open the panel on that list |
 | `summary.refresh` | reload PRs, apps and recaps now |
+| `summary.decide` | open the panel on Decide |
+| `summary.decide:<n>:<option>` | pick an option on Decide card `n` (from 1): `yes`, `no`, `merge`, `fix`, `approve`, `approve-pr`, `review`, `later`, `show-prs`; `confirm` / `cancel` answer a Merge or Approve confirm |
 | `summary.ask` | focus the Ask input (opens the panel from the bar) |
 | `summary.ask:<text>` | send a message to Ask |
 | `summary.run:<n>` | run card `n` (from 1) of the last answer |
@@ -115,6 +132,11 @@ The model: `HERDR_ASK_MODEL`, default `gemini-3.8-flash`.
 
 | Action | When | Command |
 | --- | --- | --- |
+| Yes / No | a click, after a fresh `hc get` shows the agent still blocked | `hc keys <t> enter` / `hc keys <t> esc` |
+| Approve: open PR | a click | `hc send <t> "Looks good. Commit anything left, push the branch and open a pull request (or update the open one)."` |
+| Merge | Merge, then Confirm | `gh api graphql` (allowed methods, merge state, head, base; blocked or conflicting stops here), then `gh pr merge <n> --repo <r> --<squash\|merge\|rebase> --match-head-commit <head>` |
+| Approve (PR) | Approve, then Confirm | `gh pr review <n> --repo <r> --approve` |
+| Fix with agent | a click | `hc send` the failing checks to an idle agent in the space on that branch, else `git worktree add --track -B <branch> <repo>/.worktrees/<slug> origin/<branch>` and a new space with claude |
 | Start (worktree) | a click on Run | `git fetch origin`, `git worktree add <repo>/.worktrees/<slug> -b <branch> <origin default>` (refused when the repo doesn't ignore `.worktrees/`), then `space.new {folder, argv: [claude\|codex], task: brief}` |
 | Start (no worktree) | a click on Run | `tab.new {space, folder, argv, task}` |
 | Tell | a click on Run | `hc send <terminal> <text>` |

@@ -14,18 +14,20 @@
 // shows, and again only when that agent changes.
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { agents, spaces, panes, layout, theme, run, shared, setShared, nextCommand, props } from "herdr";
+import { agents, spaces, panes, layout, theme, run, shared, setShared, nextCommand, props, checking } from "herdr";
 import { loadPrs, loadApps, shareApp, loadRecap, age } from "./data.js";
-import { ask, runAction } from "./ask.js";
+import { ask, runAction, me, statusOf, mergePreview, review, decide } from "./ask.js";
+import { decisions, withLater } from "./decide.js";
 
 const MOD = "summary";
 const PANEL_BLOCK = "summary"; // the block id in the layout's panel-body stack
 const PRS = "summary.prs";
 const APPS = "summary.apps";
 const VIEW = "summary.view";
-const SHOW = { waiting: 8, done: 6, working: 6, apps: 10, prs: 8 };
-const KINDS = ["waiting", "done", "working", "apps", "prs"];
-const TITLE = { waiting: "Waiting for you", done: "Done, not seen", working: "Working", apps: "Running apps", prs: "Open PRs" };
+const LATER = "summary.later";
+const SHOW = { decide: 8, waiting: 8, done: 6, working: 6, apps: 10, prs: 8 };
+const KINDS = ["decide", "waiting", "done", "working", "apps", "prs"];
+const TITLE = { decide: "Decide", waiting: "Waiting for you", done: "Done, not seen", working: "Working", apps: "Running apps", prs: "Open PRs" };
 
 // The slow facts, each loaded by the bar on a timer and shared with the panel.
 //   every: the bar reloads this often; fresh: the panel trusts values this young.
@@ -100,6 +102,11 @@ export default class Summary extends View {
     // The chat (panel copy only): turns [{role, text, actions?: [{...action, state, note}]}].
     this.turns = [];
     this.asking = false;
+    // Decide: blocked agents' prompts (address:seq -> {kind, msg}), per-card state, the login.
+    this.status = new Map();
+    this.cards = new Map(); // decision id -> { busy, note, error, confirm: plan | null }
+    this.me = null;
+    if (!checking()) cx.spawn(async (cx) => { this.me = await me(); cx.notify(); });
     if (!this.bar) {
       this.input = InputState.new({ placeholder: "Ask, or say what to start…" });
       this.input.on("submit", (_e, cx) => this.send(cx));
@@ -123,6 +130,14 @@ export default class Summary extends View {
     if (c === "ask") { if (this.bar) openPanel(null); else this.input.focus(); return; }
     // ask:<text> sends a message; run:<n> runs card n (from 1) of the last answer. Panel copy only.
     if (c.startsWith("ask:")) { if (!this.bar) { this.input.set_value(c.slice(4)); this.send(cx); } return; }
+    // decide:<n>:<option> picks option on Decide card n (from 1); option confirm / cancel answers its confirm.
+    if (c.startsWith("decide:") && !this.bar) {
+      const [, n, o] = c.split(":");
+      const d = this.decisions()[Number(n) - 1];
+      if (d && (o === "confirm" || o === "cancel")) this.confirm(d, o === "confirm", cx);
+      else if (d && d.options.some((x) => x.id === o)) this.pick(d, o, cx);
+      return;
+    }
     if (c.startsWith("run:")) {
       const cards = this.bar ? [] : this.turns.findLast((t) => t.actions?.length)?.actions ?? [];
       const a = cards[Number(c.slice(4)) - 1];
@@ -192,7 +207,7 @@ export default class Summary extends View {
     cx.notify();
     cx.spawn(async (cx) => {
       try {
-        const out = await ask(text, history, PRS);
+        const out = await ask(text, history, PRS, this.decisions().map((d) => ({ kind: d.kind, where: d.where, why: d.why ?? null, detail: d.detail })));
         const note = out.dropped?.length ? `Left out: ${out.dropped.join("; ")}` : null;
         this.turns.push({ role: "model", text: out.reply, note, actions: (out.actions ?? []).map((a) => ({ ...a, state: "new", note: null })) });
       } catch (e) {
@@ -255,6 +270,7 @@ export default class Summary extends View {
         .hover((s) => s.bg(t.raised)).text_color(t.muted).tooltip("Summary of every space")
         .on_click(() => togglePanel("all"))
         .child(svg("mods/summary/summary.svg").size(13)))
+      .child(chip("decide", svg("mods/summary/check.svg").size(12), this.decisions().length, "to decide", t.accent))
       .child(chip("waiting", svg("mods/summary/alert.svg").size(12), b.waiting.length, "waiting", t.blocked))
       .child(chip("done", svg("mods/summary/check.svg").size(12), b.done.length, "done", t.done))
       .child(chip("working", b.working.length ? svg("mods/summary/spinner.svg").size(11).spin(900) : dot(t.dim), b.working.length, "working", t.working))
@@ -273,11 +289,15 @@ export default class Summary extends View {
     const prs = shared(PRS), apps = shared(APPS);
     const view = shared(VIEW) ?? "all";
     const one = KINDS.includes(view) ? view : null;
-    const lists = { ...b, apps: apps?.apps ?? [], prs: prs?.prs ?? [] };
+    if (shown) this.loadStatus(b.waiting, cx);
+    const decide = this.decisions();
+    const lists = { ...b, decide, apps: apps?.apps ?? [], prs: prs?.prs ?? [] };
 
-    // Recaps only for rows on screen.
+    // Recaps only for rows on screen (a decision card's agent too).
     if (shown) {
-      const rows = one ? (one === "prs" || one === "apps" ? [] : lists[one]) : [...b.waiting.slice(0, SHOW.waiting), ...b.done.slice(0, SHOW.done), ...b.working.slice(0, SHOW.working)];
+      const byAddress = new Map(agents().map((a) => [a.address, a]));
+      const cardAgents = decide.slice(0, one === "decide" ? Infinity : SHOW.decide).map((d) => byAddress.get(d.agent)).filter(Boolean);
+      const rows = one ? (one === "prs" || one === "apps" ? [] : one === "decide" ? cardAgents : lists[one]) : [...cardAgents, ...b.working.slice(0, SHOW.working)];
       this.loadRecaps(rows, cx);
     }
 
@@ -286,7 +306,7 @@ export default class Summary extends View {
       .hover((s) => s.bg(t.raised))
       .on_click(() => setShared(VIEW, one === kind ? "all" : kind))
       .child(div().text_size(18).font_semibold().text_color(n ? color ?? t.foreground : t.dim).child(String(n)))
-      .child(div().text_size(10.5).text_color(t.muted).truncate().child({ prs: "PRs", done: "Done", waiting: "Waiting", working: "Working", apps: "Apps" }[kind]));
+      .child(div().text_size(10.5).text_color(t.muted).truncate().child({ decide: "Decide", prs: "PRs", done: "Done", waiting: "Waiting", working: "Working", apps: "Apps" }[kind]));
 
     const header = h_flex().px(12).h(40).flex_none().items_center().gap(8).border_b(1).border_color(t.border)
       .child(div().text_size(13).font_semibold().child("Summary"))
@@ -298,8 +318,7 @@ export default class Summary extends View {
         .child(this.loading.prs || this.loading.apps ? svg("mods/summary/spinner.svg").size(13).spin(900) : svg("mods/summary/refresh.svg").size(13)));
 
     const tiles = h_flex().px(12).pt(10).pb(4).gap(6).flex_none()
-      .child(tile("waiting", b.waiting.length, t.blocked))
-      .child(tile("done", b.done.length, t.done))
+      .child(tile("decide", decide.length, t.accent))
       .child(tile("working", b.working.length, t.working))
       .child(tile("apps", lists.apps.length, null))
       .child(tile("prs", lists.prs.length, null));
@@ -307,7 +326,8 @@ export default class Summary extends View {
     const parts = [];
     for (const kind of one ? [one] : KINDS) {
       const rows = lists[kind];
-      if (!one && !rows.length && kind !== "waiting") continue;
+      if (!one && (kind === "waiting" || kind === "done")) continue; // their agents are Decide cards
+      if (!one && !rows.length && kind !== "decide") continue;
       parts.push(this.section(t, kind, rows, one ? Infinity : SHOW[kind], kind === "apps" ? apps : prs));
     }
     if (apps?.errors?.length && (!one || one === "apps")) {
@@ -322,6 +342,100 @@ export default class Summary extends View {
       .child(this.chat(t)).children(parts);
     return v_flex().id("summary-panel").size_full().bg(t.surface).text_size(12.5).text_color(t.foreground)
       .child(header).child(tiles).child(this.askRow(t)).child(body);
+  }
+
+  // ------------------------------------------------------------ decide
+
+  decisions() {
+    const status = new Map();
+    for (const [address, v] of this.status) if (v.seq != null) status.set(address, v);
+    return decisions({ agents: agents(), prs: shared(PRS)?.prs ?? [], me: this.me, later: shared(LATER) ?? {}, status });
+  }
+
+  // A blocked agent's prompt (kind, words), asked once per change of the agent.
+  loadStatus(blocked, cx) {
+    for (const a of blocked) {
+      const have = this.status.get(a.address);
+      if (have && (have.seq === a.seq || have.loading)) continue;
+      this.status.set(a.address, { ...(have ?? {}), loading: true });
+      cx.spawn(async (cx) => {
+        let s = null;
+        try { s = await statusOf(a.address); } catch { /* no prompt words: Review only */ }
+        this.status.set(a.address, { seq: a.seq, kind: s?.kind ?? null, msg: s?.msg ?? null, loading: false });
+        cx.notify();
+      });
+    }
+  }
+
+  cardOf(id) {
+    if (!this.cards.has(id)) this.cards.set(id, { busy: false, note: null, error: null, confirm: null, done: false });
+    return this.cards.get(id);
+  }
+
+  // One option of a card. Merge and Approve ask first, naming what they do.
+  pick(d, o, cx) {
+    const c = this.cardOf(d.id);
+    if (c.busy || c.done) return;
+    if (o === "later") { setShared(LATER, withLater(shared(LATER), d.id)); return; }
+    if (o === "review") { if (!review(d)) cx.open_url(d.pr.url); return; }
+    if (o === "show-prs") { setShared(VIEW, "prs"); return; }
+    if (o === "approve-pr") { c.confirm = { option: o, label: `Approve #${d.pr.number} as @${this.me}?` }; return; }
+    c.busy = true; c.error = null;
+    cx.spawn(async (cx) => {
+      try {
+        if (o === "merge") {
+          const plan = await mergePreview(d.pr);
+          if (plan.blocked) throw new Error("GitHub blocks this merge (branch rules or a conflict): Review it");
+          c.confirm = { option: o, plan, label: `${plan.method[0].toUpperCase()}${plan.method.slice(1)}-merge #${d.pr.number} into ${plan.base}?` };
+        } else {
+          c.note = await decide(d, o); c.done = true;
+        }
+      } catch (e) { c.error = String(e?.message ?? e).slice(0, 240); }
+      c.busy = false;
+      cx.notify();
+    });
+  }
+
+  confirm(d, yes, cx) {
+    const c = this.cardOf(d.id), k = c.confirm;
+    c.confirm = null;
+    if (!yes || !k) return;
+    c.busy = true; c.error = null;
+    cx.spawn(async (cx) => {
+      try { c.note = await decide(d, k.option, k.plan); c.done = true; if (d.pr) this.load("prs", cx, true); }
+      catch (e) { c.error = String(e?.message ?? e).slice(0, 240); }
+      c.busy = false;
+      cx.notify();
+    });
+  }
+
+  decisionCard(t, d) {
+    const c = this.cardOf(d.id);
+    const badge = { ask: ["Asks", t.blocked], done: ["Done", t.done], merge: ["Merge", t.done], fix: ["Fix", t.blocked], review: ["Review", t.working], bots: ["Bots", t.dim] }[d.kind];
+    const recap = d.agent ? this.recaps.get(d.agent)?.recap?.text : null;
+    const detail = d.kind === "done" ? recap || d.detail : d.detail;
+    const button = (id, label, tone, fn) => div().id(`${d.id}-${id}`).flex_none().px(8).h(22).flex().items_center().rounded(5)
+      .border(1).border_color(tone === "go" ? t.done : tone === "stop" ? t.blocked : t.border)
+      .text_size(11.5).text_color(tone === "go" ? t.done : tone === "stop" ? t.blocked : t.foreground)
+      .cursor_pointer().hover((s) => s.bg(t.raised))
+      .on_click((_e, cx) => { cx.stop_propagation(); fn(cx); cx.notify(); })
+      .child(label);
+    const actions = c.done ? null
+      : c.busy ? h_flex().gap(6).items_center().child(svg("mods/summary/spinner.svg").size(12).spin(900).text_color(t.working)).child(div().text_size(11).text_color(t.dim).child("Working…"))
+      : c.confirm ? h_flex().gap(6).items_center().flex_wrap()
+        .child(div().text_size(11.5).font_semibold().child(c.confirm.label))
+        .child(button("confirm", "Confirm", "go", (cx) => this.confirm(d, true, cx)))
+        .child(button("cancel", "Cancel", "plain", (cx) => this.confirm(d, false, cx)))
+      : h_flex().gap(6).flex_wrap().children(d.options.map((o) => button(o.id, o.label, o.tone, (cx) => this.pick(d, o.id, cx))));
+    return v_flex().id(`decide-${d.id}`).mx(2).my(3).p(8).gap(4).rounded(8).border(1).border_color(c.done ? t.border : badge[1]).bg(t.background)
+      .child(h_flex().gap(7).items_center().min_w(0)
+        .child(div().flex_none().px(5).rounded(4).bg(badge[1]).text_size(10.5).font_semibold().text_color(t.background).child(badge[0]))
+        .child(div().flex_1().min_w(0).truncate().font_semibold().child(d.where))
+        .when(Boolean(d.why), (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(d.why))))
+      .when(Boolean(detail), (el) => el.child(div().text_size(11.5).text_color(t.muted).child(detail)))
+      .when(Boolean(actions), (el) => el.child(actions))
+      .when(Boolean(c.note), (el) => el.child(div().text_size(11).text_color(t.done).child(c.note)))
+      .when(Boolean(c.error), (el) => el.child(div().text_size(11).text_color(t.blocked).child(c.error)));
   }
 
   // ------------------------------------------------------------ the chat
@@ -378,10 +492,13 @@ export default class Summary extends View {
     const el = v_flex().id(`section-${kind}`).pt(10).gap(1).child(head);
     if (!rows.length) {
       return el.child(div().px(6).py(4).text_size(11.5).text_color(t.dim)
-        .child(kind === "waiting" ? "Nothing needs you." : kind === "prs" ? (facts ? "No open PRs." : "Loading…")
+        .child(kind === "waiting" || kind === "decide" ? "Nothing needs you." : kind === "prs" ? (facts ? "No open PRs." : "Loading…")
           : kind === "apps" ? (facts ? "No web app runs in a space." : "Looking for apps…") : "None."));
     }
     const shown = rows.slice(0, limit);
+    if (kind === "decide") return el.children(shown.map((d) => this.decisionCard(t, d)))
+      .when(rows.length > shown.length, (el) => el.child(div().id("more-decide").px(6).py(3).text_size(11.5).text_color(t.accent).cursor_pointer()
+        .on_click(() => setShared(VIEW, "decide")).child(`${rows.length - shown.length} more`)));
     return el.children(shown.map((r) => (kind === "prs" ? this.prRow(t, r) : kind === "apps" ? this.appRow(t, r) : this.agentRow(t, r, kind))))
       .when(rows.length > shown.length, (el) => el.child(div().id(`more-${kind}`).px(6).py(3).text_size(11.5).text_color(t.accent).cursor_pointer()
         .on_click(() => setShared(VIEW, kind)).child(`${rows.length - shown.length} more`)));
