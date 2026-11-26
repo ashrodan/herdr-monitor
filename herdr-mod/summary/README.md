@@ -6,13 +6,30 @@ herdr-monitor's Overview.
 - **Bar** (status row): how many agents are waiting, done (not seen) and
   working, how many web apps run, and how many PRs are open. Click a count to open the panel on that
   list; click it again to close the panel.
-- **Panel** (right panel): the four tiles, then the lists.
+- **Panel** (right panel): the tiles (Decide, Waiting, Done, Working, Apps,
+  PRs), Ask, then the lists.
+  - **Decide** (its own view: click the Decide tile, or the bar's "to decide"
+    count; "← Back to the summary" returns): what waits on your call, as cards
+    with one-click options, most urgent first:
+
+    | Card | When | Options |
+    | --- | --- | --- |
+    | Asks | an agent is blocked on a question or permission prompt | **Yes** / **No** (permission prompts of Claude Code and Codex only), Review, Later |
+    | Merge | your PR: not a draft, checks green (or none), not waiting on a review | **Merge** (confirm names the method and base), Review, Later |
+    | Fix | your PR with failing checks or changes requested | **Fix with agent**, Review, Later |
+    | Review | someone's PR waits on your review | **Approve** (confirm), Review, Later |
+    | Done | an agent finished while you weren't looking | **Approve: open PR**, Review, Later |
+    | Bots | Dependabot, Renovate and other apps' PRs, all on one card | Show (the PR list), Later |
+
+    Review shows the agent, or the PR in ship-it's review pane when a space
+    has its branch checked out (GitHub otherwise). Later hides a card until
+    its subject changes (the agent moves on, the PR is updated).
   - Agents: space · tab, and for Claude Code agents the latest recap (Claude's
     away summary, else its last reply). Click a row to show the agent.
   - Running apps: each web app that runs in a space, on this Mac or on a
     remote machine, with its port, program (vite, next, …) and tailnet URL.
     Click a row to show its space (and the app's terminal, when a pane
-    shows it); Open opens the URL; Copy copies it. An app that listens on
+    shows it); Open opens the URL; Copy copies it; Stop ends the server (asks first). An app that listens on
     `localhost` only shows "This machine only" and a **Share** button (see
     below). When a shared Vite app refuses the tailnet host name, the row says
     so: add `server.allowedHosts: ['.ts.net']` to its Vite config.
@@ -63,6 +80,8 @@ The first goes in the status row, the second in the `panel-body` stack.
 | `summary.toggle` | open or close the panel |
 | `summary.all` / `.waiting` / `.done` / `.working` / `.apps` / `.prs` | open the panel on that list |
 | `summary.refresh` | reload PRs, apps and recaps now |
+| `summary.decide` | open the panel on Decide |
+| `summary.decide:<n>:<option>` | pick an option on Decide card `n` (from 1): `yes`, `no`, `merge`, `fix`, `approve`, `approve-pr`, `review`, `later`, `show-prs`; `confirm` / `cancel` answer a Merge or Approve confirm |
 | `summary.ask` | focus the Ask input (opens the panel from the bar) |
 | `summary.ask:<text>` | send a message to Ask |
 | `summary.run:<n>` | run card `n` (from 1) of the last answer |
@@ -115,10 +134,16 @@ The model: `HERDR_ASK_MODEL`, default `gemini-3.8-flash`.
 
 | Action | When | Command |
 | --- | --- | --- |
+| Yes / No | a click, after a fresh `hc get` shows the agent still blocked | `hc keys <t> enter` / `hc keys <t> esc` |
+| Approve: open PR | a click | `hc send <t> "Looks good. Commit anything left, push the branch and open a pull request (or update the open one)."` |
+| Merge | Merge, then Confirm | `gh api graphql` (allowed methods, merge state, head, base; blocked or conflicting stops here), then `gh pr merge <n> --repo <r> --<squash\|merge\|rebase> --match-head-commit <head>` |
+| Approve (PR) | Approve, then Confirm | `gh pr review <n> --repo <r> --approve` |
+| Fix with agent | a click | `hc send` the failing checks to an idle agent in the space on that branch, else `git worktree add --track -B <branch> <repo>/.worktrees/<slug> origin/<branch>` and a new space with claude |
 | Start (worktree) | a click on Run | `git fetch origin`, `git worktree add <repo>/.worktrees/<slug> -b <branch> <origin default>` (refused when the repo doesn't ignore `.worktrees/`), then `space.new {folder, argv: [claude\|codex], task: brief}` |
 | Start (no worktree) | a click on Run | `tab.new {space, folder, argv, task}` |
 | Tell | a click on Run | `hc send <terminal> <text>` |
 | Hand off | a click on Run | opens the handoff dialog; that dialog's own button runs `herdr-handoff send` |
+| Stop (app) | Stop, then Stop on the confirm | `sh -c STOP <pid> <port>` on the app's machine: `kill -TERM <pid>` only while that pid still listens on the port (`lsof`, `ss` on Linux), else nothing |
 | Share | a click on Share | `tailscale serve --bg --https=<port> http://127.0.0.1:<port>` (`[::1]` for an IPv6-only app), on the app's machine; on Linux it tries `sudo -n` when the plain command fails |
 
 To stop sharing: `tailscale serve --https=<port> off`. Tailscale Serve
@@ -127,9 +152,11 @@ reaches your tailnet only; the mod never uses Funnel.
 ## Cost
 
 - Agent counts and lists come from Herdr (`agents()`): no polling.
-- PRs: one `gh pr list --limit 30` per repo, 4 at a time, every 2 minutes
-  (the bar does it, so the panel opens with fresh data). Both copies share
-  the result (`summary.prs`).
+- PRs: one GitHub GraphQL call per 20 repos (`prquery.js`: one alias per
+  repo, 30 open PRs each), not one `gh pr list` per repo. Every 2 minutes
+  while the panel shows, every 5 minutes while it is closed (the bar's counts).
+  Both copies share the result (`summary.prs`). A folder's repo and GitHub
+  name (`git rev-parse`, `git config remote.origin.url`) are cached for 30 minutes.
 - Recaps: read only for the Claude agents the panel shows, and again only
   when an agent changes. Each read is `hc get`, the session file and the last
   600 kB of the transcript, filtered by `grep` before JavaScript sees it.
@@ -138,7 +165,16 @@ reaches your tailnet only; the mod never uses Funnel.
   does not redraw the window.
 - Hidden copies do no work: the panel loads recaps and catches up on PRs only
   when it is on screen (in the panel, or as a pane in the tab on screen).
-- Apps: one scan per machine every minute (the bar does it; about 1 s of
+- Apps: one scan per machine every minute while the panel shows, every 5
+  minutes while it is closed (the bar does it; about 1 s of
   CPU on a Mac with 50 listeners, 0.15 s on Linux), shared as
   `summary.apps`. Only the listeners of the spaces are probed.
-- The only write is Share (above). No actions on PRs or agents.
+- Decide: computed from the facts above, cached until an agent's state, the
+  PR list, Later or your login changes. A blocked agent's prompt (`hc get`,
+  under 1 kB) is read only while the Decide view shows. Your GitHub login is
+  asked once.
+- Measured on 27 repos, 44 agents, 3 machines, panel closed: 166 child
+  processes in 2 minutes before (58 git, 50 remote exec, 19+ gh pr list),
+  105 after (warm cache), with no `gh pr list` at all; most of the rest
+  is other mods' `git status` and `rev-parse --show-toplevel`.
+- Writes: Share (above), and the Ask and Decide actions (What writes).

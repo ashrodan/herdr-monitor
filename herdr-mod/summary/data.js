@@ -2,18 +2,19 @@
 // each Claude agent's latest recap, and the web apps that run in each space. Everything slow goes through exec (its own
 // thread); the JavaScript here only parses small outputs.
 import { exec, hc, home, readTextFile, spaces, panes } from "herdr";
-import { SCAN, PROBE, SHARE, parseScan, parseProbe, probeArgs, apps, spaceOf } from "./apps.js";
+import { SCAN, PROBE, SHARE, STOP, parseScan, parseProbe, probeArgs, apps, spaceOf } from "./apps.js";
+import { ghRepo, prQueries, parsePrQuery, checksOf } from "./prquery.js";
+export { checksOf };
 
 // git reads that never take the index lock while an agent commits.
 const READ = ["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "diff.autoRefreshIndex=false"];
-const PR_FIELDS = "number,title,url,isDraft,headRefName,author,updatedAt,reviewDecision,statusCheckRollup";
-const PR_LIMIT = 30;
-const REPO_TTL = 5 * 60 * 1000;
+// A folder's repo and its GitHub name rarely change: asked again every 30 minutes.
+const REPO_TTL = 30 * 60 * 1000;
 
 // ---------------------------------------------------------------- repos
 
 // Folder → its repo (the git common dir names the main checkout, so every
-// worktree of one repo counts once). Cached for 5 minutes.
+// worktree of one repo counts once), and its GitHub name from origin. Cached for 30 minutes.
 const repoOf = new Map(); // `${on}:${dir}` -> { at, repo: {key, root, on} | null }
 
 async function repoFor(dir, on) {
@@ -24,7 +25,10 @@ async function repoFor(dir, on) {
   try {
     const r = await exec("git", [...READ, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"], { cwd: dir, on });
     const [root, common] = r.stdout.trim().split("\n");
-    if (r.code === 0 && root && common) repo = { key: `${on ?? ""}:${common}`, root, on: on ?? null };
+    if (r.code === 0 && root && common) {
+      const u = await exec("git", [...READ, "config", "--get", "remote.origin.url"], { cwd: root, on });
+      repo = { key: `${on ?? ""}:${common}`, root, on: on ?? null, gh: u.code === 0 ? ghRepo(u.stdout) : null };
+    }
   } catch { /* the folder is gone or the machine is away */ }
   repoOf.set(k, { at: Date.now(), repo });
   return repo;
@@ -59,21 +63,7 @@ export async function openRepos() {
 
 // ---------------------------------------------------------------- PRs
 
-const FAIL = new Set(["FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"]);
-export function checksOf(rollup) {
-  let fail = 0, pending = 0, pass = 0;
-  for (const c of rollup ?? []) {
-    const state = String(c.conclusion || c.state || "").toUpperCase();
-    const done = c.__typename === "StatusContext" ? state !== "PENDING" && state !== "EXPECTED" : String(c.status || "").toUpperCase() === "COMPLETED";
-    if (!done) pending++;
-    else if (FAIL.has(state)) fail++;
-    else pass++;
-  }
-  return { fail, pending, pass };
-}
 
-// "owner/repo" from a PR URL.
-const repoName = (url) => String(url).match(/github\.com\/([^/]+\/[^/]+)\/pull\//)?.[1] ?? "";
 
 export function shortError(text) {
   const s = String(text || "");
@@ -82,32 +72,37 @@ export function shortError(text) {
   return s.trim().split("\n")[0].slice(0, 120) || "gh failed";
 }
 
-// Every open PR in every repo of the open spaces, newest first.
+// Every open PR in every repo of the open spaces, newest first: one GraphQL
+// call per 20 repos (prquery.js), not one `gh pr list` per repo. Repos without
+// a GitHub origin are skipped quietly.
 export async function loadPrs() {
   const repos = await openRepos();
+  const byName = new Map();
+  for (const r of repos) if (r.gh && !byName.has(r.gh)) byName.set(r.gh, r);
+  const names = [...byName.keys()];
   const prs = [], errors = [];
-  await pool(repos, 4, async (repo) => {
+  for (const query of prQueries(names)) {
     let r;
-    try {
-      r = await exec("gh", ["pr", "list", "--state", "open", "--limit", String(PR_LIMIT), "--json", PR_FIELDS], { cwd: repo.root, on: repo.on });
-    } catch (e) { errors.push({ repo: repo.root, error: String(e).slice(0, 120) }); return; }
-    if (r.code !== 0) {
-      const msg = shortError(r.stderr || r.stdout);
-      if (msg) errors.push({ repo: repo.root, error: msg });
-      return;
+    try { r = await exec("gh", ["api", "graphql", "-f", `query=${query}`], { timeout: 60_000 }); }
+    catch (e) { errors.push({ repo: "", error: String(e).slice(0, 120) }); continue; }
+    let json = null;
+    try { json = JSON.parse(r.stdout || "null"); } catch { /* reported below */ }
+    // GraphQL answers what it can: a repo that's gone or private to someone else is one error, not all.
+    for (const e of json?.errors ?? []) errors.push({ repo: names[Number(String(e.path?.[0] ?? "").slice(1))] ?? "", error: String(e.message).slice(0, 120) });
+    if (!json?.data) { if (r.code !== 0 && !json?.errors) { const msg = shortError(r.stderr || r.stdout); if (msg) errors.push({ repo: "", error: msg }); } continue; }
+    for (const [name, rows] of Object.entries(parsePrQuery(json.data, names))) {
+      const repo = byName.get(name);
+      for (const p of rows) {
+        prs.push({
+          number: p.number, title: p.title, url: p.url, draft: !!p.isDraft, branch: p.headRefName,
+          author: p.author?.login ?? "", updatedAt: p.updatedAt, review: p.reviewDecision || "",
+          checks: checksOf(p.statusCheckRollup), repo: name, space: repo.space, spaceId: repo.spaceId,
+        });
+      }
     }
-    let rows = [];
-    try { rows = JSON.parse(r.stdout || "[]"); } catch { return; }
-    for (const p of rows) {
-      prs.push({
-        number: p.number, title: p.title, url: p.url, draft: !!p.isDraft, branch: p.headRefName,
-        author: p.author?.login ?? "", updatedAt: p.updatedAt, review: p.reviewDecision || "",
-        checks: checksOf(p.statusCheckRollup), repo: repoName(p.url), space: repo.space, spaceId: repo.spaceId,
-      });
-    }
-  });
+  }
   prs.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
-  return { at: Date.now(), repos: repos.length, prs, errors };
+  return { at: Date.now(), repos: names.length, prs, errors };
 }
 
 // ---------------------------------------------------------------- recaps
@@ -204,6 +199,13 @@ export async function loadApps() {
 export async function shareApp(app) {
   const r = await exec("sh", ["-c", SHARE, "sh", String(app.port), app.target], { on: app.machine });
   return r.code === 0 ? null : (r.stderr || r.stdout || "tailscale serve failed").trim().split("\n").pop().slice(0, 160);
+}
+
+// Stop one app (a click, then Confirm): SIGTERM to its process, on its machine,
+// only while that process still listens on the port. Returns null, or the error text.
+export async function stopApp(app) {
+  const r = await exec("sh", ["-c", STOP, "sh", String(app.pid), String(app.port)], { on: app.machine });
+  return r.code === 0 ? null : (r.stderr || r.stdout || "kill failed").trim().split("\n").pop().slice(0, 160);
 }
 
 // ---------------------------------------------------------------- helpers

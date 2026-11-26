@@ -72,6 +72,19 @@ wait
 
 // Turn on Tailscale Serve for one port: https://<machine>.<tailnet>.ts.net:<port>
 // → the app ($2). Linux needs root unless the user is the tailscale operator.
+// Stop: SIGTERM to pid $1 only while it still listens on port $2 (a pid that
+// was reused, or a server that already moved, is left alone: exit 3).
+export const STOP = String.raw`
+pid=$1; port=$2
+case "$pid$port" in *[!0-9]*|"") echo "bad pid or port" >&2; exit 2;; esac
+if command -v lsof >/dev/null 2>&1; then
+  lsof -nP -a -p "$pid" -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | grep -qx "$pid" || { echo "it no longer listens on :$port" >&2; exit 3; }
+else
+  ss -ltnpH "sport = :$port" 2>/dev/null | grep -q "pid=$pid," || { echo "it no longer listens on :$port" >&2; exit 3; }
+fi
+kill -TERM "$pid"
+`;
+
 export const SHARE = String.raw`
 ts=$(command -v tailscale 2>/dev/null)
 [ -z "$ts" ] && [ -x /Applications/Tailscale.app/Contents/MacOS/Tailscale ] && ts=/Applications/Tailscale.app/Contents/MacOS/Tailscale

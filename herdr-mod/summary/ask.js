@@ -3,6 +3,7 @@
 // the recent turns and a small snapshot of Herdr to a file, and reads back
 // {reply, actions}. The model only proposes; each action runs here on a click.
 import { exec, hc, home, writeTextFile, spaces, agents, shared, run, openOverlay } from "herdr";
+import { APPROVE_TEXT, fixText, MERGE_QUERY, mergePlan } from "./decide.js";
 
 const READ = ["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "diff.autoRefreshIndex=false"];
 const DIR = () => `${home()}/.cache/herdr-ask`;
@@ -31,10 +32,10 @@ async function context(prsKey) {
 
 let made = false;
 // One chat turn. history: [{role, text}] before this message.
-export async function ask(message, history, prsKey) {
+export async function ask(message, history, prsKey, decide = []) {
   if (!made) { await exec("mkdir", ["-p", DIR()]); made = true; }
   const file = `${DIR()}/turn-${Date.now()}-${Math.floor(Math.random() * 1e6)}.json`;
-  await writeTextFile(file, JSON.stringify({ message, history, context: await context(prsKey) }), null);
+  await writeTextFile(file, JSON.stringify({ message, history, context: { ...(await context(prsKey)), decisions: decide } }), null);
   const r = await exec("herdr-ask", ["--consume", file], { timeout: 60_000 });
   let out = null;
   try { out = JSON.parse(r.stdout); } catch { /* reported below */ }
@@ -59,10 +60,15 @@ async function spawnWorktree(a) {
   const ignored = await exec("git", ["check-ignore", "-q", ".worktrees/x"], { cwd: root, on });
   if (ignored.code !== 0) throw new Error(`${root} doesn't ignore .worktrees/: add it to .gitignore first`);
   await git(["fetch", "-q", "origin"], root, on);
-  let base = "origin/main";
-  try { base = await git([...READ, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"], root, on); } catch { /* origin/main */ }
   const dir = `${root}/.worktrees/${a.branch.split("/").pop()}`;
-  await git(["worktree", "add", dir, "-b", a.branch, base], root, on);
+  if (a.existing) {
+    // A PR's branch: check it out as it is on origin.
+    await git(["worktree", "add", "--track", "-B", a.branch, dir, `origin/${a.branch}`], root, on);
+  } else {
+    let base = "origin/main";
+    try { base = await git([...READ, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"], root, on); } catch { /* origin/main */ }
+    await git(["worktree", "add", dir, "-b", a.branch, base], root, on);
+  }
   run("space.new", { name: a.title, folder: dir, argv: ARGV[a.agent], task: a.brief, machine: on ?? "" });
   return `Started ${a.agent} on ${a.branch} in ${dir}`;
 }
@@ -83,4 +89,77 @@ export async function runAction(a) {
     return "Opened the hand-off dialog";
   }
   throw new Error(`unknown action ${a.type}`);
+}
+
+// ------------------------------------------------------------ decide
+
+async function gh(args) {
+  const r = await exec("gh", args, { timeout: 60_000 });
+  if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim().split("\n")[0].slice(0, 200) || `gh exited ${r.code}`);
+  return r.stdout;
+}
+
+// Asked once for both copies of the mod (one request in flight, its answer kept).
+let login = null;
+export function me() {
+  login ??= gh(["api", "user", "-q", ".login"]).then((s) => s.trim() || null, () => { login = null; return null; });
+  return login;
+}
+
+// A blocked agent's question or permission prompt: {kind, msg}.
+export async function statusOf(terminal) {
+  const r = await hc(["get", terminal, "--json"]);
+  const s = JSON.parse(r.stdout || "{}").status ?? {};
+  return { state: s.state ?? null, kind: s.kind ?? null, msg: s.msg ? String(s.msg).slice(0, 300) : null };
+}
+
+// The merge a Merge click would do, for its confirm: method, head, base, blocked.
+export async function mergePreview(p) {
+  const [owner, name] = p.repo.split("/");
+  const out = await gh(["api", "graphql", "-f", `query=${MERGE_QUERY}`, "-F", `owner=${owner}`, "-F", `name=${name}`, "-F", `number=${p.number}`]);
+  return mergePlan(JSON.parse(out).data?.repository);
+}
+
+// The space that has a PR's branch checked out, if any.
+const spaceOfBranch = (branch) => spaces().find((s) => s.branch === branch && s.folder);
+
+// Review: the agent itself; a PR in ship-it's review pane when a space has its
+// branch, else null (main.js opens it on GitHub).
+export function review(d) {
+  if (d.agent) { run("agent.focus", { terminal: d.agent }); return true; }
+  const s = spaceOfBranch(d.pr.branch);
+  if (!s) return false;
+  run("space.select", { id: s.id });
+  run("pane.split", { direction: "right", mod: "ship-it-review", props: { root: s.folder, on: s.machine ?? null } });
+  return true;
+}
+
+// One option of a decision card. plan: the confirmed merge plan.
+export async function decide(d, option, plan) {
+  if (option === "yes" || option === "no") {
+    const now = await statusOf(d.agent);
+    if (now.state !== "blocked") throw new Error("It isn't waiting any more");
+    const r = await hc(["keys", d.agent, option === "yes" ? "enter" : "esc"]);
+    if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim().slice(0, 160));
+    return option === "yes" ? "Answered Yes" : "Answered No";
+  }
+  if (option === "approve") return runAction({ type: "tell", terminal: d.agent, text: APPROVE_TEXT, label: d.where });
+  if (option === "merge") {
+    const p = d.pr;
+    await gh(["pr", "merge", String(p.number), "--repo", p.repo, `--${plan.method}`, ...(plan.head ? ["--match-head-commit", plan.head] : [])]);
+    return `Merged #${p.number} into ${plan.base} (${plan.method})`;
+  }
+  if (option === "approve-pr") {
+    await gh(["pr", "review", String(d.pr.number), "--repo", d.pr.repo, "--approve"]);
+    return `Approved #${d.pr.number}`;
+  }
+  if (option === "fix") {
+    const p = d.pr, s = spaceOfBranch(p.branch);
+    const ag = s && agents().find((a) => a.space === s.id && a.status !== "working");
+    if (ag) return runAction({ type: "tell", terminal: ag.address, text: fixText(p), label: [ag.space_name, ag.tab_name].filter(Boolean).join(" · ") });
+    const host = s ?? spaces().find((x) => x.id === p.spaceId);
+    if (!host?.folder) throw new Error(`No space has ${p.repo}`);
+    return runAction({ type: "spawn", worktree: true, existing: true, branch: p.branch, agent: "claude", title: `Fix #${p.number}`, brief: fixText(p), folder: host.folder, machine: host.machine ?? null, space_id: host.id, space_name: host.name });
+  }
+  throw new Error(`unknown option ${option}`);
 }
