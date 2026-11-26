@@ -7,15 +7,15 @@
 //   agent's latest recap, the web apps running in each space (with their
 //   tailnet URL), and every open PR in the repos of the open spaces.
 //
-// Agent facts are Herdr's own (agents()), so they cost nothing. PRs come from
-// `gh pr list` per repo, at most every 2 minutes, shared between the copies
+// Agent facts are Herdr's own (agents()), so they cost nothing. PRs come from one
+// GraphQL call per 20 repos (prquery.js), every 2 minutes (5 with the panel closed), shared between the copies
 // through setShared("summary.prs"). Apps come from one port scan per machine
 // every minute, shared through setShared("summary.apps"). Recaps are read only for rows the panel
 // shows, and again only when that agent changes.
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { agents, spaces, panes, layout, theme, run, shared, setShared, nextCommand, props, checking } from "herdr";
-import { loadPrs, loadApps, shareApp, loadRecap, age } from "./data.js";
+import { loadPrs, loadApps, shareApp, stopApp, loadRecap, age } from "./data.js";
 import { ask, runAction, me, statusOf, mergePreview, review, decide } from "./ask.js";
 import { decisions, withLater } from "./decide.js";
 
@@ -40,6 +40,8 @@ const FACTS = {
 // checked, not the shared value: setShared redraws every mod in the window.
 const inflight = { prs: 0, apps: 0 };
 const checked = { prs: 0, apps: 0 };
+// With the panel closed the bar only shows counts: PRs and apps every 5 minutes.
+const HIDDEN_EVERY = 5 * 60_000;
 const factAt = (kind) => Math.max(shared(FACTS[kind].key)?.at ?? 0, checked[kind]);
 
 function findNode(node, id) {
@@ -115,8 +117,9 @@ export default class Summary extends View {
       // The bar is always on screen: it keeps the slow facts fresh for both copies.
       for (const kind of Object.keys(FACTS)) {
         const { every } = FACTS[kind];
-        cx.timer.every(every, (cx) => this.load(kind, cx, false, every - 10_000));
-        this.load(kind, cx, false, every - 10_000);
+        const maxAge = () => (panelCopyShown() ? every - 10_000 : HIDDEN_EVERY - 10_000);
+        cx.timer.every(every, (cx) => this.load(kind, cx, false, maxAge()));
+        if (!checking()) this.load(kind, cx, false, maxAge());
       }
     }
     cx.spawn(async (cx) => { for (;;) { this.command(await nextCommand(), cx); cx.notify(); } });
@@ -180,6 +183,19 @@ export default class Summary extends View {
         if (inflight[kind] === started) inflight[kind] = 0;
         this.loading[kind] = false; cx.notify();
       }
+    });
+  }
+
+  // Stop an app (after its Confirm), then scan again.
+  stop(app, cx) {
+    const st = this.sharing.get(app.key) ?? {};
+    this.sharing.set(app.key, { ...st, confirmStop: false, stopping: true, error: null });
+    cx.spawn(async (cx) => {
+      let error = null;
+      try { error = await stopApp(app); } catch (e) { error = String(e).slice(0, 160); }
+      this.sharing.set(app.key, { busy: false, stopping: false, error });
+      this.load("apps", cx, true);
+      cx.notify();
     });
   }
 
@@ -289,15 +305,15 @@ export default class Summary extends View {
     const prs = shared(PRS), apps = shared(APPS);
     const view = shared(VIEW) ?? "all";
     const one = KINDS.includes(view) ? view : null;
-    if (shown) this.loadStatus(b.waiting, cx);
+    // Decide's work (prompt words, its agents' recaps) runs only while its view shows.
+    if (shown && one === "decide") this.loadStatus(b.waiting, cx);
     const decide = this.decisions();
     const lists = { ...b, decide, apps: apps?.apps ?? [], prs: prs?.prs ?? [] };
 
-    // Recaps only for rows on screen (a decision card's agent too).
+    // Recaps only for rows on screen.
     if (shown) {
-      const byAddress = new Map(agents().map((a) => [a.address, a]));
-      const cardAgents = decide.slice(0, one === "decide" ? Infinity : SHOW.decide).map((d) => byAddress.get(d.agent)).filter(Boolean);
-      const rows = one ? (one === "prs" || one === "apps" ? [] : one === "decide" ? cardAgents : lists[one]) : [...cardAgents, ...b.working.slice(0, SHOW.working)];
+      const cardAgents = () => { const by = new Map(b.waiting.concat(b.done).map((a) => [a.address, a])); return decide.map((d) => by.get(d.agent)).filter(Boolean); };
+      const rows = one ? (one === "prs" || one === "apps" ? [] : one === "decide" ? cardAgents() : lists[one]) : [...b.waiting.slice(0, SHOW.waiting), ...b.done.slice(0, SHOW.done), ...b.working.slice(0, SHOW.working)];
       this.loadRecaps(rows, cx);
     }
 
@@ -319,6 +335,8 @@ export default class Summary extends View {
 
     const tiles = h_flex().px(12).pt(10).pb(4).gap(6).flex_none()
       .child(tile("decide", decide.length, t.accent))
+      .child(tile("waiting", b.waiting.length, t.blocked))
+      .child(tile("done", b.done.length, t.done))
       .child(tile("working", b.working.length, t.working))
       .child(tile("apps", lists.apps.length, null))
       .child(tile("prs", lists.prs.length, null));
@@ -326,8 +344,8 @@ export default class Summary extends View {
     const parts = [];
     for (const kind of one ? [one] : KINDS) {
       const rows = lists[kind];
-      if (!one && (kind === "waiting" || kind === "done")) continue; // their agents are Decide cards
-      if (!one && !rows.length && kind !== "decide") continue;
+      if (!one && kind === "decide") continue; // its cards have their own view: the Decide tile
+      if (!one && !rows.length && kind !== "waiting") continue;
       parts.push(this.section(t, kind, rows, one ? Infinity : SHOW[kind], kind === "apps" ? apps : prs));
     }
     if (apps?.errors?.length && (!one || one === "apps")) {
@@ -346,10 +364,19 @@ export default class Summary extends View {
 
   // ------------------------------------------------------------ decide
 
+  // Cached on its inputs: the bar asks on every render, and agents change often.
   decisions() {
+    const list = agents(), prs = shared(PRS), later = shared(LATER);
+    let sig = `${prs?.at ?? 0}|${this.me}|${Object.keys(later ?? {}).length}|${this.statusVersion ?? 0}`;
+    for (const a of list) if (a.status === "blocked" || a.status === "done") sig += `|${a.address}:${a.status}:${a.seq}`;
+    if (this.decided?.sig === sig) return this.decided.list;
     const status = new Map();
     for (const [address, v] of this.status) if (v.seq != null) status.set(address, v);
-    return decisions({ agents: agents(), prs: shared(PRS)?.prs ?? [], me: this.me, later: shared(LATER) ?? {}, status });
+    const out = decisions({ agents: list, prs: prs?.prs ?? [], me: this.me, later: later ?? {}, status });
+    this.decided = { sig, list: out };
+    // Card states only for cards that still exist.
+    if (this.cards.size > out.length + 20) { const live = new Set(out.map((d) => d.id)); for (const id of this.cards.keys()) if (!live.has(id)) this.cards.delete(id); }
+    return out;
   }
 
   // A blocked agent's prompt (kind, words), asked once per change of the agent.
@@ -362,6 +389,7 @@ export default class Summary extends View {
         let s = null;
         try { s = await statusOf(a.address); } catch { /* no prompt words: Review only */ }
         this.status.set(a.address, { seq: a.seq, kind: s?.kind ?? null, msg: s?.msg ?? null, loading: false });
+        this.statusVersion = (this.statusVersion ?? 0) + 1;
         cx.notify();
       });
     }
@@ -496,7 +524,9 @@ export default class Summary extends View {
           : kind === "apps" ? (facts ? "No web app runs in a space." : "Looking for apps…") : "None."));
     }
     const shown = rows.slice(0, limit);
-    if (kind === "decide") return el.children(shown.map((d) => this.decisionCard(t, d)))
+    if (kind === "decide") return el.when(limit === Infinity, (el) => el.child(div().id("decide-back").px(6).pb(4).text_size(11.5).text_color(t.accent).cursor_pointer()
+      .on_click(() => setShared(VIEW, "all")).child("← Back to the summary")))
+      .children(shown.map((d) => this.decisionCard(t, d)))
       .when(rows.length > shown.length, (el) => el.child(div().id("more-decide").px(6).py(3).text_size(11.5).text_color(t.accent).cursor_pointer()
         .on_click(() => setShared(VIEW, "decide")).child(`${rows.length - shown.length} more`)));
     return el.children(shown.map((r) => (kind === "prs" ? this.prRow(t, r) : kind === "apps" ? this.appRow(t, r) : this.agentRow(t, r, kind))))
@@ -546,13 +576,21 @@ export default class Summary extends View {
         .child(div().flex_1().min_w(0).truncate().font_semibold().child(where))
         .child(div().flex_none().text_color(t.muted).child(`:${a.port}`))
         .child(div().flex_none().max_w(90).truncate().text_size(11).text_color(t.dim).child(a.program)))
+      .when(Boolean(share?.confirmStop), (el) => el.child(h_flex().pl(20).gap(6).items_center()
+        .child(div().flex_1().min_w(0).truncate().text_size(11.5).font_semibold().text_color(t.blocked)
+          .child(`Stop ${a.program || "it"} on :${a.port}${a.machine ? ` on ${a.machine}` : ""}?`))
+        .child(button(`stop-yes-${a.key}`, "Stop", `SIGTERM to pid ${a.pid}`, (cx) => this.stop(a, cx)))
+        .child(button(`stop-no-${a.key}`, "Cancel", "Keep it running", () => this.sharing.set(a.key, { ...share, confirmStop: false })))))
       .child(h_flex().pl(20).gap(6).items_center().min_w(0)
         .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(a.url ? t.muted : t.dim)
-          .child(a.url ?? (share?.busy ? "Sharing on the tailnet…" : "This machine only")))
+          .child(share?.stopping ? "Stopping…" : a.url ?? (share?.busy ? "Sharing on the tailnet…" : "This machine only")))
         .when(Boolean(open), (el) => el.child(button(`open-${a.key}`, "Open", `Open ${open}`, (cx) => cx.open_url(open))))
         .when(Boolean(a.url), (el) => el.child(button(`copy-${a.key}`, "Copy", `Copy ${a.url}`, (cx) => cx.write_to_clipboard(a.url))))
         .when(!a.url && !share?.busy, (el) => el.child(button(`share-${a.key}`, "Share",
-          `Tailscale Serve: https://<this machine>:${a.port} → ${a.target}`, (cx) => this.share(a, cx)))))
+          `Tailscale Serve: https://<this machine>:${a.port} → ${a.target}`, (cx) => this.share(a, cx))))
+        .when(!share?.stopping && !share?.confirmStop, (el) => el.child(button(`stop-${a.key}`, "Stop",
+          `Stop the server: SIGTERM to pid ${a.pid}${a.machine ? ` on ${a.machine}` : ""} (asks first)`,
+          () => this.sharing.set(a.key, { ...share, confirmStop: true, error: null })))))
       .when(Boolean(a.hostBlocked), (el) => el.child(div().pl(20).text_size(11).text_color(t.blocked)
         .child("Refuses the tailnet host name. Vite: server.allowedHosts: ['.ts.net']")))
       .when(Boolean(share?.error), (el) => el.child(div().pl(20).text_size(11).text_color(t.blocked).truncate().child(share.error)));

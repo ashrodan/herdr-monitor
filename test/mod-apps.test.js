@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { parseScan, parseProbe, probeArgs, servedPorts, programOf, apps, spaceOf, SCAN, PROBE, SHARE } from "../herdr-mod/summary/apps.js";
+import { parseScan, parseProbe, probeArgs, servedPorts, programOf, apps, spaceOf, SCAN, PROBE, SHARE, STOP } from "../herdr-mod/summary/apps.js";
 
 const DNS = "box.tail0000.ts.net";
 const SCAN_OUT = [
@@ -113,7 +113,7 @@ test("probeArgs gives one argument per address", () => {
 });
 
 test("the scripts are valid sh", () => {
-  for (const script of [SCAN, PROBE, SHARE]) execFileSync("sh", ["-n", "-c", script]);
+  for (const script of [SCAN, PROBE, SHARE, STOP]) execFileSync("sh", ["-n", "-c", script]);
 });
 
 test("PROBE finds a local HTML server", async () => {
@@ -129,4 +129,20 @@ test("PROBE finds a local HTML server", async () => {
     assert.equal(p.code, 200);
     assert.match(p.type, /text\/html/);
   } finally { server.close(); }
+});
+
+test("STOP: stops the process that listens on the port, and nothing else", async () => {
+  const { spawn, spawnSync } = await import("node:child_process");
+
+  const server = spawn(process.execPath, ["-e", "require('http').createServer((q,r)=>r.end()).listen(0,'127.0.0.1',function(){console.log(this.address().port)})"]);
+  const port = await new Promise((ok) => server.stdout.once("data", (d) => ok(Number(String(d).trim()))));
+  const exited = new Promise((ok) => server.once("exit", (code, signal) => ok(signal)));
+  // Attack probes: a pid that doesn't listen on that port, a wrong port, junk.
+  assert.equal(spawnSync("sh", ["-c", STOP, "sh", String(process.pid), String(port)]).status, 3);
+  assert.equal(spawnSync("sh", ["-c", STOP, "sh", String(server.pid), String(port + 1 === 65536 ? 1 : port + 1)]).status, 3);
+  assert.equal(spawnSync("sh", ["-c", STOP, "sh", "1;rm", "80"]).status, 2);
+  assert.equal(server.exitCode, null);
+  // Real use: the listener itself.
+  assert.equal(spawnSync("sh", ["-c", STOP, "sh", String(server.pid), String(port)]).status, 0);
+  assert.equal(await exited, "SIGTERM");
 });

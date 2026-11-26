@@ -6,9 +6,11 @@ herdr-monitor's Overview.
 - **Bar** (status row): how many agents are waiting, done (not seen) and
   working, how many web apps run, and how many PRs are open. Click a count to open the panel on that
   list; click it again to close the panel.
-- **Panel** (right panel): the tiles (Decide, Working, Apps, PRs), Ask, then the lists.
-  - **Decide**: what waits on your call, as cards with one-click options,
-    most urgent first:
+- **Panel** (right panel): the tiles (Decide, Waiting, Done, Working, Apps,
+  PRs), Ask, then the lists.
+  - **Decide** (its own view: click the Decide tile, or the bar's "to decide"
+    count; "← Back to the summary" returns): what waits on your call, as cards
+    with one-click options, most urgent first:
 
     | Card | When | Options |
     | --- | --- | --- |
@@ -141,6 +143,7 @@ The model: `HERDR_ASK_MODEL`, default `gemini-3.8-flash`.
 | Start (no worktree) | a click on Run | `tab.new {space, folder, argv, task}` |
 | Tell | a click on Run | `hc send <terminal> <text>` |
 | Hand off | a click on Run | opens the handoff dialog; that dialog's own button runs `herdr-handoff send` |
+| Stop (app) | Stop, then Stop on the confirm | `sh -c STOP <pid> <port>` on the app's machine: `kill -TERM <pid>` only while that pid still listens on the port (`lsof`, `ss` on Linux), else nothing |
 | Share | a click on Share | `tailscale serve --bg --https=<port> http://127.0.0.1:<port>` (`[::1]` for an IPv6-only app), on the app's machine; on Linux it tries `sudo -n` when the plain command fails |
 
 To stop sharing: `tailscale serve --https=<port> off`. Tailscale Serve
@@ -149,9 +152,11 @@ reaches your tailnet only; the mod never uses Funnel.
 ## Cost
 
 - Agent counts and lists come from Herdr (`agents()`): no polling.
-- PRs: one `gh pr list --limit 30` per repo, 4 at a time, every 2 minutes
-  (the bar does it, so the panel opens with fresh data). Both copies share
-  the result (`summary.prs`).
+- PRs: one GitHub GraphQL call per 20 repos (`prquery.js`: one alias per
+  repo, 30 open PRs each), not one `gh pr list` per repo. Every 2 minutes
+  while the panel shows, every 5 minutes while it is closed (the bar's counts).
+  Both copies share the result (`summary.prs`). A folder's repo and GitHub
+  name (`git rev-parse`, `git config remote.origin.url`) are cached for 30 minutes.
 - Recaps: read only for the Claude agents the panel shows, and again only
   when an agent changes. Each read is `hc get`, the session file and the last
   600 kB of the transcript, filtered by `grep` before JavaScript sees it.
@@ -160,7 +165,16 @@ reaches your tailnet only; the mod never uses Funnel.
   does not redraw the window.
 - Hidden copies do no work: the panel loads recaps and catches up on PRs only
   when it is on screen (in the panel, or as a pane in the tab on screen).
-- Apps: one scan per machine every minute (the bar does it; about 1 s of
+- Apps: one scan per machine every minute while the panel shows, every 5
+  minutes while it is closed (the bar does it; about 1 s of
   CPU on a Mac with 50 listeners, 0.15 s on Linux), shared as
   `summary.apps`. Only the listeners of the spaces are probed.
-- The only write is Share (above). No actions on PRs or agents.
+- Decide: computed from the facts above, cached until an agent's state, the
+  PR list, Later or your login changes. A blocked agent's prompt (`hc get`,
+  under 1 kB) is read only while the Decide view shows. Your GitHub login is
+  asked once.
+- Measured on 27 repos, 44 agents, 3 machines, panel closed: 166 child
+  processes in 2 minutes before (58 git, 50 remote exec, 19+ gh pr list),
+  105 after (warm cache), with no `gh pr list` at all; most of the rest
+  is other mods' `git status` and `rev-parse --show-toplevel`.
+- Writes: Share (above), and the Ask and Decide actions (What writes).

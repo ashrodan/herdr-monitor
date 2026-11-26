@@ -99,9 +99,10 @@ async function gh(args) {
   return r.stdout;
 }
 
+// Asked once for both copies of the mod (one request in flight, its answer kept).
 let login = null;
-export async function me() {
-  if (!login) { try { login = (await gh(["api", "user", "-q", ".login"])).trim() || null; } catch { /* unknown: no PR cards */ } }
+export function me() {
+  login ??= gh(["api", "user", "-q", ".login"]).then((s) => s.trim() || null, () => { login = null; return null; });
   return login;
 }
 
