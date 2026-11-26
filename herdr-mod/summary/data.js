@@ -1,7 +1,8 @@
-// The facts behind the summary: open PRs in the repos of the open spaces, and
-// each Claude agent's latest recap. Everything slow goes through exec (its own
+// The facts behind the summary: open PRs in the repos of the open spaces,
+// each Claude agent's latest recap, and the web apps that run in each space. Everything slow goes through exec (its own
 // thread); the JavaScript here only parses small outputs.
 import { exec, hc, home, readTextFile, spaces, panes } from "herdr";
+import { SCAN, PROBE, SHARE, parseScan, parseProbe, probeArgs, apps, spaceOf } from "./apps.js";
 
 // git reads that never take the index lock while an agent commits.
 const READ = ["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "diff.autoRefreshIndex=false"];
@@ -158,6 +159,51 @@ export async function loadRecap(address) {
   const r = await exec("sh", ["-c", TAIL, "sh", file, `${claude}/projects`, s.sessionId]);
   if (r.code !== 0 && !r.stdout) return null;
   return recapFrom(r.stdout.split("\n").filter(Boolean));
+}
+
+// ---------------------------------------------------------------- apps
+
+// Terminal id → its space, from the panes on screen in any tab.
+function terminalSpaces() {
+  const tabSpace = new Map(), out = new Map();
+  for (const s of spaces()) for (const t of s.tabs ?? []) tabSpace.set(t.id, s);
+  for (const p of panes()) { const s = p.terminal && tabSpace.get(p.tab); if (s) out.set(p.terminal, s); }
+  return out;
+}
+
+// The web apps of the open spaces, on every machine that has a space: one
+// scan per machine (listeners, their terminal and folder), then one probe of
+// only the listeners that belong to a space.
+export async function loadApps() {
+  const terms = terminalSpaces();
+  const dirs = folders();
+  const machines = [...new Set(spaces().map((s) => s.machine ?? null))];
+  const list = [], errors = [];
+  await pool(machines, 3, async (on) => {
+    try {
+      const scan = parseScan((await exec("sh", ["-c", SCAN], { on })).stdout);
+      // A home folder would claim every process on the machine.
+      const mine = dirs.filter((f) => (f.on ?? null) === on && !/^\/(home\/[^/]+|Users\/[^/]+|root)\/?$/.test(f.dir));
+      const keep = scan.listeners.filter((l) => spaceOf({ ...l, machine: on }, terms, mine));
+      if (!keep.length) return;
+      const probes = parseProbe((await exec("sh", ["-c", PROBE, "sh", scan.dns, ...probeArgs(keep)], { on })).stdout);
+      for (const a of apps({ ...scan, listeners: keep }, probes, on)) {
+        const s = spaceOf(a, terms, mine);
+        // The app's terminal, when a pane shows it (so a click can focus it).
+        const shown = a.term && [a.term, `${on}/${a.term}`].find((id) => terms.get(id) === s);
+        list.push({ ...a, space: s.name, spaceId: s.id, terminal: shown || null });
+      }
+    } catch (e) { errors.push({ machine: on ?? "this Mac", error: String(e).slice(0, 120) }); }
+  });
+  list.sort((a, b) => a.space.localeCompare(b.space) || a.port - b.port);
+  return { at: Date.now(), apps: list, errors };
+}
+
+// Share one app on the tailnet with Tailscale Serve (a click does this, never
+// a timer). Returns null, or the error text.
+export async function shareApp(app) {
+  const r = await exec("sh", ["-c", SHARE, "sh", String(app.port), app.target], { on: app.machine });
+  return r.code === 0 ? null : (r.stderr || r.stdout || "tailscale serve failed").trim().split("\n").pop().slice(0, 160);
 }
 
 // ---------------------------------------------------------------- helpers
